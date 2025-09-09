@@ -79,3 +79,15 @@ npm run start:dev
 - All geometry columns use SRID 4326 (per architecture doc).
 - Mutating routes will adopt Idempotency-Key in future iterations.
 - Modules created: auth, users, items, claims, shops, qr, search, notifications, admin.
+
+## API Response & Error Handling
+- Success envelope: `{ status: 'success', message: 'OK', data: <payload> }` (applied by a global interceptor).
+- Error envelope: `{ status: 'error', message: <reason>, data: null }` (applied by a global exception filter).
+- Throw `HttpException` (e.g., `BadRequestException`, `UnauthorizedException`) from handlers; the global filter formats output.
+
+## Auth (JWT)
+- Endpoints:
+  - `POST /auth/register` { email, password, role? } → returns `{ user, token }`.
+  - `POST /auth/login` { email, password } → returns `{ user, token }`.
+- Roles: `customer`, `collector`, `facility`, `admin`, `finance`, `partner`.
+- Env vars: `JWT_SECRET`, `JWT_EXPIRES_IN` (see `.env.example`).

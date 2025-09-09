@@ -1,7 +1,10 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiProperty, ApiTags } from '@nestjs/swagger';
+import { IsString } from 'class-validator';
 
 class CreateItemDto {
+  @ApiProperty()
+  @IsString()
   name!: string;
 }
 
@@ -18,4 +21,3 @@ export class ItemsController {
     return { id: 'stub', name: dto.name, status: 'listed' };
   }
 }
-

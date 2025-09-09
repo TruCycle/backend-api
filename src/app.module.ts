@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import configuration from './config/configuration';
@@ -13,7 +14,14 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { AdminModule } from './modules/admin/admin.module';
 import { GeoModule } from './geo/geo.module';
 import { PostgisExtensionMigration1700000000001 } from './database/migrations/1700000000001-CreatePostgisExtension';
+import { CreateUuidExtension1700000000002 } from './database/migrations/1700000000002-CreateUuidExtension';
+import { CreateUserKycAddress1700000000003 } from './database/migrations/1700000000003-CreateUserKycAddress';
+import { CreateServiceZoneAndSeedLondon1700000000004 } from './database/migrations/1700000000004-CreateServiceZoneAndSeedLondon';
+import { CreatePickupOrderAndItem1700000000005 } from './database/migrations/1700000000005-CreatePickupOrderAndItem';
 import { User } from './modules/users/user.entity';
+import { AddressesModule } from './modules/addresses/addresses.module';
+import { OrdersModule } from './modules/orders/orders.module';
+import { MediaModule } from './modules/media/media.module';
 
 // Enable DB explicitly via ENABLE_DB=true; default is disabled to allow quick boot
 const enableDb = process.env.ENABLE_DB === 'true';
@@ -29,6 +37,7 @@ const baseModules: any[] = [
   SearchModule,
   NotificationsModule,
   AdminModule,
+  MediaModule,
 ];
 
 const dbModules: any[] = enableDb
@@ -47,11 +56,19 @@ const dbModules: any[] = enableDb
           synchronize: config.get<boolean>('db.synchronize') || false,
           logging: config.get<boolean>('db.logging') || false,
           entities: [User],
-          migrations: [PostgisExtensionMigration1700000000001],
+          migrations: [
+            PostgisExtensionMigration1700000000001,
+            CreateUuidExtension1700000000002,
+            CreateUserKycAddress1700000000003,
+            CreateServiceZoneAndSeedLondon1700000000004,
+            CreatePickupOrderAndItem1700000000005,
+          ],
           migrationsRun: true,
         }),
       }),
       UsersModule,
+      AddressesModule,
+      OrdersModule,
     ]
   : [];
 
