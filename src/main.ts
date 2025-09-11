@@ -36,10 +36,18 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('docs', app, document);
 
+  // Expose the OpenAPI document as JSON for download
+  const httpAdapter = app.getHttpAdapter();
+  httpAdapter.get('/openapi.json', (_req: any, res: any) => {
+    res.type('application/json').send(document);
+  });
+
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);
   // eslint-disable-next-line no-console
-  console.log(`API running on http://localhost:${port} (docs at /docs)`);
+  console.log(
+    `API running on http://localhost:${port} (docs at /docs, OpenAPI JSON at /openapi.json)`,
+  );
 }
 
 bootstrap().catch((err) => {

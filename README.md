@@ -35,7 +35,8 @@ npm run migration:run
 ```
 npm run start:dev
 ```
-- Swagger available at http://localhost:3000/docs
+- Swagger UI: http://localhost:3000/docs
+- OpenAPI JSON: http://localhost:3000/openapi.json
 
 ### Option B: Without Docker (local or hosted Postgres)
 
@@ -69,7 +70,8 @@ npm run migration:run
 ```
 npm run start:dev
 ```
-- Swagger available at http://localhost:3000/docs
+- Swagger UI: http://localhost:3000/docs
+- OpenAPI JSON: http://localhost:3000/openapi.json
 
 ### Notes on hosted Postgres
 - Supabase includes PostGIS; after creating a project, ensure `CREATE EXTENSION postgis;` (the migration also attempts this).
