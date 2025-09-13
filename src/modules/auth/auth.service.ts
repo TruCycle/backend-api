@@ -6,6 +6,7 @@ import { User, UserStatus } from '../users/user.entity';
 import { Role, RoleCode } from '../users/role.entity';
 import { UserRole } from '../users/user-role.entity';
 import { PasswordService } from '../../common/security/password.service';
+import { EmailService } from '../notifications/email.service';
 
 interface JwtPayload {
   sub: string;
@@ -21,6 +22,7 @@ export class AuthService {
     @InjectRepository(UserRole) private readonly userRoles: Repository<UserRole>,
     private readonly passwordService: PasswordService,
     private readonly jwt: JwtService,
+    private readonly email: EmailService,
   ) {}
 
   private async getOrCreateRole(code: RoleCode): Promise<Role> {
@@ -32,12 +34,25 @@ export class AuthService {
     return role;
   }
 
-  async register(email: string, password: string, roleCode?: RoleCode) {
-    const existing = await this.users.findOne({ where: { email } });
+  async register(
+    email: string,
+    password: string,
+    roleCode?: RoleCode,
+    firstName?: string,
+    lastName?: string,
+  ) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await this.users.findOne({ where: { email: normalizedEmail } });
     if (existing) throw new ConflictException('Email already registered');
 
     const hash = await this.passwordService.hash(password);
-    const user = this.users.create({ email, passwordHash: hash, status: UserStatus.ACTIVE });
+    const user = this.users.create({
+      email: normalizedEmail,
+      firstName: firstName?.trim(),
+      lastName: lastName?.trim(),
+      passwordHash: hash,
+      status: UserStatus.PENDING,
+    });
     const saved = await this.users.save(user);
 
     const code = roleCode || RoleCode.CUSTOMER;
@@ -45,7 +60,12 @@ export class AuthService {
     const link = this.userRoles.create({ user: saved, role });
     await this.userRoles.save(link);
 
+    // Issue an access token (kept for backward compatibility/tests)
     const token = await this.issueToken(saved);
+
+    // Generate a time-limited email verification token and send email
+    await this.sendVerificationEmail(saved);
+
     return { user: await this.findUserWithRoles(saved.id), token };
   }
 
@@ -74,11 +94,35 @@ export class AuthService {
     const roleCodes = links.map((l) => l.role.code);
     return {
       id: user!.id,
+      firstName: user!.firstName ?? null,
+      lastName: user!.lastName ?? null,
       email: user!.email,
       status: user!.status,
       roles: roleCodes,
       createdAt: user!.createdAt,
     };
   }
-}
 
+  private async sendVerificationEmail(user: User) {
+    const appBase = process.env.APP_BASE_URL || 'http://localhost:3000';
+    const verifyToken = await this.jwt.signAsync(
+      { sub: user.id, email: user.email, type: 'verify' },
+      { expiresIn: '24h' },
+    );
+    const verifyUrl = `${appBase.replace(/\/$/, '')}/auth/verify-email?token=${encodeURIComponent(
+      verifyToken,
+    )}`;
+    const html = `
+      <div style="font-family:Arial,sans-serif;font-size:14px;color:#111">
+        <p>Hello${user.firstName ? ' ' + user.firstName : ''},</p>
+        <p>Welcome! Please verify your email address to activate your account.</p>
+        <p><a href="${verifyUrl}" target="_blank" style="background:#0f766e;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none">Verify Email</a></p>
+        <p>Or copy this link into your browser:<br/>
+          <code>${verifyUrl}</code>
+        </p>
+        <p>This link expires in 24 hours. If you did not request this, you can ignore this email.</p>
+      </div>
+    `;
+    await this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
+  }
+}

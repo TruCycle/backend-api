@@ -6,6 +6,7 @@ import { Role, RoleCode } from '../users/role.entity';
 import { UserRole } from '../users/user-role.entity';
 import { PasswordService } from '../../common/security/password.service';
 import { JwtService } from '@nestjs/jwt';
+import { EmailService } from '../notifications/email.service';
 
 function repoMock() {
   return {
@@ -31,6 +32,7 @@ describe('AuthService', () => {
         AuthService,
         PasswordService,
         { provide: JwtService, useValue: jwt },
+        { provide: EmailService, useValue: { sendEmail: jest.fn().mockResolvedValue(undefined) } },
         { provide: getRepositoryToken(User), useValue: userRepo },
         { provide: getRepositoryToken(Role), useValue: roleRepo },
         { provide: getRepositoryToken(UserRole), useValue: userRoleRepo },

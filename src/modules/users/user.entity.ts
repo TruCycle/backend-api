@@ -9,6 +9,7 @@ import {
 import { UserRole } from './user-role.entity';
 
 export enum UserStatus {
+  PENDING = 'pending',
   ACTIVE = 'active',
   SUSPENDED = 'suspended',
   DELETED = 'deleted',
@@ -24,6 +25,12 @@ export class User {
   email!: string;
 
   @Column({ type: 'text', nullable: true })
+  firstName?: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  lastName?: string | null;
+
+  @Column({ type: 'text', nullable: true })
   phone?: string | null;
 
   @Column({ type: 'text', nullable: true })
@@ -32,7 +39,7 @@ export class User {
   @Column({
     type: 'enum',
     enum: UserStatus,
-    default: UserStatus.ACTIVE,
+    default: UserStatus.PENDING,
   })
   status!: UserStatus;
 

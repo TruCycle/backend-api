@@ -7,6 +7,7 @@ import { UserRole } from '../users/user-role.entity';
 import { AuthService } from './auth.service';
 import { PasswordService } from '../../common/security/password.service';
 import { JwtModule } from '@nestjs/jwt';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { JwtModule } from '@nestjs/jwt';
       secret: process.env.JWT_SECRET || 'dev-secret',
       signOptions: { expiresIn: process.env.JWT_EXPIRES_IN || '7d' },
     }),
+    NotificationsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, PasswordService],

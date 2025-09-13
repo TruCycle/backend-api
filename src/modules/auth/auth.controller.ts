@@ -16,8 +16,25 @@ export class AuthController {
 
   @Post('register')
   async register(@Body() dto: RegisterDto) {
-    const { user, token } = await this.auth.register(dto.email, dto.password, dto.role);
-    return { user, token };
+    const { user } = await this.auth.register(
+      dto.email,
+      dto.password,
+      dto.role,
+      dto.first_name,
+      dto.last_name,
+    );
+    return {
+      message: 'User registered successfully.',
+      data: {
+        user: {
+          id: user.id,
+          firstName: user.firstName ?? null,
+          lastName: user.lastName ?? null,
+          email: user.email,
+          status: user.status,
+        },
+      },
+    };
   }
 
   @Post('login')

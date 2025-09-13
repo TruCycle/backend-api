@@ -8,7 +8,7 @@ NestJS + TypeORM (Postgres/PostGIS) + Swagger skeleton for TruCycle.
 - Node.js 18+
 - One of:
   - Docker Desktop (recommended path), or
-  - Local/hosted Postgres with PostGIS (no‑Docker path)
+  - Local/hosted Postgres with PostGIS (non‑Docker path)
 
 2) Configure env
 - Copy `.env.example` to `.env`.
@@ -80,16 +80,52 @@ npm run start:dev
 ## Notes
 - All geometry columns use SRID 4326 (per architecture doc).
 - Mutating routes will adopt Idempotency-Key in future iterations.
-- Modules created: auth, users, items, claims, shops, qr, search, notifications, admin.
+- Modules created: auth, users, items, claims, shops, qr, search, notifications, admin, media, addresses, orders.
 
 ## API Response & Error Handling
-- Success envelope: `{ status: 'success', message: 'OK', data: <payload> }` (applied by a global interceptor).
+- Success envelope: `{ status: 'success', message: 'OK', data: <payload> }` (applied by a global interceptor). Routes can override `message`.
 - Error envelope: `{ status: 'error', message: <reason>, data: null }` (applied by a global exception filter).
 - Throw `HttpException` (e.g., `BadRequestException`, `UnauthorizedException`) from handlers; the global filter formats output.
 
 ## Auth (JWT)
 - Endpoints:
-  - `POST /auth/register` { email, password, role? } → returns `{ user, token }`.
-  - `POST /auth/login` { email, password } → returns `{ user, token }`.
+  - `POST /auth/register` { first_name, last_name, email, password, role? } → returns `{ status: 'success', message: 'User registered successfully.', data: { user: { id, firstName, lastName, email, status } } }`. A verification email is sent via Resend.
+  - `POST /auth/login` { email, password } → returns `{ status: 'success', message: 'OK', data: { user, token } }`.
 - Roles: `customer`, `collector`, `facility`, `admin`, `finance`, `partner`.
-- Env vars: `JWT_SECRET`, `JWT_EXPIRES_IN` (see `.env.example`).
+- Env vars: `JWT_SECRET`, `JWT_EXPIRES_IN`, `APP_BASE_URL`, `RESEND_API_KEY`, `MAIL_FROM` (see `.env.example`).
+
+### Registration Request Example
+
+```
+POST /auth/register
+Content-Type: application/json
+
+{
+  "first_name": "Jane",
+  "last_name": "Doe",
+  "email": "jane.doe@example.com",
+  "password": "a-strong-password-123"
+}
+```
+
+Response (201):
+
+```
+{
+  "status": "success",
+  "message": "User registered successfully.",
+  "data": {
+    "user": {
+      "id": "a1b2c3d4-e5f6-...",
+      "firstName": "Jane",
+      "lastName": "Doe",
+      "email": "jane.doe@example.com",
+      "status": "pending"
+    }
+  }
+}
+```
+
+Notes:
+- New users are created with status `pending` and receive a verification email containing a time‑limited token. Until verified, login may be rejected if not `active`.
+- Email delivery uses Resend; set `RESEND_API_KEY` and `MAIL_FROM`. Links use `APP_BASE_URL`.
