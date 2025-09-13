@@ -129,3 +129,56 @@ Response (201):
 Notes:
 - New users are created with status `pending` and receive a verification email containing a time‑limited token. Until verified, login may be rejected if not `active`.
 - Email delivery uses Resend; set `RESEND_API_KEY` and `MAIL_FROM`. Links use `APP_BASE_URL`.
+
+## Resend Verification
+- Endpoint: `POST /auth/resend-verification` — resends a verification link to a user with status `pending` only. Always returns a generic success response to avoid email enumeration.
+- Request body:
+```
+POST /auth/resend-verification
+Content-Type: application/json
+
+{
+  "email": "new.user@example.com"
+}
+```
+- Response (201 Created):
+```
+{
+  "status": "success",
+  "message": "Verification email sent successfully.",
+  "data": null
+}
+```
+- Security: Rate-limit this endpoint and do not disclose whether an email exists or its status.
+
+## Login
+- Endpoint: `POST /auth/login` — authenticates a user with email and password and returns access and refresh tokens. User must be `active`.
+- Request body:
+```
+POST /auth/login
+Content-Type: application/json
+
+{
+  "email": "existing.user@example.com",
+  "password": "my-correct-password"
+}
+```
+- Response (200 OK):
+```
+{
+  "status": "success",
+  "message": "Login successful.",
+  "data": {
+    "user": { "id": "...", "firstName": "name", "lastName": "name", "email": "existing.user@example.com", "status": "active" },
+    "tokens": {
+      "accessToken": "<jwt>",
+      "refreshToken": "<jwt>",
+      "accessTokenExpiry": "2025-01-01T12:00:00.000Z",
+      "refreshTokenExpiry": "2025-02-01T12:00:00.000Z"
+    }
+  }
+}
+```
+- Security: lock accounts on repeated failures, rate-limit, and return generic "Invalid credentials" to avoid information leakage.
+
+

@@ -77,8 +77,16 @@ export class AuthService {
     if (user.status !== UserStatus.ACTIVE)
       throw new UnauthorizedException('User is not active');
 
-    const token = await this.issueToken(user);
-    return { user: await this.findUserWithRoles(user.id), token };
+    const accessToken = await this.issueToken(user);
+    const refreshToken = await this.issueRefreshToken(user);
+    const tokens = {
+      accessToken,
+      refreshToken,
+      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
+      refreshTokenExpiry: this.getExpiryFromJwt(refreshToken),
+    };
+
+    return { user: await this.findUserWithRoles(user.id), tokens };
   }
 
   private async issueToken(user: User): Promise<string> {
@@ -86,6 +94,20 @@ export class AuthService {
     const roleCodes: RoleCode[] = roles.map((r) => r.role.code as RoleCode);
     const payload: JwtPayload = { sub: user.id, email: user.email, roles: roleCodes };
     return this.jwt.signAsync(payload);
+  }
+
+  private async issueRefreshToken(user: User): Promise<string> {
+    const refreshExpiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '30d';
+    const payload = { sub: user.id, email: user.email, type: 'refresh' };
+    return this.jwt.signAsync(payload, { expiresIn: refreshExpiresIn });
+  }
+
+  private getExpiryFromJwt(token: string): string | null {
+    const decoded: any = this.jwt.decode(token);
+    if (decoded && typeof decoded === 'object' && decoded.exp) {
+      return new Date(decoded.exp * 1000).toISOString();
+    }
+    return null;
   }
 
   private async findUserWithRoles(id: string) {
@@ -124,5 +146,15 @@ export class AuthService {
       </div>
     `;
     await this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
+  }
+
+  async resendVerification(email: string): Promise<void> {
+    const normalizedEmail = email.trim().toLowerCase();
+    // Look up user; avoid leaking existence or state
+    const user = await this.users.findOne({ where: { email: normalizedEmail } });
+    if (user && user.status === UserStatus.PENDING) {
+      await this.sendVerificationEmail(user);
+    }
+    // Always return success from controller to prevent user enumeration
   }
 }

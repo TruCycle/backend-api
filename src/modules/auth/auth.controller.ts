@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { AuthService } from './auth.service';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -38,8 +39,20 @@ export class AuthController {
   }
 
   @Post('login')
+  @HttpCode(200)
   async login(@Body() dto: LoginDto) {
-    const { user, token } = await this.auth.login(dto.email, dto.password);
-    return { user, token };
+    const { user, tokens } = await this.auth.login(dto.email, dto.password);
+    return {
+      status: 'success',
+      message: 'Login successful.',
+      data: { user, tokens },
+    };
+  }
+
+  @Post('resend-verification')
+  async resendVerification(@Body() dto: ResendVerificationDto) {
+    await this.auth.resendVerification(dto.email);
+    // Always return success to avoid email enumeration
+    return { status: 'success', message: 'Verification email sent successfully.', data: null };
   }
 }

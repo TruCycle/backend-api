@@ -23,7 +23,10 @@ describe('AuthService', () => {
   const roleRepo = repoMock();
   const userRoleRepo = repoMock();
   const password = new PasswordService();
-  const jwt = { signAsync: jest.fn().mockResolvedValue('jwt-token') } as unknown as JwtService;
+  const jwt = {
+    signAsync: jest.fn().mockResolvedValue('jwt-token'),
+    decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+  } as unknown as JwtService;
 
   beforeEach(async () => {
     jest.resetAllMocks();
@@ -76,7 +79,8 @@ describe('AuthService', () => {
     });
     userRoleRepo.find = jest.fn().mockResolvedValue([{ role: { code: RoleCode.CUSTOMER } }]);
     const res = await service.login('a@b.com', 'Password123!');
-    expect(res.token).toBe('jwt-token');
+    expect(res.tokens.accessToken).toBe('jwt-token');
+    expect(res.tokens.refreshToken).toBe('jwt-token');
   });
 
   it('rejects invalid credentials', async () => {
