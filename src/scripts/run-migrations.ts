@@ -6,6 +6,7 @@ import { CreateUuidExtension1700000000002 } from '../database/migrations/1700000
 import { CreateUserKycAddress1700000000003 } from '../database/migrations/1700000000003-CreateUserKycAddress';
 import { CreateServiceZoneAndSeedLondon1700000000004 } from '../database/migrations/1700000000004-CreateServiceZoneAndSeedLondon';
 import { CreatePickupOrderAndItem1700000000005 } from '../database/migrations/1700000000005-CreatePickupOrderAndItem';
+import { AddPendingStatusAndUserNames1700000000006 } from '../database/migrations/1700000000006-AddPendingStatusAndUserNames';
 import { User } from '../modules/users/user.entity';
 import { Role } from '../modules/users/role.entity';
 import { UserRole } from '../modules/users/user-role.entity';
@@ -26,6 +27,7 @@ async function run() {
       CreateUserKycAddress1700000000003,
       CreateServiceZoneAndSeedLondon1700000000004,
       CreatePickupOrderAndItem1700000000005,
+      AddPendingStatusAndUserNames1700000000006,
     ],
     logging: cfg.db.logging,
   });
