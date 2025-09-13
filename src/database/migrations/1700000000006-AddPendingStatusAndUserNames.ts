@@ -19,17 +19,15 @@ export class AddPendingStatusAndUserNames1700000000006 implements MigrationInter
     `);
 
     // Add first_name / last_name columns if missing
-    await queryRunner.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS first_name text`);
-    await queryRunner.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS last_name text`);
+    await queryRunner.query(`ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS first_name text`);
+    await queryRunner.query(`ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS last_name text`);
 
-    // Align default to 'pending' for new users
-    await queryRunner.query(`ALTER TABLE "user" ALTER COLUMN status SET DEFAULT 'pending'`);
+    // Do not set default to 'pending' here to avoid
+    // PostgreSQL \"unsafe use of new value\" error within the same transaction.
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    // Revert default to 'active'
-    await queryRunner.query(`ALTER TABLE "user" ALTER COLUMN status SET DEFAULT 'active'`);
-    // Columns can remain; keeping data safe. No removal in down.
+    // No-op: defaults unchanged here; columns retained for data safety.
   }
 }
 

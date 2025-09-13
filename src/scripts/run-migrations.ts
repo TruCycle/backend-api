@@ -7,6 +7,7 @@ import { CreateUserKycAddress1700000000003 } from '../database/migrations/170000
 import { CreateServiceZoneAndSeedLondon1700000000004 } from '../database/migrations/1700000000004-CreateServiceZoneAndSeedLondon';
 import { CreatePickupOrderAndItem1700000000005 } from '../database/migrations/1700000000005-CreatePickupOrderAndItem';
 import { AddPendingStatusAndUserNames1700000000006 } from '../database/migrations/1700000000006-AddPendingStatusAndUserNames';
+import { SetUserStatusDefaultPending1700000000007 } from '../database/migrations/1700000000007-SetUserStatusDefaultPending';
 import { User } from '../modules/users/user.entity';
 import { Role } from '../modules/users/role.entity';
 import { UserRole } from '../modules/users/user-role.entity';
@@ -28,8 +29,10 @@ async function run() {
       CreateServiceZoneAndSeedLondon1700000000004,
       CreatePickupOrderAndItem1700000000005,
       AddPendingStatusAndUserNames1700000000006,
+      SetUserStatusDefaultPending1700000000007,
     ],
     logging: cfg.db.logging,
+    migrationsTransactionMode: 'each',
   });
   await dataSource.initialize();
   await dataSource.runMigrations();
