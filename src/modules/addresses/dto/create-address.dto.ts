@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsBoolean, IsNumber, IsOptional, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class CreateAddressDto {
   @ApiProperty({ required: false })
@@ -32,6 +33,11 @@ export class CreateAddressDto {
   @IsString()
   country?: string;
 
+  @ApiProperty({ required: false, description: 'Postal code (UK postcode when in London)', example: 'NW1 6XE' })
+  @IsOptional()
+  @IsString()
+  postcode?: string;
+
   @ApiProperty({ description: 'Latitude in WGS84', example: 51.5074 })
   @IsNumber()
   latitude!: number;
@@ -40,9 +46,9 @@ export class CreateAddressDto {
   @IsNumber()
   longitude!: number;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, description: 'Whether this is the default address. Also accepts `is_default` alias.' })
   @IsOptional()
   @IsBoolean()
+  @Transform(({ value, obj }) => (typeof obj?.is_default === 'boolean' ? obj.is_default : value))
   isDefault?: boolean;
 }
-

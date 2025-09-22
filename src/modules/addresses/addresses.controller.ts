@@ -14,7 +14,17 @@ export class AddressesController {
 
   @Post()
   async create(@AuthUser() user: any, @Body() dto: CreateAddressDto) {
-    return this.addresses.create(user.sub, dto);
+    const created = await this.addresses.create(user.sub, dto);
+    return {
+      status: 'success',
+      message: 'Address created successfully.',
+      data: {
+        id: created.id,
+        label: created.label ?? null,
+        line1: created.line1 ?? null,
+        city: created.city ?? null,
+        is_default: created.isDefault ?? false,
+      },
+    };
   }
 }
-

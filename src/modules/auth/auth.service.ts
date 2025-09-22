@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -89,6 +89,54 @@ export class AuthService {
     return { user: await this.findUserWithRoles(user.id), tokens };
   }
 
+  async verifyUser(token: string) {
+    let payload: any;
+    try {
+      payload = await this.jwt.verifyAsync(token);
+    } catch (e) {
+      // Do not leak whether token exists or expired specifics
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    // Basic sanity checks on token payload
+    if (!payload || payload.type !== 'verify' || !payload.sub) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+    const uid = payload.sub as string;
+    const user = await this.users.findOne({ where: { id: uid } });
+    if (!user) {
+      // Generic error to avoid leaking existence
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    // Optional: ensure token email matches user email if present
+    if (payload.email && payload.email !== user.email) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    // If user is deleted or suspended, do not proceed
+    if (user.status === UserStatus.DELETED || user.status === UserStatus.SUSPENDED) {
+      throw new BadRequestException('Account not eligible for verification');
+    }
+
+    // Activate pending users
+    if (user.status === UserStatus.PENDING) {
+      user.status = UserStatus.ACTIVE;
+      await this.users.save(user);
+    }
+
+    const accessToken = await this.issueToken(user);
+    const refreshToken = await this.issueRefreshToken(user);
+    const tokens = {
+      accessToken,
+      refreshToken,
+      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
+      refreshTokenExpiry: this.getExpiryFromJwt(refreshToken),
+    };
+
+    return { user: await this.findUserWithRoles(user.id), tokens };
+  }
+
   private async issueToken(user: User): Promise<string> {
     const roles = await this.userRoles.find({ where: { user: { id: user.id } } });
     const roleCodes: RoleCode[] = roles.map((r) => r.role.code as RoleCode);
@@ -131,9 +179,7 @@ export class AuthService {
       { sub: user.id, email: user.email, type: 'verify' },
       { expiresIn: '24h' },
     );
-    const verifyUrl = `${appBase.replace(/\/$/, '')}/auth/verify-email?token=${encodeURIComponent(
-      verifyToken,
-    )}`;
+    const verifyUrl = `${appBase.replace(/\/$/, '')}/auth/verify-email?token=${encodeURIComponent(verifyToken)}`;
     const html = `
       <div style="font-family:Arial,sans-serif;font-size:14px;color:#111">
         <p>Hello${user.firstName ? ' ' + user.firstName : ''},</p>
@@ -148,6 +194,18 @@ export class AuthService {
     await this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
   }
 
+  async getBasicProfileById(id: string) {
+    const user = await this.users.findOne({ where: { id } });
+    if (!user) throw new UnauthorizedException('Invalid token');
+    return {
+      id: user.id,
+      firstName: user.firstName ?? null,
+      lastName: user.lastName ?? null,
+      email: user.email,
+      status: user.status,
+    };
+  }
+
   async resendVerification(email: string): Promise<void> {
     const normalizedEmail = email.trim().toLowerCase();
     // Look up user; avoid leaking existence or state
@@ -156,5 +214,77 @@ export class AuthService {
       await this.sendVerificationEmail(user);
     }
     // Always return success from controller to prevent user enumeration
+  }
+
+  async requestPasswordReset(email: string): Promise<void> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.users.findOne({ where: { email: normalizedEmail } });
+    // Do not reveal whether the user exists; send only for eligible accounts
+    if (user && user.status !== UserStatus.DELETED) {
+      await this.sendResetPasswordEmail(user);
+    }
+    // Controller always returns success
+  }
+
+  private async sendResetPasswordEmail(user: User) {
+    const appBase = process.env.APP_BASE_URL || 'http://localhost:3000';
+    const expiresIn = process.env.JWT_RESET_EXPIRES_IN || '1h';
+    const resetToken = await this.jwt.signAsync(
+      { sub: user.id, email: user.email, type: 'reset' },
+      { expiresIn },
+    );
+    const resetUrl = `${appBase.replace(/\/$/, '')}/auth/reset-password?token=${encodeURIComponent(resetToken)}`;
+    const html = `
+      <div style="font-family:Arial,sans-serif;font-size:14px;color:#111">
+        <p>Hello${user.firstName ? ' ' + user.firstName : ''},</p>
+        <p>We received a request to reset your password. If this was you, click the button below to set a new password.</p>
+        <p><a href="${resetUrl}" target="_blank" style="background:#0f766e;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none">Reset Password</a></p>
+        <p>Or copy this link into your browser:<br/>
+          <code>${resetUrl}</code>
+        </p>
+        <p>This link expires in ${expiresIn}. If you did not request a password reset, you can safely ignore this email.</p>
+      </div>
+    `;
+    await this.email.sendEmail({ to: user.email, subject: 'Reset your password', html });
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    let payload: any;
+    try {
+      payload = await this.jwt.verifyAsync(token);
+    } catch (e) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    if (!payload || payload.type !== 'reset' || !payload.sub) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+    const uid: string = payload.sub;
+
+    const user = await this.users.findOne({ where: { id: uid } });
+    if (!user) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+    if (payload.email && payload.email !== user.email) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+    if (user.status === UserStatus.DELETED || user.status === UserStatus.SUSPENDED) {
+      throw new BadRequestException('Account not eligible for password reset');
+    }
+
+    const hash = await this.passwordService.hash(newPassword);
+    user.passwordHash = hash;
+    await this.users.save(user);
+
+    // Optional: notify user about password change
+    try {
+      await this.email.sendEmail({
+        to: user.email,
+        subject: 'Your password was changed',
+        html: `<p>Hello${user.firstName ? ' ' + user.firstName : ''},</p><p>Your account password was just changed. If this wasn't you, please contact support immediately.</p>`,
+      });
+    } catch {
+      // Non-fatal if email fails
+    }
   }
 }

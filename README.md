@@ -151,6 +151,100 @@ Content-Type: application/json
 ```
 - Security: Rate-limit this endpoint and do not disclose whether an email exists or its status.
 
+## Forget Password
+- Endpoint: `POST /auth/forget-password` — sends a password reset link to the user if the account exists and is eligible. Always returns a generic success response to prevent email enumeration.
+- Request body:
+```
+POST /auth/forget-password
+Content-Type: application/json
+
+{
+  "email": "user@example.com"
+}
+```
+- Response (201 Created):
+```
+{
+  "status": "success",
+  "message": "Reset password email sent successfully.",
+  "data": null
+}
+```
+- Behavior:
+  - If the email corresponds to an existing account that is not deleted, a time-limited reset token is generated and emailed.
+  - The reset link format: `${APP_BASE_URL}/auth/reset-password?token=<jwt>`
+  - Token type is `reset` and expires in `1h` by default. You may override via `JWT_RESET_EXPIRES_IN`.
+- Security:
+  - Returns the same response regardless of whether the email exists.
+  - Consider adding rate-limiting and email delivery monitoring.
+
+## Reset Password
+- Endpoint: `POST /auth/reset-password` — resets a user's password using a time-limited reset token.
+- Request body:
+```
+POST /auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "<reset-token>",
+  "new_password": "new-StrongP@ssw0rd"
+}
+```
+- Response (201 Created):
+```
+{
+  "status": "success",
+  "message": "Password changed successfully.",
+  "data": null
+}
+```
+- Behavior:
+  - Accepts only tokens issued for password resets (type `reset`), rejects invalid/mismatched/expired tokens with a generic error.
+  - The API derives the user from the token subject; no uid is needed in the request body.
+  - Updates the user's password. Accounts marked `deleted` or `suspended` are rejected.
+- Security:
+  - Return generic errors for invalid/expired tokens.
+  - Rate-limit this endpoint to reduce brute force attempts.
+
+## Verify User
+- Endpoint: `POST /auth/verify` — verifies a user using a time‑limited verification token and activates the account if pending. Returns fresh access and refresh tokens.
+- Request body:
+```
+POST /auth/verify
+Content-Type: application/json
+
+{
+  "token": "<verification-token>"
+}
+```
+- Response (200 OK):
+```
+{
+  "status": "success",
+  "message": "Verification successfully.",
+  "data": {
+    "user": {
+      "id": "a1b2c3d4-e5f6-...",
+      "firstName": "name",
+      "lastName": "name",
+      "email": "new.user@example.com",
+      "status": "active"
+    },
+    "tokens": {
+      "accessToken": "<jwt>",
+      "refreshToken": "<jwt>",
+      "accessTokenExpiry": "2025-01-01T12:00:00.000Z",
+      "refreshTokenExpiry": "2025-02-01T12:00:00.000Z"
+    }
+  }
+}
+```
+- Behavior:
+  - Accepts only tokens issued for verification (type `verify`), rejects invalid/mismatched/expired tokens with a generic error.
+  - If the user is `pending`, sets status to `active`. If already `active`, still succeeds and returns tokens.
+  - Suspended or deleted accounts are not eligible for verification.
+- Security: Return generic errors for invalid/expired tokens to avoid leaking account state. Rate-limit this endpoint.
+
 ## Login
 - Endpoint: `POST /auth/login` — authenticates a user with email and password and returns access and refresh tokens. User must be `active`.
 - Request body:
@@ -180,5 +274,148 @@ Content-Type: application/json
 }
 ```
 - Security: lock accounts on repeated failures, rate-limit, and return generic "Invalid credentials" to avoid information leakage.
+
+## Get Authenticated User
+- Endpoint: `GET /auth/me` — retrieves the basic profile for the user associated with the provided bearer JWT.
+- Auth: Requires `Authorization: Bearer <accessToken>` header.
+- Request body: none
+- Response (200 OK):
+```
+{
+  "status": "success",
+  "message": "User retrieved successfully.",
+  "data": {
+    "user": {
+      "id": "a1b2c3d4-e5f6-...",
+      "firstName": "name",
+      "lastName": "name",
+      "email": "new.user@example.com",
+      "status": "active"
+    }
+  }
+}
+```
+- Security: Protected by JWT; returns only non-sensitive fields. Use short‑lived access tokens and rotate refresh tokens regularly.
+
+## Create Address
+- Endpoint: `POST /addresses` — creates a new user address and validates it lies within the active London service zone.
+- Auth: Requires `Authorization: Bearer <accessToken>` header.
+- Request body:
+```
+{
+  "label": "Home",
+  "line1": "221B Baker Street",
+  "city": "London",
+  "postcode": "NW1 6XE",
+  "latitude": 51.523767,
+  "longitude": -0.1585557,
+  "is_default": true
+}
+```
+- Notes:
+  - `latitude` and `longitude` are required to place the point; the backend converts to `geometry(Point, 4326)`.
+  - The payload accepts `is_default` and maps it to the internal `isDefault` field.
+  - The address must fall inside the `London` service zone polygon; otherwise returns `400 Bad Request`.
+- Response (201 Created):
+```
+{
+  "status": "success",
+  "message": "Address created successfully.",
+  "data": {
+    "id": "f6e5d4c3-...",
+    "label": "Home",
+    "line1": "221B Baker Street",
+    "city": "London",
+    "is_default": true
+  }
+}
+```
+- Security: JWT-protected; validates zone membership server-side; avoids exposing internal geometry details in the response.
+
+## Create Pickup Order
+- Endpoint: `POST /orders` — donors create a listing which generates a pickup order and one or more items. The order copies the origin address geometry for immutability. Matching is asynchronous.
+- Auth: Requires `Authorization: Bearer <accessToken>` header.
+- Request body:
+```
+{
+  "origin_address_id": "f6e5d4c3-...",
+  "notes": "Items are in the front garden, please be careful of the roses.",
+  "items": [
+    {
+      "material_id": "e4f5a6b7-...",
+      "category": "electronics.household",
+      "qty": 2,
+      "status": "great",
+      "photos": [
+        "s3-url-to-photo-1.jpg",
+        "s3-url-to-photo-2.jpg"
+      ],
+      "weee_data": {
+        "make": "Samsung",
+        "model": "UE55RU7300"
+      }
+    }
+  ]
+}
+```
+- Response (202 Accepted):
+```
+{
+  "status": "success",
+  "message": "Your listing has been submitted and is pending review.",
+  "data": {
+    "id": "c1d2e3f4-...",
+    "status": "requested",
+    "placed_at": "2025-09-11T13:45:00.000Z",
+    "items": [
+      {
+        "id": "g8h9i0j1-...",
+        "declared_grade": "Great",
+        "photos": ["s3-url-to-photo-1.jpg", "s3-url-to-photo-2.jpg"]
+      }
+    ]
+  }
+}
+```
+- Validation and behavior:
+  - Requires at least one item; quantity must be positive.
+  - Verifies the `origin_address_id` belongs to the authenticated user.
+  - Ensures the point lies within the active London service zone; otherwise responds 400.
+  - Stores item metadata (category, photos, declared grade/status, and `weee_data`) in a flexible JSONB field for future enrichment.
+- Security: JWT-protected; validates ownership and zone server-side; does not disclose internal entity structure in responses.
+
+## Search Listings (Collectors)
+- Endpoint: `GET /orders/search` — find nearby active listings using geospatial search.
+- Auth: Requires `Authorization: Bearer <accessToken>` and `collector` role.
+- Query params:
+  - `lat` (number, required): your latitude.
+  - `lon` (number, required): your longitude.
+  - `distance` (number, optional): search radius; defaults to 10.
+  - `unit` (string, optional): `km` (default) or `mi`.
+  - `category` (string, optional): category prefix filter, e.g., `electronics`.
+- Response (200 OK):
+```
+{
+  "status": "success",
+  "message": "Listings retrieved.",
+  "data": [
+    {
+      "id": "c1d2e3f4-...",
+      "donor": {
+        "username": "Jane D.",
+        "rating": 4.8
+      },
+      "items_summary": "Samsung Television",
+      "location": { "lat": 51.51, "lon": -0.13 },
+      "distance_meters": 1500
+    }
+  ]
+}
+```
+- Behavior and security:
+  - Uses `ST_DWithin` with geography for accurate meter-based distance.
+  - Limits precision of returned coordinates (~2 decimals) to avoid revealing exact donor location.
+  - Currently returns a public display name "First L."; rating is not yet implemented and may be `null`.
+  - Filters for active statuses; future changes may refine eligibility.
 
 
