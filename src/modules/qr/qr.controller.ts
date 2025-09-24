@@ -1,5 +1,6 @@
-import { Body, Controller, Headers, Post } from '@nestjs/common';
-import { ApiHeader, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Headers, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
 class ScanDto {
   qrPayload!: string;
@@ -12,6 +13,8 @@ class ScanDto {
 @Controller('qr')
 export class QrController {
   @Post('scan')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
   @ApiHeader({ name: 'Idempotency-Key', required: false })
   scan(@Body() dto: ScanDto, @Headers('idempotency-key') idemp?: string) {
     return {
@@ -22,4 +25,3 @@ export class QrController {
     };
   }
 }
-

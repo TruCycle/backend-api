@@ -3,4 +3,3 @@ import { ClaimsController } from './claims.controller';
 
 @Module({ controllers: [ClaimsController] })
 export class ClaimsModule {}
-

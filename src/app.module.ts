@@ -24,12 +24,14 @@ import { User } from './modules/users/user.entity';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { MediaModule } from './modules/media/media.module';
+import { JwtAuthModule } from './common/security/jwt-auth.module';
 
 // Enable DB explicitly via ENABLE_DB=true; default is disabled to allow quick boot
 const enableDb = process.env.ENABLE_DB === 'true';
 
 const baseModules: any[] = [
   ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
+  JwtAuthModule,
   GeoModule,
   AuthModule,
   ShopsModule,

@@ -12,11 +12,21 @@ export class JwtAuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
-    const auth = req.headers['authorization'] as string | undefined;
-    if (!auth || !auth.startsWith('Bearer ')) {
+    const raw = (req.headers['authorization'] as string | undefined)?.trim();
+    if (!raw) {
+      throw new UnauthorizedException('Missing authorization header');
+    }
+    // Be lenient: accept "Bearer <token>", "bearer <token>", or if Swagger double-prefixes ("Bearer Bearer <token>")
+    let token = raw;
+    const bearer = /^Bearer\s+/i;
+    while (bearer.test(token)) token = token.replace(bearer, '').trim();
+    // Strip surrounding quotes if present (Swagger/curl may include them)
+    if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith('\'') && token.endsWith('\''))) {
+      token = token.slice(1, -1).trim();
+    }
+    if (!token) {
       throw new UnauthorizedException('Missing bearer token');
     }
-    const token = auth.slice('Bearer '.length);
     try {
       const payload = await this.jwt.verifyAsync(token);
       req.user = payload;
@@ -26,4 +36,3 @@ export class JwtAuthGuard implements CanActivate {
     }
   }
 }
-

@@ -31,10 +31,22 @@ async function bootstrap() {
     .setTitle('TruCycle API')
     .setDescription('TruCycle REST API')
     .setVersion('0.1.0')
-    .addBearerAuth()
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Paste token only — no Bearer, no quotes.',
+      },
+      'bearer',
+    )
     .build();
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, document);
+  SwaggerModule.setup('docs', app, document, {
+    swaggerOptions: {
+      persistAuthorization: true,
+    },
+  });
 
   // Expose the OpenAPI document as JSON for download
   const httpAdapter = app.getHttpAdapter();
