@@ -1,23 +1,28 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
-import { ApiProperty, ApiTags } from '@nestjs/swagger';
-import { IsString } from 'class-validator';
-
-class CreateItemDto {
-  @ApiProperty()
-  @IsString()
-  name!: string;
-}
+import { Body, Controller, Get, Post, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ItemsService } from './items.service';
+import { CreateItemDto } from './dto/create-item.dto';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
 @ApiTags('items')
 @Controller('items')
 export class ItemsController {
+  constructor(private readonly items: ItemsService) {}
+
   @Get('health')
   health() {
     return { status: 'ok' };
   }
 
   @Post()
-  create(@Body() dto: CreateItemDto) {
-    return { id: 'stub', name: dto.name, status: 'listed' };
+  @ApiOperation({ summary: 'Create a new item listing', operationId: 'createItem' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  async create(@Body() dto: CreateItemDto, @Req() req: any) {
+    const userId = req?.user?.sub;
+    if (!userId || typeof userId !== 'string') {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+    return this.items.createItem(userId, dto);
   }
 }

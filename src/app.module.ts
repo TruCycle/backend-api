@@ -20,7 +20,9 @@ import { CreateServiceZoneAndSeedLondon1700000000004 } from './database/migratio
 import { CreatePickupOrderAndItem1700000000005 } from './database/migrations/1700000000005-CreatePickupOrderAndItem';
 import { AddPendingStatusAndUserNames1700000000006 } from './database/migrations/1700000000006-AddPendingStatusAndUserNames';
 import { SetUserStatusDefaultPending1700000000007 } from './database/migrations/1700000000007-SetUserStatusDefaultPending';
+import { CreateItemListing1700000000008 } from './database/migrations/1700000000008-CreateItemListing';
 import { User } from './modules/users/user.entity';
+import { Item } from './modules/items/item.entity';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { MediaModule } from './modules/media/media.module';
@@ -59,7 +61,7 @@ const dbModules: any[] = enableDb
           autoLoadEntities: true,
           synchronize: config.get<boolean>('db.synchronize') || false,
           logging: config.get<boolean>('db.logging') || false,
-          entities: [User],
+          entities: [User, Item],
           migrations: [
             PostgisExtensionMigration1700000000001,
             CreateUuidExtension1700000000002,
@@ -68,6 +70,7 @@ const dbModules: any[] = enableDb
             CreatePickupOrderAndItem1700000000005,
             AddPendingStatusAndUserNames1700000000006,
             SetUserStatusDefaultPending1700000000007,
+            CreateItemListing1700000000008,
           ],
           migrationsRun: true,
           migrationsTransactionMode: 'each',

@@ -297,6 +297,80 @@ Content-Type: application/json
 ```
 - Security: Protected by JWT; returns only non-sensitive fields. Use short‑lived access tokens and rotate refresh tokens regularly.
 
+## Item Listings
+
+### State Machine Overview
+- **Exchange**: `draft -> active -> claimed -> complete`
+- **Donate**: `draft -> pending_dropoff -> awaiting_collection -> claimed -> complete` (rejection path `pending_dropoff -> rejected`)
+- **Recycle**: `draft -> pending_recycle -> pending_recycle_processing -> recycled`
+- **Scan events**:
+  - `DROP_OFF_IN` (accept): `pending_dropoff -> awaiting_collection` executed by shop attendant
+  - `DROP_OFF_IN` (reject): `pending_dropoff -> rejected` with a captured reason
+  - `CLAIM_OUT`: `claimed -> complete` captured at hand-off
+  - `RECYCLE_IN`: `pending_recycle -> pending_recycle_processing`
+  - `RECYCLE_OUT`: `pending_recycle_processing -> recycled`
+
+### Create Item (`POST /items`)
+- Auth: Requires `Authorization: Bearer <accessToken>`.
+- Purpose: Donors publish inventory that starts in the correct state based on pickup option, with geocoded coordinates persisted into PostGIS for downstream logistics and search.
+- Request body example:
+```
+{
+  "title": "Vintage Wooden Dining Table",
+  "description": "Solid oak dining table, seats 6-8 people. Minor scratches but in good condition.",
+  "condition": "good",
+  "category": "furniture",
+  "address_line": "10 Downing Street, London",
+  "postcode": "SW1A 2AA",
+  "images": [
+    {
+      "url": "https://example.com/item1_img1.jpg",
+      "altText": "Dining table front view"
+    }
+  ],
+  "pickup_option": "donate",
+  "dropoff_location_id": "4c2b8db4-2d15-4c8e-92d2-81248b14d455",
+  "delivery_preferences": "home_pickup",
+  "metadata": {
+    "weight_kg": 50,
+    "dimensions_cm": "180x90x75",
+    "material": "oak wood"
+  }
+}
+```
+- Response (201 Created):
+```
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "id": "9f5c2c8e",
+    "title": "Vintage Wooden Dining Table",
+    "status": "pending_dropoff",
+    "pickup_option": "donate",
+    "location": {
+      "address_line": "10 Downing Street, London",
+      "postcode": "SW1A 2AA",
+      "latitude": 51.5034,
+      "longitude": -0.1276
+    },
+    "qr_code": "https://cdn.trucycle.com/qrs/item-9f5c2c8e.png",
+    "created_at": "2025-09-25T12:00:00.000Z"
+  }
+}
+```
+- Behavior & security notes:
+  - Input is trimmed, constrained (images = 10 unique URLs) and stored with minimal metadata (`jsonb`) to mitigate injection.
+  - `pickup_option=donate` enforces `dropoff_location_id` and seeds the `pending_dropoff` state; `recycle` begins in `pending_recycle`; `exchange` begins in `active`.
+  - Addresses are forward-geocoded via OpenStreetMap, terminated after a short timeout, and validated against the active service zone polygon before persistence.
+  - Coordinates are saved both as `latitude`/`longitude` floats and as a `geometry(Point, 4326)` column for spatial queries.
+  - QR codes default to `https://cdn.trucycle.com/qrs/item-<id>.png`; override via `ITEM_QR_BASE_URL` if a different CDN is required.
+- Configuration bits (optional environment variables):
+  - `OSM_SEARCH_URL` (defaults to the public Nominatim endpoint)
+  - `OSM_USER_AGENT` (set to satisfy OSM usage policy; falls back to a TruCycle identifier)
+  - `OSM_TIMEOUT_MS` (geocoder request timeout, default 5000 ms)
+  - `ITEM_QR_BASE_URL` (base URL for generated QR image links)
+
 ## Create Address
 - Endpoint: `POST /addresses` — creates a new user address and validates it lies within the active London service zone.
 - Auth: Requires `Authorization: Bearer <accessToken>` header.
@@ -417,5 +491,8 @@ Content-Type: application/json
   - Limits precision of returned coordinates (~2 decimals) to avoid revealing exact donor location.
   - Currently returns a public display name "First L."; rating is not yet implemented and may be `null`.
   - Filters for active statuses; future changes may refine eligibility.
+
+
+
 
 
