@@ -15,6 +15,7 @@ import { User } from '../users/user.entity';
 export enum ClaimStatus {
   PENDING_APPROVAL = 'pending_approval',
   APPROVED = 'approved',
+  COMPLETE = 'complete',
   REJECTED = 'rejected',
   CANCELLED = 'cancelled',
 }
@@ -38,6 +39,9 @@ export class Claim {
 
   @Column({ name: 'approved_at', type: 'timestamptz', nullable: true })
   approvedAt?: Date | null;
+
+  @Column({ name: 'completed_at', type: 'timestamptz', nullable: true })
+  completedAt?: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

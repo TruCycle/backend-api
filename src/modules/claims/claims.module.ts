@@ -1,4 +1,4 @@
-﻿import { Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -13,5 +13,6 @@ import { ClaimsService } from './claims.service';
   imports: [TypeOrmModule.forFeature([Claim, Item, User])],
   controllers: [ClaimsController],
   providers: [ClaimsService, JwtAuthGuard],
+  exports: [ClaimsService],
 })
 export class ClaimsModule {}

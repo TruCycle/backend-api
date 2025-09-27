@@ -1,4 +1,4 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -15,6 +15,7 @@ import { SetUserStatusDefaultPending1700000000007 } from './database/migrations/
 import { CreateItemListing1700000000008 } from './database/migrations/1700000000008-CreateItemListing';
 import { CreateClaimsTable1700000000009 } from './database/migrations/1700000000009-CreateClaimsTable';
 import { AddClaimApprovedAt1700000000010 } from './database/migrations/1700000000010-AddClaimApprovedAt';
+import { AddClaimCompletionAndScanEvents1700000000011 } from './database/migrations/1700000000011-AddClaimCompletionAndScanEvents';
 import { GeoModule } from './geo/geo.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { AdminModule } from './modules/admin/admin.module';
@@ -77,6 +78,7 @@ const dbModules: any[] = enableDb
             CreateItemListing1700000000008,
             CreateClaimsTable1700000000009,
             AddClaimApprovedAt1700000000010,
+            AddClaimCompletionAndScanEvents1700000000011,
           ],
           migrationsRun: true,
           migrationsTransactionMode: 'each',
@@ -92,3 +94,6 @@ const dbModules: any[] = enableDb
   imports: [...baseModules, ...dbModules],
 })
 export class AppModule {}
+
+
+

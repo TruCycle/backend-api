@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -10,12 +10,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
 import { Item, ItemStatus } from '../items/item.entity';
+import { sanitizeShopId } from '../qr/qr.utils';
+import { fetchScanEvents, recordScanEvent } from '../qr/scan-events.util';
 import { RoleCode } from '../users/role.entity';
+import { userHasRole } from '../users/role.utils';
 import { User, UserStatus } from '../users/user.entity';
 
 import { Claim, ClaimStatus } from './claim.entity';
 import { CreateClaimDto } from './dto/create-claim.dto';
-
 const CLAIMABLE_STATUSES: readonly ItemStatus[] = [ItemStatus.ACTIVE];
 const ACTIVE_CLAIM_STATUSES: readonly ClaimStatus[] = [
   ClaimStatus.PENDING_APPROVAL,
@@ -31,22 +33,16 @@ export class ClaimsService {
   ) {}
 
   private ensureCollectorRole(payload: any) {
-    const roles: string[] = Array.isArray(payload?.roles)
-      ? payload.roles.map((role: any) => String(role).toLowerCase())
-      : [];
-    if (roles.includes(RoleCode.ADMIN)) {
+    if (userHasRole(payload, RoleCode.ADMIN)) {
       return;
     }
-    if (!roles.includes(RoleCode.COLLECTOR)) {
+    if (!userHasRole(payload, RoleCode.COLLECTOR)) {
       throw new ForbiddenException('Collectors only');
     }
   }
 
   private ensureAdminRole(payload: any) {
-    const roles: string[] = Array.isArray(payload?.roles)
-      ? payload.roles.map((role: any) => String(role).toLowerCase())
-      : [];
-    if (!roles.includes(RoleCode.ADMIN)) {
+    if (!userHasRole(payload, RoleCode.ADMIN)) {
       throw new ForbiddenException('Admins only');
     }
   }
@@ -137,5 +133,99 @@ export class ClaimsService {
       status: saved.status,
       approved_at: saved.approvedAt?.toISOString() ?? new Date().toISOString(),
     };
+  }
+
+  async completeClaimOut(authPayload: any, rawItemId: string, rawShopId: string) {
+    if (!authPayload || typeof authPayload.sub !== 'string') {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+    this.ensureCollectorRole(authPayload);
+
+    const actor = await this.users.findOne({ where: { id: authPayload.sub } });
+    if (!actor) {
+      throw new UnauthorizedException('User record not found');
+    }
+    if (actor.status !== UserStatus.ACTIVE) {
+      throw new ForbiddenException('Inactive users cannot complete claims');
+    }
+
+    const itemId = typeof rawItemId === 'string' ? rawItemId.trim() : '';
+    if (!itemId) {
+      throw new BadRequestException('Item id is required');
+    }
+
+    const shopId = sanitizeShopId(rawShopId);
+    if (!shopId) {
+      throw new BadRequestException('shop_id is required');
+    }
+
+    const isAdmin = userHasRole(authPayload, RoleCode.ADMIN);
+
+    return this.claims.manager.transaction(async (manager) => {
+      const claimRepo = manager.getRepository(Claim);
+      const itemRepo = manager.getRepository(Item);
+
+      const claim = await claimRepo
+        .createQueryBuilder('claim')
+        .setLock('pessimistic_write')
+        .leftJoinAndSelect('claim.item', 'item')
+        .leftJoinAndSelect('claim.collector', 'collector')
+        .where('item.id = :itemId', { itemId })
+        .getOne();
+
+      if (!claim) {
+        throw new NotFoundException('Claim not found for item');
+      }
+
+      if (!isAdmin && claim.collector?.id !== actor.id) {
+        throw new ForbiddenException('You are not allowed to complete this claim');
+      }
+
+      if (claim.status === ClaimStatus.REJECTED || claim.status === ClaimStatus.CANCELLED) {
+        throw new ConflictException('This claim can no longer be completed');
+      }
+      if (claim.status === ClaimStatus.PENDING_APPROVAL) {
+        throw new ConflictException('Claim must be approved before completion');
+      }
+
+      if (claim.status === ClaimStatus.COMPLETE) {
+        const completedAt =
+          claim.completedAt instanceof Date && !Number.isNaN(claim.completedAt.getTime())
+            ? claim.completedAt
+            : new Date();
+        if (completedAt !== claim.completedAt) {
+          claim.completedAt = completedAt;
+          await claimRepo.save(claim);
+        }
+        const events = await fetchScanEvents(manager, claim.item.id);
+        return {
+          id: claim.id,
+          status: claim.status,
+          completed_at: completedAt.toISOString(),
+          scan_events: events,
+        };
+      }
+
+      if (claim.status !== ClaimStatus.APPROVED) {
+        throw new ConflictException('Claim is not eligible for completion');
+      }
+
+      const completionDate = new Date();
+      claim.status = ClaimStatus.COMPLETE;
+      claim.completedAt = completionDate;
+
+      await claimRepo.save(claim);
+      await itemRepo.update(claim.item.id, { status: ItemStatus.COMPLETE });
+      await recordScanEvent(manager, claim.item.id, 'CLAIM_OUT', shopId, completionDate);
+
+      const events = await fetchScanEvents(manager, claim.item.id);
+
+      return {
+        id: claim.id,
+        status: claim.status,
+        completed_at: completionDate.toISOString(),
+        scan_events: events,
+      };
+    });
   }
 }
