@@ -1,5 +1,13 @@
 import { EntityManager } from 'typeorm';
 
+export enum ScanType {
+  ITEM_VIEW = 'ITEM_VIEW',
+  DROP_OFF_IN = 'DROP_OFF_IN',
+  CLAIM_OUT = 'CLAIM_OUT',
+  RECYCLE_IN = 'RECYCLE_IN',
+  RECYCLE_OUT = 'RECYCLE_OUT',
+}
+
 export interface ItemScanEventResponse {
   scan_type: string;
   shop_id: string | null;
@@ -9,7 +17,7 @@ export interface ItemScanEventResponse {
 export async function recordScanEvent(
   manager: EntityManager,
   itemId: string,
-  scanType: string,
+  scanType: ScanType,
   shopId: string | null,
   scannedAt: Date,
 ): Promise<void> {

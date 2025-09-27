@@ -639,6 +639,13 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
 ```
 
 ### QR Scan Workflow
+| Scan Type | Who Scans | When | Effect |
+| --- | --- | --- | --- |
+| `ITEM_VIEW` | Any authenticated user | At any step to confirm state | View-only; records a read-only audit entry |
+| `DROP_OFF_IN` | Shop attendant (`facility` role) | When a donor hands off an item | Accept → `awaiting_collection`; Reject → `rejected` with reason |
+| `CLAIM_OUT` | Shop attendant (`facility`) or admin | When the collector picks up the item | Claim marked `complete`; rewards pipeline triggered |
+| `RECYCLE_IN` | Logistics (`partner`/`facility`) | When recycling pickup arrives | Item moves to `pending_recycle_processing` |
+| `RECYCLE_OUT` | Logistics (`partner`/`facility`) | When recycling is finished | Item marked `recycled`; impact metrics updated |
 
 #### Item View (`GET /qr/item/{item_id}/view`)
 - Purpose: Provide attendants and logistics with the latest item state before taking action.
@@ -656,7 +663,7 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
     "collector_id": "fd51ef7e"
   },
   "scan_events": [
-    { "scan_type": "VIEW", "shop_id": null, "scanned_at": "2025-09-25T12:58:00Z" }
+    { "scan_type": "ITEM_VIEW", "shop_id": null, "scanned_at": "2025-09-25T12:58:00Z" }
   ]
 }
 ```
@@ -713,29 +720,30 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
   - Accepted scans move `pending_dropoff` items to `awaiting_collection` and leave already accepted items untouched.
   - Each scan records a `DROP_OFF_IN` event for auditing, returned in the `scan_events` array.
 #### Collector Pickup (`POST /qr/item/{item_id}/claim-out`)
-- Purpose: Collectors or admins finalize an approved claim.
-- Auth: Requires `Authorization: Bearer <accessToken>` with the `collector` role (admins may override).
+- Purpose: Shop attendants confirm that the approved collector has taken the item.
+- Auth: Requires `Authorization: Bearer <accessToken>` with the `facility` role (admins may override).
 - Request body:
 ```
 {
-  "shop_id": "shop-117"
+  "shop_id": "4c2b8db4"
 }
 ```
 - Response (200 OK):
 ```
 {
-  "id": "f2a8471d",
+  "scan_result": "completed",
+  "scan_type": "CLAIM_OUT",
   "status": "complete",
-  "completed_at": "2025-09-25T13:00:00Z",
+  "completed_at": "2025-09-26T10:30:00Z",
   "scan_events": [
-    { "scan_type": "CLAIM_OUT", "shop_id": "shop-117", "scanned_at": "2025-09-25T13:00:00Z" }
+    { "scan_type": "CLAIM_OUT", "shop_id": "4c2b8db4", "scanned_at": "2025-09-26T10:30:00Z" }
   ]
 }
 ```
 - Behavior:
-  - Ensures the authenticated collector owns the claim (admins may override) and that the claim is already `approved`.
-  - Marks the claim `complete`, stamps `completed_at`, transitions the item to `complete`, and records a `CLAIM_OUT` scan.
-
+  - Accepts scans from shop attendants (`facility`) or admins; collectors can still complete their own claims when scanning directly.
+  - Rejects mismatched scans when `shop_id` does not match the item's assigned drop-off location.
+  - Transitions the claim to `complete`, updates the item to `complete`, and logs a `CLAIM_OUT` scan for auditing.
 #### Recycle Pickup (`POST /qr/item/{item_id}/recycle-in`)
 - Purpose: Logistics partners log that a recycle-bound item entered processing.
 - Auth: Requires `Authorization: Bearer <accessToken>` with `partner` (or `facility`/`admin`) roles.

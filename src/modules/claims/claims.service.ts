@@ -11,7 +11,7 @@ import { In, Repository } from 'typeorm';
 
 import { Item, ItemStatus } from '../items/item.entity';
 import { sanitizeShopId } from '../qr/qr.utils';
-import { fetchScanEvents, recordScanEvent } from '../qr/scan-events.util';
+import { ScanType, fetchScanEvents, recordScanEvent } from '../qr/scan-events.util';
 import { RoleCode } from '../users/role.entity';
 import { userHasRole } from '../users/role.utils';
 import { User, UserStatus } from '../users/user.entity';
@@ -139,7 +139,14 @@ export class ClaimsService {
     if (!authPayload || typeof authPayload.sub !== 'string') {
       throw new UnauthorizedException('Authenticated user context not found');
     }
-    this.ensureCollectorRole(authPayload);
+
+    const isAdmin = userHasRole(authPayload, RoleCode.ADMIN);
+    const isFacility = userHasRole(authPayload, RoleCode.FACILITY);
+    const isCollector = userHasRole(authPayload, RoleCode.COLLECTOR);
+
+    if (!isAdmin && !isFacility && !isCollector) {
+      throw new ForbiddenException('Collectors or facility staff only');
+    }
 
     const actor = await this.users.findOne({ where: { id: authPayload.sub } });
     if (!actor) {
@@ -159,8 +166,6 @@ export class ClaimsService {
       throw new BadRequestException('shop_id is required');
     }
 
-    const isAdmin = userHasRole(authPayload, RoleCode.ADMIN);
-
     return this.claims.manager.transaction(async (manager) => {
       const claimRepo = manager.getRepository(Claim);
       const itemRepo = manager.getRepository(Item);
@@ -177,8 +182,18 @@ export class ClaimsService {
         throw new NotFoundException('Claim not found for item');
       }
 
-      if (!isAdmin && claim.collector?.id !== actor.id) {
-        throw new ForbiddenException('You are not allowed to complete this claim');
+      const expectedShopId =
+        typeof claim.item?.dropoffLocationId === 'string'
+          ? sanitizeShopId(claim.item.dropoffLocationId)
+          : '';
+      if (expectedShopId && expectedShopId.toLowerCase() !== shopId.toLowerCase()) {
+        throw new ForbiddenException('Drop-off location mismatch');
+      }
+
+      if (!isAdmin && !isFacility) {
+        if (!claim.collector || claim.collector.id !== actor.id) {
+          throw new ForbiddenException('You are not allowed to complete this claim');
+        }
       }
 
       if (claim.status === ClaimStatus.REJECTED || claim.status === ClaimStatus.CANCELLED) {
@@ -201,6 +216,8 @@ export class ClaimsService {
         return {
           id: claim.id,
           status: claim.status,
+          scan_type: ScanType.CLAIM_OUT,
+          scan_result: 'already_completed',
           completed_at: completedAt.toISOString(),
           scan_events: events,
         };
@@ -216,13 +233,15 @@ export class ClaimsService {
 
       await claimRepo.save(claim);
       await itemRepo.update(claim.item.id, { status: ItemStatus.COMPLETE });
-      await recordScanEvent(manager, claim.item.id, 'CLAIM_OUT', shopId, completionDate);
+      await recordScanEvent(manager, claim.item.id, ScanType.CLAIM_OUT, shopId, completionDate);
 
       const events = await fetchScanEvents(manager, claim.item.id);
 
       return {
         id: claim.id,
         status: claim.status,
+        scan_type: ScanType.CLAIM_OUT,
+        scan_result: 'completed',
         completed_at: completionDate.toISOString(),
         scan_events: events,
       };

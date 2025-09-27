@@ -16,7 +16,7 @@ import { userHasAnyRole, userHasRole } from '../users/role.utils';
 import { User, UserStatus } from '../users/user.entity';
 
 import { sanitizeShopId } from './qr.utils';
-import { fetchScanEvents, recordScanEvent } from './scan-events.util';
+import { ScanType, fetchScanEvents, recordScanEvent } from './scan-events.util';
 interface ActiveActorContext {
   user: User;
   isAdmin: boolean;
@@ -105,7 +105,7 @@ export class QrService {
         relations: { collector: true },
       });
 
-      await recordScanEvent(manager, item.id, 'VIEW', null, now);
+      await recordScanEvent(manager, item.id, ScanType.ITEM_VIEW, null, now);
       const scanEvents = await fetchScanEvents(manager, item.id);
 
       return {
@@ -208,12 +208,12 @@ export class QrService {
         await itemRepo.save(item);
       }
 
-      await recordScanEvent(manager, item.id, 'DROP_OFF_IN', shopId, scanDate);
+      await recordScanEvent(manager, item.id, ScanType.DROP_OFF_IN, shopId, scanDate);
       const scanEvents = await fetchScanEvents(manager, item.id);
 
       const response: Record<string, unknown> = {
         scan_result: action === 'reject' ? 'rejected' : 'accepted',
-        scan_type: 'DROP_OFF_IN',
+        scan_type: ScanType.DROP_OFF_IN,
         item_status: item.status,
         scanned_at: scanDate.toISOString(),
         scan_events: scanEvents,
@@ -261,7 +261,7 @@ export class QrService {
         throw new ConflictException('Item has already been recycled');
       }
       if (item.status === ItemStatus.PENDING_RECYCLE_PROCESSING) {
-        await recordScanEvent(manager, item.id, 'RECYCLE_IN', shopId, scanDate);
+        await recordScanEvent(manager, item.id, ScanType.RECYCLE_IN, shopId, scanDate);
         const scanEvents = await fetchScanEvents(manager, item.id);
         return {
           id: item.id,
@@ -278,7 +278,7 @@ export class QrService {
       item.status = ItemStatus.PENDING_RECYCLE_PROCESSING;
       await itemRepo.save(item);
 
-      await recordScanEvent(manager, item.id, 'RECYCLE_IN', shopId, scanDate);
+      await recordScanEvent(manager, item.id, ScanType.RECYCLE_IN, shopId, scanDate);
       const scanEvents = await fetchScanEvents(manager, item.id);
 
       return {
@@ -323,7 +323,7 @@ export class QrService {
         throw new ConflictException('Item is not configured for the recycle workflow');
       }
       if (item.status === ItemStatus.RECYCLED) {
-        await recordScanEvent(manager, item.id, 'RECYCLE_OUT', shopId, scanDate);
+        await recordScanEvent(manager, item.id, ScanType.RECYCLE_OUT, shopId, scanDate);
         const scanEvents = await fetchScanEvents(manager, item.id);
         return {
           id: item.id,
@@ -340,7 +340,7 @@ export class QrService {
       item.status = ItemStatus.RECYCLED;
       await itemRepo.save(item);
 
-      await recordScanEvent(manager, item.id, 'RECYCLE_OUT', shopId, scanDate);
+      await recordScanEvent(manager, item.id, ScanType.RECYCLE_OUT, shopId, scanDate);
       const scanEvents = await fetchScanEvents(manager, item.id);
 
       return {
