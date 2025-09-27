@@ -1,4 +1,4 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -13,10 +13,13 @@ import { CreatePickupOrderAndItem1700000000005 } from './database/migrations/170
 import { AddPendingStatusAndUserNames1700000000006 } from './database/migrations/1700000000006-AddPendingStatusAndUserNames';
 import { SetUserStatusDefaultPending1700000000007 } from './database/migrations/1700000000007-SetUserStatusDefaultPending';
 import { CreateItemListing1700000000008 } from './database/migrations/1700000000008-CreateItemListing';
+import { CreateClaimsTable1700000000009 } from './database/migrations/1700000000009-CreateClaimsTable';
+import { AddClaimApprovedAt1700000000010 } from './database/migrations/1700000000010-AddClaimApprovedAt';
 import { GeoModule } from './geo/geo.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { Claim } from './modules/claims/claim.entity';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { Item } from './modules/items/item.entity';
 import { ItemsModule } from './modules/items/items.module';
@@ -62,7 +65,7 @@ const dbModules: any[] = enableDb
           autoLoadEntities: true,
           synchronize: config.get<boolean>('db.synchronize') || false,
           logging: config.get<boolean>('db.logging') || false,
-          entities: [User, Item],
+          entities: [User, Item, Claim],
           migrations: [
             PostgisExtensionMigration1700000000001,
             CreateUuidExtension1700000000002,
@@ -72,6 +75,8 @@ const dbModules: any[] = enableDb
             AddPendingStatusAndUserNames1700000000006,
             SetUserStatusDefaultPending1700000000007,
             CreateItemListing1700000000008,
+            CreateClaimsTable1700000000009,
+            AddClaimApprovedAt1700000000010,
           ],
           migrationsRun: true,
           migrationsTransactionMode: 'each',

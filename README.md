@@ -1,4 +1,4 @@
-# TruCycle Backend API
+﻿# TruCycle Backend API
 
 NestJS + TypeORM (Postgres/PostGIS) + Swagger skeleton for TruCycle.
 
@@ -8,7 +8,7 @@ NestJS + TypeORM (Postgres/PostGIS) + Swagger skeleton for TruCycle.
 - Node.js 18+
 - One of:
   - Docker Desktop (recommended path), or
-  - Local/hosted Postgres with PostGIS (non‑Docker path)
+  - Local/hosted Postgres with PostGIS (nonâ€‘Docker path)
 
 2) Configure env
 - Copy `.env.example` to `.env`.
@@ -89,8 +89,8 @@ npm run start:dev
 
 ## Auth (JWT)
 - Endpoints:
-  - `POST /auth/register` { first_name, last_name, email, password, role? } → returns `{ status: 'success', message: 'User registered successfully.', data: { user: { id, firstName, lastName, email, status } } }`. A verification email is sent via Resend.
-  - `POST /auth/login` { email, password } → returns `{ status: 'success', message: 'OK', data: { user, token } }`.
+  - `POST /auth/register` { first_name, last_name, email, password, role? } â†’ returns `{ status: 'success', message: 'User registered successfully.', data: { user: { id, firstName, lastName, email, status } } }`. A verification email is sent via Resend.
+  - `POST /auth/login` { email, password } â†’ returns `{ status: 'success', message: 'OK', data: { user, token } }`.
 - Roles: `customer`, `collector`, `facility`, `admin`, `finance`, `partner`.
 - Env vars: `JWT_SECRET`, `JWT_EXPIRES_IN`, `APP_BASE_URL`, `RESEND_API_KEY`, `MAIL_FROM` (see `.env.example`).
 
@@ -127,11 +127,11 @@ Response (201):
 ```
 
 Notes:
-- New users are created with status `pending` and receive a verification email containing a time‑limited token. Until verified, login may be rejected if not `active`.
+- New users are created with status `pending` and receive a verification email containing a timeâ€‘limited token. Until verified, login may be rejected if not `active`.
 - Email delivery uses Resend; set `RESEND_API_KEY` and `MAIL_FROM`. Links use `APP_BASE_URL`.
 
 ## Resend Verification
-- Endpoint: `POST /auth/resend-verification` — resends a verification link to a user with status `pending` only. Always returns a generic success response to avoid email enumeration.
+- Endpoint: `POST /auth/resend-verification` â€” resends a verification link to a user with status `pending` only. Always returns a generic success response to avoid email enumeration.
 - Request body:
 ```
 POST /auth/resend-verification
@@ -152,7 +152,7 @@ Content-Type: application/json
 - Security: Rate-limit this endpoint and do not disclose whether an email exists or its status.
 
 ## Forget Password
-- Endpoint: `POST /auth/forget-password` — sends a password reset link to the user if the account exists and is eligible. Always returns a generic success response to prevent email enumeration.
+- Endpoint: `POST /auth/forget-password` â€” sends a password reset link to the user if the account exists and is eligible. Always returns a generic success response to prevent email enumeration.
 - Request body:
 ```
 POST /auth/forget-password
@@ -179,7 +179,7 @@ Content-Type: application/json
   - Consider adding rate-limiting and email delivery monitoring.
 
 ## Reset Password
-- Endpoint: `POST /auth/reset-password` — resets a user's password using a time-limited reset token.
+- Endpoint: `POST /auth/reset-password` â€” resets a user's password using a time-limited reset token.
 - Request body:
 ```
 POST /auth/reset-password
@@ -207,7 +207,7 @@ Content-Type: application/json
   - Rate-limit this endpoint to reduce brute force attempts.
 
 ## Verify User
-- Endpoint: `POST /auth/verify` — verifies a user using a time‑limited verification token and activates the account if pending. Returns fresh access and refresh tokens.
+- Endpoint: `POST /auth/verify` â€” verifies a user using a timeâ€‘limited verification token and activates the account if pending. Returns fresh access and refresh tokens.
 - Request body:
 ```
 POST /auth/verify
@@ -246,7 +246,7 @@ Content-Type: application/json
 - Security: Return generic errors for invalid/expired tokens to avoid leaking account state. Rate-limit this endpoint.
 
 ## Login
-- Endpoint: `POST /auth/login` — authenticates a user with email and password and returns access and refresh tokens. User must be `active`.
+- Endpoint: `POST /auth/login` â€” authenticates a user with email and password and returns access and refresh tokens. User must be `active`.
 - Request body:
 ```
 POST /auth/login
@@ -276,7 +276,7 @@ Content-Type: application/json
 - Security: lock accounts on repeated failures, rate-limit, and return generic "Invalid credentials" to avoid information leakage.
 
 ## Get Authenticated User
-- Endpoint: `GET /auth/me` — retrieves the basic profile for the user associated with the provided bearer JWT.
+- Endpoint: `GET /auth/me` â€” retrieves the basic profile for the user associated with the provided bearer JWT.
 - Auth: Requires `Authorization: Bearer <accessToken>` header.
 - Request body: none
 - Response (200 OK):
@@ -295,7 +295,7 @@ Content-Type: application/json
   }
 }
 ```
-- Security: Protected by JWT; returns only non-sensitive fields. Use short‑lived access tokens and rotate refresh tokens regularly.
+- Security: Protected by JWT; returns only non-sensitive fields. Use shortâ€‘lived access tokens and rotate refresh tokens regularly.
 
 ## Item Listings
 
@@ -480,9 +480,23 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
 - Permissions: Only the listing owner can delete; items that have moved beyond pickup/processing states are protected.
 - Behaviour: Deletes the item record and associated metadata; callers receive `204 No Content` on success.
 - Response: No body (204).
-
+### Create Claim (`POST /claims`)
+- Purpose: Collectors reserve an active listing so logistics teams can review and approve fulfilment.
+- Auth: Requires `Authorization: Bearer <accessToken>` with `collector` or `admin` role.
+- Preconditions: Claimant must be `active`; only items marked `active` are eligible and a listing may have one open claim at a time.
+- Safeguards: Rejects self-claims, duplicate claims, and attempts against inactive or non-public listings.
+- Response (201 Created):
+```
+{
+  "id": "f2a8471d",
+  "item_id": "9f5c2c8e",
+  "collector_id": "7b4b29de",
+  "status": "pending_approval",
+  "created_at": "2025-09-25T12:10:00Z"
+}
+```
 ## Create Address
-- Endpoint: `POST /addresses` — creates a new user address and validates it lies within the active London service zone.
+- Endpoint: `POST /addresses` â€” creates a new user address and validates it lies within the active London service zone.
 - Auth: Requires `Authorization: Bearer <accessToken>` header.
 - Request body:
 ```
@@ -517,7 +531,7 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
 - Security: JWT-protected; validates zone membership server-side; avoids exposing internal geometry details in the response.
 
 ## Create Pickup Order
-- Endpoint: `POST /orders` — donors create a listing which generates a pickup order and one or more items. The order copies the origin address geometry for immutability. Matching is asynchronous.
+- Endpoint: `POST /orders` â€” donors create a listing which generates a pickup order and one or more items. The order copies the origin address geometry for immutability. Matching is asynchronous.
 - Auth: Requires `Authorization: Bearer <accessToken>` header.
 - Request body:
 ```
@@ -569,7 +583,7 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
 - Security: JWT-protected; validates ownership and zone server-side; does not disclose internal entity structure in responses.
 
 ## Search Listings (Collectors)
-- Endpoint: `GET /orders/search` — find nearby active listings using geospatial search.
+- Endpoint: `GET /orders/search` â€” find nearby active listings using geospatial search.
 - Auth: Requires `Authorization: Bearer <accessToken>` and `collector` role.
 - Query params:
   - `lat` (number, required): your latitude.
@@ -609,3 +623,17 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
 
 
 
+
+
+### Approve Claim (`PATCH /claims/{id}/approve`)
+- Purpose: Admins transition pending claims into an approved state once logistics are confirmed.
+- Auth: Requires `Authorization: Bearer <accessToken>` with the `admin` role.
+- Preconditions: Claim must exist and remain `pending_approval`; conflicts return 409 instead of silently re-approving.
+- Response (200 OK):
+```
+{
+  "id": "f2a8471d",
+  "status": "approved",
+  "approved_at": "2025-09-25T12:15:00Z"
+}
+```
