@@ -1,13 +1,15 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { PickupOrder, PickupOrderStatus } from './pickup-order.entity';
-import { PickupItem } from './pickup-item.entity';
+
 import { Address } from '../addresses/address.entity';
-import { User } from '../users/user.entity';
 import { ServiceZone } from '../addresses/service-zone.entity';
+import { User } from '../users/user.entity';
+
 import { CreatePickupOrderDto } from './dto/create-order.dto';
 import { SearchOrdersDto } from './dto/search-orders.dto';
+import { PickupItem } from './pickup-item.entity';
+import { PickupOrder, PickupOrderStatus } from './pickup-order.entity';
 
 @Injectable()
 export class OrdersService {

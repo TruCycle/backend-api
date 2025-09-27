@@ -1,14 +1,17 @@
 import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
-import { AuthService } from './auth.service';
-import { ResendVerificationDto } from './dto/resend-verification.dto';
-import { VerifyDto } from './dto/verify.dto';
-import { ForgetPasswordDto } from './dto/forget-password.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
+import { AuthService } from './auth.service';
+import { ForgetPasswordDto } from './dto/forget-password.dto';
+import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyDto } from './dto/verify.dto';
+
 
 @ApiTags('auth')
 @Controller('auth')

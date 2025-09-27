@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
+
 import configuration from '../config/configuration';
 import { PostgisExtensionMigration1700000000001 } from '../database/migrations/1700000000001-CreatePostgisExtension';
 import { CreateUuidExtension1700000000002 } from '../database/migrations/1700000000002-CreateUuidExtension';
@@ -8,9 +9,9 @@ import { CreateServiceZoneAndSeedLondon1700000000004 } from '../database/migrati
 import { CreatePickupOrderAndItem1700000000005 } from '../database/migrations/1700000000005-CreatePickupOrderAndItem';
 import { AddPendingStatusAndUserNames1700000000006 } from '../database/migrations/1700000000006-AddPendingStatusAndUserNames';
 import { SetUserStatusDefaultPending1700000000007 } from '../database/migrations/1700000000007-SetUserStatusDefaultPending';
-import { User } from '../modules/users/user.entity';
 import { Role } from '../modules/users/role.entity';
 import { UserRole } from '../modules/users/user-role.entity';
+import { User } from '../modules/users/user.entity';
 
 async function run() {
   const cfg = configuration();

@@ -6,6 +6,7 @@ import {
   Unique,
   OneToMany,
 } from 'typeorm';
+
 import { UserRole } from './user-role.entity';
 
 export enum UserStatus {

@@ -371,6 +371,116 @@ Content-Type: application/json
   - `OSM_TIMEOUT_MS` (geocoder request timeout, default 5000 ms)
   - `ITEM_QR_BASE_URL` (base URL for generated QR image links)
 
+### Retrieve Items (`GET /items`)
+- Purpose: Query public listings near a point with optional status/category filters. Falls back to postcode geocoding when coordinates are missing.
+- Auth: None (public, read-only).
+- Required location: Provide either `lat`/`lng` pair or `postcode` (UK-style) so the service can geocode a search origin.
+- Optional query: `radius` (km, default 5, max 50), `status` (defaults to `active` and restricted to public states), `category` (case-insensitive exact match), `page` (default 1), `limit` (default 10, max 50).
+- Distance ordering: Results are sorted by proximity with distances rounded to the nearest 0.1 km.
+- Safety: Inputs are clamped to mitigate wide scans; responses omit donor identifiers, cap image lists to five vetted HTTPS URLs, and fall back to deterministic QR code URLs when missing.
+- Example request:
+```
+GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&page=1&limit=10
+```
+- Response (200 OK):
+```
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "search_origin": { "lat": 51.5072, "lng": -0.1276, "radius_km": 5 },
+    "items": [
+      {
+        "id": "9f5c2c8e",
+        "title": "Vintage Wooden Dining Table",
+        "status": "active",
+        "distance_km": 1.2,
+        "pickup_option": "donate",
+        "qr_code": "https://cdn.trucycle.com/qrs/item-9f5c2c8e.png",
+        "images": ["https://example.com/item1_img1.jpg"],
+        "created_at": "2025-09-25T12:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+### Retrieve Item Detail (`GET /items/{id}`)
+- Purpose: Fetch a single public listing with location, media, metadata, and recent scan events.
+- Auth: None (public, read-only).
+- Availability: Only items in public states (active/pending logistics) are returned; others respond with 404 to avoid leaking private listings.
+- Response payload trims address details to postcode, rounds coordinates to stored precision, surfaces up to five vetted HTTPS image URLs, and falls back to deterministic QR URLs if missing.
+- Scan events (max 25) are ordered newest-first and include scan type, optional shop ID, and ISO timestamps; the list silently returns empty if the audit table is unavailable.
+- Response (200 OK):
+```
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "id": "9f5c2c8e",
+    "title": "Vintage Wooden Dining Table",
+    "description": "Solid oak dining table, seats 6-8 people.",
+    "status": "active",
+    "location": {
+      "postcode": "SW1A 2AA",
+      "latitude": 51.5034,
+      "longitude": -0.1276
+    },
+    "qr_code": "https://cdn.trucycle.com/qrs/item-9f5c2c8e.png",
+    "scan_events": [
+      {
+        "scan_type": "DROP_OFF_IN",
+        "shop_id": "4c2b8db4",
+        "scanned_at": "2025-09-26T09:00:00Z"
+      }
+    ],
+    "images": [
+      {
+        "url": "https://example.com/item1_img1.jpg",
+        "alt_text": "Dining table front view"
+      }
+    ],
+    "pickup_option": "exchange",
+    "metadata": {
+      "weight_kg": 50,
+      "dimensions_cm": "180x90x75",
+      "material": "oak wood"
+    },
+    "created_at": "2025-09-25T12:00:00Z"
+  }
+}
+```
+
+### Update Item (`PATCH /items/{id}`)
+- Purpose: Authenticated donors adjust listing fields such as title, condition, postcode, delivery preferences, images, and structured metadata without recreating the listing.
+- Auth: Requires `Authorization: Bearer <accessToken>`.
+- Permissions: Only the listing owner can edit; requests are rejected for items that have progressed beyond recyclable/collection processing states.
+- Location safety: Updating `address_line` or `postcode` triggers re-geocoding and a fresh service-zone check; updates outside supported polygons are blocked.
+- Allowed body fields: `title`, `description`, `condition`, `category`, `address_line`, `postcode`, `delivery_preferences`, `metadata`, `images`, `dropoff_location_id`.
+- Response (200 OK):
+```
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "id": "9f5c2c8e",
+    "title": "Updated Dining Table",
+    "condition": "fair",
+    "postcode": "EC1A 1BB",
+    "latitude": 51.5202,
+    "longitude": -0.0979,
+    "updated_at": "2025-09-25T14:00:00Z"
+  }
+}
+```
+
+### Delete Item (`DELETE /items/{id}`)
+- Purpose: Authenticated donors permanently remove draft or active listings when they are no longer available.
+- Auth: Requires `Authorization: Bearer <accessToken>`.
+- Permissions: Only the listing owner can delete; items that have moved beyond pickup/processing states are protected.
+- Behaviour: Deletes the item record and associated metadata; callers receive `204 No Content` on success.
+- Response: No body (204).
+
 ## Create Address
 - Endpoint: `POST /addresses` — creates a new user address and validates it lies within the active London service zone.
 - Auth: Requires `Authorization: Bearer <accessToken>` header.
@@ -491,6 +601,9 @@ Content-Type: application/json
   - Limits precision of returned coordinates (~2 decimals) to avoid revealing exact donor location.
   - Currently returns a public display name "First L."; rating is not yet implemented and may be `null`.
   - Filters for active statuses; future changes may refine eligibility.
+
+
+
 
 
 

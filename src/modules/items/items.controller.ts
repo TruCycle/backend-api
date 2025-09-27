@@ -1,8 +1,12 @@
-import { Body, Controller, Get, Post, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { ItemsService } from './items.service';
-import { CreateItemDto } from './dto/create-item.dto';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiNoContentResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
+import { CreateItemDto } from './dto/create-item.dto';
+import { SearchItemsDto } from './dto/search-items.dto';
+import { UpdateItemDto } from './dto/update-item.dto';
+import { ItemsService } from './items.service';
 
 @ApiTags('items')
 @Controller('items')
@@ -12,6 +16,44 @@ export class ItemsController {
   @Get('health')
   health() {
     return { status: 'ok' };
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'Retrieve public item listings near a location', operationId: 'searchItems' })
+  async search(@Query() query: SearchItemsDto) {
+    return this.items.searchPublicListings(query);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Retrieve a single item listing by id', operationId: 'getItemById' })
+  async findOne(@Param('id') id: string) {
+    return this.items.getPublicItem(id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update an existing item listing', operationId: 'updateItem' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  async update(@Param('id') id: string, @Body() dto: UpdateItemDto, @Req() req: any) {
+    const userId = req?.user?.sub;
+    if (!userId || typeof userId !== 'string') {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+    return this.items.updateItem(userId, id, dto);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete an existing item listing', operationId: 'deleteItem' })
+  @ApiNoContentResponse({ description: 'Item deleted' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(204)
+  async remove(@Param('id') id: string, @Req() req: any) {
+    const userId = req?.user?.sub;
+    if (!userId || typeof userId !== 'string') {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+    await this.items.deleteItem(userId, id);
   }
 
   @Post()
@@ -26,3 +68,4 @@ export class ItemsController {
     return this.items.createItem(userId, dto);
   }
 }
+

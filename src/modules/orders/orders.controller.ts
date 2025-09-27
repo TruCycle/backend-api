@@ -9,11 +9,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { OrdersService } from './orders.service';
-import { CreatePickupOrderDto } from './dto/create-order.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
+import { CreatePickupOrderDto } from './dto/create-order.dto';
 import { SearchOrdersDto } from './dto/search-orders.dto';
+import { OrdersService } from './orders.service';
 
 @ApiTags('orders')
 @ApiBearerAuth()

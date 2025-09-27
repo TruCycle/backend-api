@@ -1,12 +1,14 @@
+import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
-import { AuthService } from './auth.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { User, UserStatus } from '../users/user.entity';
+
+import { PasswordService } from '../../common/security/password.service';
+import { EmailService } from '../notifications/email.service';
 import { Role, RoleCode } from '../users/role.entity';
 import { UserRole } from '../users/user-role.entity';
-import { PasswordService } from '../../common/security/password.service';
-import { JwtService } from '@nestjs/jwt';
-import { EmailService } from '../notifications/email.service';
+import { User, UserStatus } from '../users/user.entity';
+
+import { AuthService } from './auth.service';
 
 function repoMock() {
   return {

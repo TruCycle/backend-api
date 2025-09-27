@@ -1,9 +1,11 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { MediaService } from './media.service';
-import { PresignPhotoDto } from './dto/presign-photo.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
+import { PresignPhotoDto } from './dto/presign-photo.dto';
+import { MediaService } from './media.service';
 
 @ApiTags('media')
 @ApiBearerAuth()

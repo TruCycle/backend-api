@@ -7,6 +7,7 @@ import {
   MaxLength,
   IsNotEmpty,
 } from 'class-validator';
+
 import { RoleCode } from '../../users/role.entity';
 
 export class RegisterDto {

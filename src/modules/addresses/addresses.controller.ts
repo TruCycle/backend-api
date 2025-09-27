@@ -1,9 +1,11 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+
+import { AuthUser } from '../../common/decorators/auth-user.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
 import { AddressesService } from './addresses.service';
 import { CreateAddressDto } from './dto/create-address.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { AuthUser } from '../../common/decorators/auth-user.decorator';
 
 @ApiTags('addresses')
 @ApiBearerAuth()

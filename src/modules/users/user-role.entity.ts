@@ -5,8 +5,9 @@ import {
   Unique,
   JoinColumn,
 } from 'typeorm';
-import { User } from './user.entity';
+
 import { Role } from './role.entity';
+import { User } from './user.entity';
 
 @Entity('user_role')
 @Unique(['user', 'role'])

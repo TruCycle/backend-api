@@ -8,9 +8,11 @@ import {
   PrimaryGeneratedColumn,
   VersionColumn,
 } from 'typeorm';
-import { User } from '../users/user.entity';
+
 import { Address } from '../addresses/address.entity';
 import { ServiceZone } from '../addresses/service-zone.entity';
+import { User } from '../users/user.entity';
+
 import { PickupItem } from './pickup-item.entity';
 
 export enum PickupOrderStatus {

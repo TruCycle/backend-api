@@ -1,8 +1,7 @@
-import { Injectable, InternalServerErrorException, BadRequestException } from '@nestjs/common';
-import { S3Client, HeadBucketCommand } from '@aws-sdk/client-s3';
+import { S3Client, HeadBucketCommand , GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createPresignedPost, PresignedPost } from '@aws-sdk/s3-presigned-post';
-import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { Injectable, InternalServerErrorException, BadRequestException } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 
 function extForContentType(ct: string): string {
@@ -47,7 +46,7 @@ export class MediaService {
   private async assertBucket(): Promise<void> {
     try {
       await this.s3.send(new HeadBucketCommand({ Bucket: this.bucket }));
-    } catch (e) {
+    } catch (_err) {
       throw new InternalServerErrorException('S3 bucket not accessible');
     }
   }

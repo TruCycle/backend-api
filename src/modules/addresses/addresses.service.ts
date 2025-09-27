@@ -1,10 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Address } from './address.entity';
-import { ServiceZone } from './service-zone.entity';
+
 import { User } from '../users/user.entity';
+
+import { Address } from './address.entity';
 import { CreateAddressDto } from './dto/create-address.dto';
+import { ServiceZone } from './service-zone.entity';
 
 @Injectable()
 export class AddressesService {

@@ -1,5 +1,6 @@
 import { Body, Controller, Headers, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
+
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
 class ScanDto {

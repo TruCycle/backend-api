@@ -3,9 +3,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 export class AddPendingStatusAndUserNames1700000000006 implements MigrationInterface {
   name = 'AddPendingStatusAndUserNames1700000000006';
 
-  public async up(queryRunner: QueryRunner): Promise<void> {
+  public async up(_queryRunner: QueryRunner): Promise<void> {
     // Ensure enum has 'pending' value
-    await queryRunner.query(`
+    await _queryRunner.query(`
       DO $$
       BEGIN
         IF NOT EXISTS (
@@ -19,15 +19,14 @@ export class AddPendingStatusAndUserNames1700000000006 implements MigrationInter
     `);
 
     // Add first_name / last_name columns if missing
-    await queryRunner.query(`ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS first_name text`);
-    await queryRunner.query(`ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS last_name text`);
+    await _queryRunner.query('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS first_name text');
+    await _queryRunner.query('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS last_name text');
 
     // Do not set default to 'pending' here to avoid
-    // PostgreSQL \"unsafe use of new value\" error within the same transaction.
+    // PostgreSQL "unsafe use of new value" error within the same transaction.
   }
 
-  public async down(queryRunner: QueryRunner): Promise<void> {
+  public async down(_queryRunner: QueryRunner): Promise<void> {
     // No-op: defaults unchanged here; columns retained for data safety.
   }
 }
-

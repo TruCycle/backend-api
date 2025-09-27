@@ -1,16 +1,16 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import request from 'supertest';
-import { AddressesModule } from '../src/modules/addresses/addresses.module';
-import { ResponseInterceptor } from '../src/common/interceptors/response.interceptor';
-import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import request from 'supertest';
+
+import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
+import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
+import { ResponseInterceptor } from '../src/common/interceptors/response.interceptor';
 import { Address } from '../src/modules/addresses/address.entity';
+import { AddressesController } from '../src/modules/addresses/addresses.controller';
+import { AddressesService } from '../src/modules/addresses/addresses.service';
 import { ServiceZone } from '../src/modules/addresses/service-zone.entity';
 import { User } from '../src/modules/users/user.entity';
-import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
-import { AddressesService } from '../src/modules/addresses/addresses.service';
-import { AddressesController } from '../src/modules/addresses/addresses.controller';
 
 // Integration-style test with mocked repos + guard
 describe('Addresses E2E (mocked DB + auth)', () => {

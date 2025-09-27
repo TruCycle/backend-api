@@ -1,9 +1,12 @@
 import { Test } from '@nestjs/testing';
-import { AddressesService } from './addresses.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Address } from './address.entity';
-import { ServiceZone } from './service-zone.entity';
+
 import { User } from '../users/user.entity';
+
+import { Address } from './address.entity';
+import { AddressesService } from './addresses.service';
+import { ServiceZone } from './service-zone.entity';
+
 
 function repoMock() {
   return {

@@ -1,12 +1,13 @@
 import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { JwtService } from '@nestjs/jwt';
-import { User, UserStatus } from '../users/user.entity';
-import { Role, RoleCode } from '../users/role.entity';
-import { UserRole } from '../users/user-role.entity';
+
 import { PasswordService } from '../../common/security/password.service';
 import { EmailService } from '../notifications/email.service';
+import { Role, RoleCode } from '../users/role.entity';
+import { UserRole } from '../users/user-role.entity';
+import { User, UserStatus } from '../users/user.entity';
 
 interface JwtPayload {
   sub: string;
@@ -93,7 +94,7 @@ export class AuthService {
     let payload: any;
     try {
       payload = await this.jwt.verifyAsync(token);
-    } catch (e) {
+    } catch (_err) {
       // Do not leak whether token exists or expired specifics
       throw new UnauthorizedException('Invalid or expired token');
     }
@@ -252,7 +253,7 @@ export class AuthService {
     let payload: any;
     try {
       payload = await this.jwt.verifyAsync(token);
-    } catch (e) {
+    } catch (_err) {
       throw new UnauthorizedException('Invalid or expired token');
     }
 
