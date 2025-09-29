@@ -48,6 +48,12 @@ const DELETABLE_ITEM_STATUSES: readonly ItemStatus[] = [
   ItemStatus.PENDING_RECYCLE_PROCESSING,
 ];
 
+const IMPACT_ITEM_STATUSES: readonly ItemStatus[] = [
+  ItemStatus.COMPLETE,
+  ItemStatus.RECYCLED,
+];
+const DEFAULT_MONTHLY_CO2_GOAL_KG = 50;
+
 @Injectable()
 export class ItemsService {
   private readonly logger = new Logger(ItemsService.name);
@@ -64,6 +70,7 @@ export class ItemsService {
   ) {}
 
   private readonly qrBaseUrl = (process.env.ITEM_QR_BASE_URL || 'https://cdn.trucycle.com/qrs').replace(/\/$/, '');
+  private readonly monthlyCo2GoalKg = this.resolveMonthlyCo2Goal();
 
   private determineInitialStatus(option: ItemPickupOption): ItemStatus {
     switch (option) {
@@ -97,6 +104,36 @@ export class ItemsService {
       }
     }
     return Object.keys(safe).length ? safe : null;
+  }
+
+
+  private resolveMonthlyCo2Goal(): number {
+    const raw = process.env.MONTHLY_CO2_SAVINGS_GOAL_KG ?? process.env.MONTHLY_CO2_GOAL_KG;
+    if (typeof raw !== 'string') {
+      return DEFAULT_MONTHLY_CO2_GOAL_KG;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return DEFAULT_MONTHLY_CO2_GOAL_KG;
+    }
+    return Math.min(parsed, 100000);
+  }
+
+  private coerceNumber(value: unknown): number {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : 0;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private roundMetric(value: number, decimals = 1): number {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    const precision = Math.max(0, Math.min(4, Math.trunc(decimals)));
+    const factor = Math.pow(10, precision);
+    return Math.round(value * factor) / factor;
   }
 
   private buildQrCodeUrl(id: string): string {
@@ -441,6 +478,69 @@ export class ItemsService {
     };
   }
 
+
+  async getUserImpactMetrics(userId: string) {
+    const normalizedUserId = typeof userId === 'string' ? userId.trim() : '';
+    if (!normalizedUserId) {
+      throw new BadRequestException('User id is required');
+    }
+
+    const impactStatuses = Array.from(IMPACT_ITEM_STATUSES);
+
+    const totalsRaw = await this.items
+      .createQueryBuilder('item')
+      .select('COALESCE(SUM(item.estimated_co2_saved_kg), 0)', 'total_co2')
+      .addSelect("SUM(CASE WHEN item.pickup_option = :exchange THEN 1 ELSE 0 END)", 'exchange_count')
+      .addSelect("SUM(CASE WHEN item.pickup_option = :donate THEN 1 ELSE 0 END)", 'donate_count')
+      .where('item.donor_id = :userId', { userId: normalizedUserId })
+      .andWhere('item.status IN (:...impactStatuses)', { impactStatuses })
+      .setParameters({
+        exchange: ItemPickupOption.EXCHANGE,
+        donate: ItemPickupOption.DONATE,
+      })
+      .getRawOne<{ total_co2: string | number | null; exchange_count: string | number | null; donate_count: string | number | null }>();
+
+    const totalCo2Raw = this.coerceNumber(totalsRaw?.total_co2);
+    const itemsExchanged = Math.max(0, Math.trunc(this.coerceNumber(totalsRaw?.exchange_count)));
+    const itemsDonated = Math.max(0, Math.trunc(this.coerceNumber(totalsRaw?.donate_count)));
+
+    const now = new Date();
+    const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+    const startOfNextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0));
+
+    const monthlyRaw = await this.items
+      .createQueryBuilder('item')
+      .select('COALESCE(SUM(item.estimated_co2_saved_kg), 0)', 'monthly_co2')
+      .leftJoin(Claim, 'claim', 'claim.item_id = item.id')
+      .where('item.donor_id = :userId', { userId: normalizedUserId })
+      .andWhere('item.status IN (:...impactStatuses)', { impactStatuses })
+      .andWhere('COALESCE(claim.completed_at, item.updated_at) >= :startOfMonth', { startOfMonth })
+      .andWhere('COALESCE(claim.completed_at, item.updated_at) < :startOfNextMonth', { startOfNextMonth })
+      .getRawOne<{ monthly_co2: string | number | null }>();
+
+    const monthlyCo2Raw = this.coerceNumber(monthlyRaw?.monthly_co2);
+
+    const goalKg = this.monthlyCo2GoalKg;
+    const totalCo2SavedKg = this.roundMetric(totalCo2Raw);
+    const monthlyAchievedKg = this.roundMetric(monthlyCo2Raw);
+    const remainingKg = goalKg > 0 ? Math.max(goalKg - monthlyCo2Raw, 0) : 0;
+    const remainingKgRounded = this.roundMetric(remainingKg);
+    const percentRaw = goalKg > 0 ? (monthlyCo2Raw / goalKg) * 100 : 0;
+    const progressPercent = this.roundMetric(Math.max(0, Math.min(100, percentRaw)), 1);
+    const targetKg = this.roundMetric(goalKg);
+
+    return {
+      total_co2_saved_kg: totalCo2SavedKg,
+      items_exchanged: itemsExchanged,
+      items_donated: itemsDonated,
+      monthly_goal: {
+        target_kg: targetKg,
+        achieved_kg: monthlyAchievedKg,
+        remaining_kg: remainingKgRounded,
+        progress_percent: progressPercent,
+      },
+    };
+  }
   async createItem(userId: string, dto: CreateItemDto) {
     const user = await this.users.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');

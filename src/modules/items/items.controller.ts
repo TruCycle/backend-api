@@ -49,6 +49,17 @@ export class ItemsController {
     return this.items.getUserCollectedItems(userId, query);
   }
 
+  @Get('me/impact')
+  @ApiOperation({ summary: 'Get environmental impact metrics for the authenticated user', operationId: 'getMyImpactMetrics' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  async getImpact(@Req() req: any) {
+    const userId = req?.user?.sub;
+    if (!userId || typeof userId !== 'string') {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+    return this.items.getUserImpactMetrics(userId);
+  }
   @Get(':id')
   @ApiOperation({ summary: 'Retrieve a single item listing by id', operationId: 'getItemById' })
   async findOne(@Param('id') id: string) {
