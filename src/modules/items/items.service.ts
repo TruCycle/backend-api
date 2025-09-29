@@ -16,6 +16,7 @@ import { CreateItemDto, CreateItemImageDto } from './dto/create-item.dto';
 import { SearchItemsDto } from './dto/search-items.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { ItemGeocodingService } from './item-geocoding.service';
+import { QrImageService } from '../qr/qr-image.service';
 import { ItemLocation } from './item-location.interface';
 import { Item, ItemPickupOption, ItemStatus } from './item.entity';
 
@@ -59,6 +60,7 @@ export class ItemsService {
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(ServiceZone) private readonly zones: Repository<ServiceZone>,
     private readonly geocoding: ItemGeocodingService,
+    private readonly qrImage: QrImageService,
   ) {}
 
   private readonly qrBaseUrl = (process.env.ITEM_QR_BASE_URL || 'https://cdn.trucycle.com/qrs').replace(/\/$/, '');
@@ -267,9 +269,20 @@ export class ItemsService {
 
     const saved = await this.items.save(entity);
 
-    if (!saved.qrCodeUrl) {
-      saved.qrCodeUrl = this.buildQrCodeUrl(saved.id);
-      await this.items.update(saved.id, { qrCodeUrl: saved.qrCodeUrl });
+    // Attempt to generate and upload a QR PNG to Cloudinary.
+    // If it fails, fall back to a computed URL based on ITEM_QR_BASE_URL.
+    try {
+      const uploadedUrl = await this.qrImage.generateAndUploadItemQrPng(saved.id);
+      if (uploadedUrl) {
+        saved.qrCodeUrl = uploadedUrl;
+        await this.items.update(saved.id, { qrCodeUrl: saved.qrCodeUrl });
+      }
+    } catch (err) {
+      this.logger.warn(`QR upload failed for item ${saved.id}: ${err instanceof Error ? err.message : err}`);
+      if (!saved.qrCodeUrl) {
+        saved.qrCodeUrl = this.buildQrCodeUrl(saved.id);
+        await this.items.update(saved.id, { qrCodeUrl: saved.qrCodeUrl });
+      }
     }
 
     return {

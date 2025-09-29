@@ -9,10 +9,12 @@ import { User } from '../users/user.entity';
 
 import { QrController } from './qr.controller';
 import { QrService } from './qr.service';
+import { QrImageService } from './qr-image.service';
 
 @Module({
   imports: [ClaimsModule, TypeOrmModule.forFeature([Claim, Item, User])],
   controllers: [QrController],
-  providers: [JwtAuthGuard, QrService],
+  providers: [JwtAuthGuard, QrService, QrImageService],
+  exports: [QrImageService],
 })
 export class QrModule {}
