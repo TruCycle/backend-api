@@ -23,9 +23,9 @@ import { Claim } from './modules/claims/claim.entity';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { Item } from './modules/items/item.entity';
 import { ItemsModule } from './modules/items/items.module';
-import { ReviewsModule } from './modules/reviews/reviews.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { QrModule } from './modules/qr/qr.module';
+import { ReviewsModule } from './modules/reviews/reviews.module';
 // Removed modules: Addresses, Admin, Media, Orders, Search
 import { ShopsModule } from './modules/shops/shops.module';
 import { User } from './modules/users/user.entity';

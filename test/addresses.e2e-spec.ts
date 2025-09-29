@@ -1,3 +1,4 @@
+/* eslint-disable import/no-unresolved */
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';

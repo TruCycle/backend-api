@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CreateItemDto } from './dto/create-item.dto';
 import { SearchItemsDto } from './dto/search-items.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
+import { UserCollectedItemsQueryDto, UserItemsQueryDto } from './dto/user-items-query.dto';
 import { ItemsService } from './items.service';
 
 @ApiTags('items')
@@ -22,6 +23,30 @@ export class ItemsController {
   @ApiOperation({ summary: 'Retrieve public item listings near a location', operationId: 'searchItems' })
   async search(@Query() query: SearchItemsDto) {
     return this.items.searchPublicListings(query);
+  }
+
+  @Get('me/listed')
+  @ApiOperation({ summary: 'List items created by the authenticated user', operationId: 'listMyItems' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  async listMine(@Query() query: UserItemsQueryDto, @Req() req: any) {
+    const userId = req?.user?.sub;
+    if (!userId || typeof userId !== 'string') {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+    return this.items.getUserListedItems(userId, query);
+  }
+
+  @Get('me/collected')
+  @ApiOperation({ summary: 'List items collected by the authenticated user', operationId: 'listMyCollectedItems' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  async listCollected(@Query() query: UserCollectedItemsQueryDto, @Req() req: any) {
+    const userId = req?.user?.sub;
+    if (!userId || typeof userId !== 'string') {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+    return this.items.getUserCollectedItems(userId, query);
   }
 
   @Get(':id')

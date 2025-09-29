@@ -39,5 +39,19 @@
         "caughtErrorsIgnorePattern": "^_"
       }
     ]
+  },
+  "settings": {
+    "import/resolver": {
+      "node": {
+        "extensions": [
+          ".js",
+          ".ts"
+        ]
+      }
+    },
+    "import/core-modules": [
+      "cloudinary",
+      "qrcode"
+    ]
   }
 }

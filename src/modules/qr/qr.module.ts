@@ -7,10 +7,9 @@ import { ClaimsModule } from '../claims/claims.module';
 import { Item } from '../items/item.entity';
 import { User } from '../users/user.entity';
 
+import { QrImageService } from './qr-image.service';
 import { QrController } from './qr.controller';
 import { QrService } from './qr.service';
-import { QrImageService } from './qr-image.service';
-
 @Module({
   imports: [ClaimsModule, TypeOrmModule.forFeature([Claim, Item, User])],
   controllers: [QrController],

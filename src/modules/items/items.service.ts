@@ -1,26 +1,21 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-  ServiceUnavailableException,
-  Logger,
-} from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
-import { User, UserStatus } from '../users/user.entity';
-import { KycProfile, KycStatus } from '../users/kyc-profile.entity';
+import { Claim } from '../claims/claim.entity';
+import { QrImageService } from '../qr/qr-image.service';
 import { UserReview } from '../reviews/user-review.entity';
+import { KycProfile, KycStatus } from '../users/kyc-profile.entity';
+import { User, UserStatus } from '../users/user.entity';
 
+import { Co2EstimationService } from './co2-estimation.service';
 import { CreateItemDto, CreateItemImageDto } from './dto/create-item.dto';
 import { SearchItemsDto } from './dto/search-items.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
+import { UserCollectedItemsQueryDto, UserItemsQueryDto } from './dto/user-items-query.dto';
 import { ItemGeocodingService } from './item-geocoding.service';
-import { QrImageService } from '../qr/qr-image.service';
 import { ItemLocation } from './item-location.interface';
 import { Item, ItemPickupOption, ItemStatus, SizeUnit } from './item.entity';
-import { Co2EstimationService } from './co2-estimation.service';
 
 const DEFAULT_RADIUS_KM = 5;
 const MIN_RADIUS_KM = 0.1;
@@ -59,6 +54,7 @@ export class ItemsService {
 
   constructor(
     @InjectRepository(Item) private readonly items: Repository<Item>,
+    @InjectRepository(Claim) private readonly claims: Repository<Claim>,
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(KycProfile) private readonly kycs: Repository<KycProfile>,
     @InjectRepository(UserReview) private readonly reviews: Repository<UserReview>,
@@ -182,6 +178,17 @@ export class ItemsService {
     return output;
   }
 
+  private formatDate(input: any): string | null {
+    if (!input) {
+      return null;
+    }
+    if (input instanceof Date && !Number.isNaN(input.getTime())) {
+      return input.toISOString();
+    }
+    const parsed = new Date(input as any);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
   private async fetchScanEvents(itemId: string) {
     try {
       const rows: any[] = await this.items.query(
@@ -213,6 +220,225 @@ export class ItemsService {
       this.logger.debug(`Scan events unavailable for item ${itemId}: ${err instanceof Error ? err.message : err}`);
       return [];
     }
+  }
+
+
+  async getUserListedItems(userId: string, dto: UserItemsQueryDto) {
+    const normalizedUserId = typeof userId === 'string' ? userId.trim() : '';
+    if (!normalizedUserId) {
+      throw new BadRequestException('User id is required');
+    }
+
+    const limitRaw = dto?.limit;
+    let limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) ? limitRaw : DEFAULT_LIMIT;
+    limit = Math.min(Math.max(Math.trunc(limit), 1), MAX_LIMIT);
+
+    const pageRaw = dto?.page;
+    let page = typeof pageRaw === 'number' && Number.isFinite(pageRaw) ? pageRaw : DEFAULT_PAGE;
+    page = Math.min(Math.max(Math.trunc(page), 1), MAX_PAGE);
+    const offset = (page - 1) * limit;
+
+    const qb = this.items
+      .createQueryBuilder('item')
+      .leftJoinAndSelect('item.donor', 'donor')
+      .where('item.donor_id = :userId', { userId: normalizedUserId })
+      .orderBy('item.created_at', 'DESC')
+      .skip(offset)
+      .take(limit);
+
+    if (dto?.status) {
+      qb.andWhere('item.status = :status', { status: dto.status });
+    }
+
+    const [rows, total] = await qb.getManyAndCount();
+
+    const itemIds = rows.map((item) => item.id);
+    const claimRows =
+      itemIds.length > 0
+        ? await this.claims.find({ where: { item: { id: In(itemIds) } } })
+        : [];
+    const claimMap = new Map<string, Claim>(claimRows.map((claim) => [claim.item.id, claim]));
+
+    const items = rows.map((item) => {
+      const claim = claimMap.get(item.id);
+      const metadata = this.sanitizeMetadata(item.metadata ?? undefined);
+      const collector = claim?.collector;
+      const collectorDetails = collector
+        ? {
+            id: collector.id,
+            name: this.displayName(collector),
+            profile_image: collector.profileImageUrl ?? null,
+          }
+        : null;
+
+      const latitude =
+        typeof item.latitude === 'number' && Number.isFinite(item.latitude) ? Number(item.latitude) : null;
+      const longitude =
+        typeof item.longitude === 'number' && Number.isFinite(item.longitude) ? Number(item.longitude) : null;
+
+      return {
+        id: item.id,
+        title: typeof item.title === 'string' ? item.title.trim() : '',
+        status: item.status,
+        pickup_option: item.pickupOption,
+        qr_code:
+          typeof item.qrCodeUrl === 'string' && item.qrCodeUrl.trim()
+            ? item.qrCodeUrl.trim()
+            : this.buildQrCodeUrl(item.id),
+        images: this.normalizeImagesForOutput(item.images),
+        estimated_co2_saved_kg:
+          typeof item.estimatedCo2SavedKg === 'number' && Number.isFinite(item.estimatedCo2SavedKg)
+            ? Number(item.estimatedCo2SavedKg)
+            : null,
+        metadata,
+        location: {
+          address_line:
+            typeof item.addressLine === 'string' && item.addressLine.trim()
+              ? item.addressLine.trim()
+              : null,
+          postcode:
+            typeof item.postcode === 'string' && item.postcode.trim()
+              ? item.postcode.trim().toUpperCase()
+              : null,
+          latitude,
+          longitude,
+        },
+        created_at: this.formatDate(item.createdAt),
+        claim: claim
+          ? {
+              id: claim.id,
+              status: claim.status,
+              approved_at: this.formatDate(claim.approvedAt),
+              completed_at: this.formatDate(claim.completedAt),
+              collector: collectorDetails,
+            }
+          : null,
+      };
+    });
+
+    const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+    return {
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: totalPages,
+      },
+    };
+  }
+
+  async getUserCollectedItems(userId: string, dto: UserCollectedItemsQueryDto) {
+    const normalizedUserId = typeof userId === 'string' ? userId.trim() : '';
+    if (!normalizedUserId) {
+      throw new BadRequestException('User id is required');
+    }
+
+    const limitRaw = dto?.limit;
+    let limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) ? limitRaw : DEFAULT_LIMIT;
+    limit = Math.min(Math.max(Math.trunc(limit), 1), MAX_LIMIT);
+
+    const pageRaw = dto?.page;
+    let page = typeof pageRaw === 'number' && Number.isFinite(pageRaw) ? pageRaw : DEFAULT_PAGE;
+    page = Math.min(Math.max(Math.trunc(page), 1), MAX_PAGE);
+    const offset = (page - 1) * limit;
+
+    const qb = this.claims
+      .createQueryBuilder('claim')
+      .leftJoinAndSelect('claim.item', 'item')
+      .leftJoinAndSelect('item.donor', 'donor')
+      .where('claim.collector_id = :userId', { userId: normalizedUserId })
+      .orderBy('claim.created_at', 'DESC')
+      .skip(offset)
+      .take(limit);
+
+    if (dto?.claim_status) {
+      qb.andWhere('claim.status = :claimStatus', { claimStatus: dto.claim_status });
+    }
+    if (dto?.status) {
+      qb.andWhere('item.status = :itemStatus', { itemStatus: dto.status });
+    }
+
+    const [claims, total] = await qb.getManyAndCount();
+
+    const donorIds = Array.from(
+      new Set(
+        claims
+          .map((claim) => claim.item?.donor?.id)
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+      ),
+    );
+
+    const ownerPairs = await Promise.all(
+      donorIds.map(async (donorId) => [donorId, await this.buildOwnerDetails(donorId)] as const),
+    );
+    const ownerMap = new Map(ownerPairs);
+
+    const items = claims.map((claim) => {
+      const item = claim.item;
+      const metadata = item ? this.sanitizeMetadata(item.metadata ?? undefined) : null;
+      const images = item ? this.normalizeImagesForOutput(item.images) : [];
+      const owner = item?.donor ? ownerMap.get(item.donor.id) ?? null : null;
+      const latitude =
+        item && typeof item.latitude === 'number' && Number.isFinite(item.latitude) ? Number(item.latitude) : null;
+      const longitude =
+        item && typeof item.longitude === 'number' && Number.isFinite(item.longitude)
+          ? Number(item.longitude)
+          : null;
+
+      return {
+        claim_id: claim.id,
+        claim_status: claim.status,
+        claim_created_at: this.formatDate(claim.createdAt),
+        claim_approved_at: this.formatDate(claim.approvedAt),
+        claim_completed_at: this.formatDate(claim.completedAt),
+        item: item
+          ? {
+              id: item.id,
+              title: typeof item.title === 'string' ? item.title.trim() : '',
+              status: item.status,
+              pickup_option: item.pickupOption,
+              qr_code:
+                typeof item.qrCodeUrl === 'string' && item.qrCodeUrl.trim()
+                  ? item.qrCodeUrl.trim()
+                  : this.buildQrCodeUrl(item.id),
+              images,
+              metadata,
+              estimated_co2_saved_kg:
+                typeof item.estimatedCo2SavedKg === 'number' && Number.isFinite(item.estimatedCo2SavedKg)
+                  ? Number(item.estimatedCo2SavedKg)
+                  : null,
+              location: {
+                address_line:
+                  typeof item.addressLine === 'string' && item.addressLine.trim()
+                    ? item.addressLine.trim()
+                    : null,
+                postcode:
+                  typeof item.postcode === 'string' && item.postcode.trim()
+                    ? item.postcode.trim().toUpperCase()
+                    : null,
+                latitude,
+                longitude,
+              },
+              created_at: this.formatDate(item.createdAt),
+              owner,
+            }
+          : null,
+      };
+    });
+
+    const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+    return {
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: totalPages,
+      },
+    };
   }
 
   async createItem(userId: string, dto: CreateItemDto) {
@@ -765,7 +991,7 @@ export class ItemsService {
             verification: {
               email_verified: donor.status === UserStatus.ACTIVE,
               identity_verified: kycMap.get(donor.id) === KycStatus.APPROVED,
-              address_verified: false,
+              address_verified: (addrMap.get(donor.id) ?? 0) > 0,
             },
             rating: ratingMap.get(donor.id)?.rating ?? 0,
             reviews_count: ratingMap.get(donor.id)?.count ?? 0,

@@ -1,6 +1,7 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { v2 as cloudinary, UploadApiOptions, UploadApiResponse } from 'cloudinary';
 import QRCode from 'qrcode';
+
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 
 function trimTrailingSlash(input: string): string {
   return input.replace(/\/$/, '');
