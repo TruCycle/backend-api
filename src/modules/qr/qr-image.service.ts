@@ -1,4 +1,4 @@
-import { v2 as cloudinary, UploadApiOptions, UploadApiResponse } from 'cloudinary';
+import { v2 as cloudinary, UploadApiErrorResponse, UploadApiOptions, UploadApiResponse } from 'cloudinary';
 import QRCode from 'qrcode';
 
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
@@ -78,11 +78,14 @@ export class QrImageService {
     };
 
     const res: UploadApiResponse = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(options, (error, result) => {
-        if (error) return reject(error);
-        if (!result) return reject(new Error('Empty Cloudinary response'));
-        resolve(result as UploadApiResponse);
-      });
+      const stream = cloudinary.uploader.upload_stream(
+        options,
+        (error: UploadApiErrorResponse | null, result?: UploadApiResponse | null) => {
+          if (error) return reject(error);
+          if (!result) return reject(new Error('Empty Cloudinary response'));
+          resolve(result);
+        },
+      );
       stream.end(png);
     });
 
@@ -94,4 +97,5 @@ export class QrImageService {
     return url;
   }
 }
+
 
