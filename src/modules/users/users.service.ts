@@ -5,7 +5,6 @@ import { Repository } from 'typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { User } from './user.entity';
 import { KycProfile, KycStatus } from './kyc-profile.entity';
-import { Address } from '../addresses/address.entity';
 
 @Injectable()
 export class UsersService {
@@ -14,8 +13,6 @@ export class UsersService {
     private readonly repo: Repository<User>,
     @InjectRepository(KycProfile)
     private readonly kycs: Repository<KycProfile>,
-    @InjectRepository(Address)
-    private readonly addresses: Repository<Address>,
   ) {}
 
   async create(dto: CreateUserDto): Promise<User> {
@@ -31,11 +28,17 @@ export class UsersService {
     const user = await this.repo.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     const kyc = await this.kycs.findOne({ where: { user: { id: userId } }, relations: { user: true } });
-    const addrCount = await this.addresses.count({ where: { user: { id: userId } } });
+    let addressVerified = false;
+    try {
+      const rows: any[] = await this.repo.query('SELECT COUNT(1) AS cnt FROM address WHERE user_id = $1', [userId]);
+      addressVerified = Number(rows?.[0]?.cnt || 0) > 0;
+    } catch {
+      addressVerified = false;
+    }
     return {
       email_verified: user.status === 'active',
       identity_verified: kyc?.status === KycStatus.APPROVED,
-      address_verified: addrCount > 0,
+      address_verified: addressVerified,
     };
   }
 

@@ -14,6 +14,11 @@ class UpdateItemBaseDto extends PickType(CreateItemDto, [
   'metadata',
   'dropoffLocationId',
   'estimatedCo2SavedKg',
+  'sizeUnit',
+  'sizeLength',
+  'sizeBreadth',
+  'sizeHeight',
+  'weightKg',
 ]) {}
 
 export class UpdateItemDto extends PartialType(UpdateItemBaseDto) {}

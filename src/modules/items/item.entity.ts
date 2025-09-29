@@ -42,6 +42,12 @@ export interface ItemImage {
   altText?: string | null;
 }
 
+export enum SizeUnit {
+  M = 'm',
+  INCH = 'inch',
+  FT = 'ft',
+}
+
 @Entity('item')
 export class Item {
   @PrimaryGeneratedColumn('uuid')
@@ -106,6 +112,21 @@ export class Item {
 
   @Column({ name: 'estimated_co2_saved_kg', type: 'double precision', nullable: true })
   estimatedCo2SavedKg?: number | null;
+
+  @Column({ name: 'size_length', type: 'double precision', nullable: true })
+  sizeLength?: number | null;
+
+  @Column({ name: 'size_breadth', type: 'double precision', nullable: true })
+  sizeBreadth?: number | null;
+
+  @Column({ name: 'size_height', type: 'double precision', nullable: true })
+  sizeHeight?: number | null;
+
+  @Column({ name: 'size_unit', type: 'enum', enum: SizeUnit, nullable: true })
+  sizeUnit?: SizeUnit | null;
+
+  @Column({ name: 'weight_kg', type: 'double precision', nullable: true })
+  weightKg?: number | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

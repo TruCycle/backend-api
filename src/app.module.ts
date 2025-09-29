@@ -18,19 +18,15 @@ import { AddClaimApprovedAt1700000000010 } from './database/migrations/170000000
 import { AddClaimCompletionAndScanEvents1700000000011 } from './database/migrations/1700000000011-AddClaimCompletionAndScanEvents';
 import { AddUserProfileImageAndItemCo2AndReviews1700000000012 } from './database/migrations/1700000000012-AddUserProfileImageAndItemCo2AndReviews';
 import { GeoModule } from './geo/geo.module';
-import { AddressesModule } from './modules/addresses/addresses.module';
-import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { Claim } from './modules/claims/claim.entity';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { Item } from './modules/items/item.entity';
 import { ItemsModule } from './modules/items/items.module';
-import { MediaModule } from './modules/media/media.module';
 import { ReviewsModule } from './modules/reviews/reviews.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
-import { OrdersModule } from './modules/orders/orders.module';
 import { QrModule } from './modules/qr/qr.module';
-import { SearchModule } from './modules/search/search.module';
+// Removed modules: Addresses, Admin, Media, Orders, Search
 import { ShopsModule } from './modules/shops/shops.module';
 import { User } from './modules/users/user.entity';
 import { UsersModule } from './modules/users/users.module';
@@ -47,10 +43,7 @@ const baseModules: any[] = [
   ItemsModule,
   ClaimsModule,
   QrModule,
-  SearchModule,
   NotificationsModule,
-  AdminModule,
-  MediaModule,
   ReviewsModule,
 ];
 
@@ -89,8 +82,6 @@ const dbModules: any[] = enableDb
         }),
       }),
       UsersModule,
-      AddressesModule,
-      OrdersModule,
     ]
   : [];
 

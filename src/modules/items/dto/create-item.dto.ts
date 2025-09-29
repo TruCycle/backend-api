@@ -4,16 +4,19 @@ import {
   ArrayMaxSize,
   IsArray,
   IsEnum,
+  IsIn,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
   IsUrl,
   IsUUID,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 
-import { ItemCondition, ItemPickupOption } from '../item.entity';
+import { ItemCondition, ItemPickupOption, SizeUnit } from '../item.entity';
 
 export class CreateItemImageDto {
   @ApiProperty({ description: 'Publicly accessible image URL', format: 'uri' })
@@ -118,13 +121,39 @@ export class CreateItemDto {
   @Transform(({ value }) => (value && typeof value === 'object' ? value : undefined))
   metadata?: Record<string, any>;
 
-  @ApiPropertyOptional({
-    name: 'estimated_co2_saved_kg',
-    description: 'Estimated CO2 saved if reused/recycled (kg)',
-    minimum: 0,
-    maximum: 100000,
-  })
+  @ApiProperty({ name: 'size_unit', enum: SizeUnit, description: 'Units for length/breadth/height (m/inch/ft)' })
+  @Expose({ name: 'size_unit' })
+  @IsEnum(SizeUnit)
+  sizeUnit!: SizeUnit;
+
+  @ApiProperty({ name: 'size_length', description: 'Length in provided unit', minimum: 0 })
+  @Expose({ name: 'size_length' })
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  sizeLength!: number;
+
+  @ApiProperty({ name: 'size_breadth', description: 'Breadth in provided unit', minimum: 0 })
+  @Expose({ name: 'size_breadth' })
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  sizeBreadth!: number;
+
+  @ApiProperty({ name: 'size_height', description: 'Height in provided unit', minimum: 0 })
+  @Expose({ name: 'size_height' })
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  sizeHeight!: number;
+
+  @ApiProperty({ name: 'weight_kg', description: 'Weight in kilograms', minimum: 0 })
+  @Expose({ name: 'weight_kg' })
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0)
+  weightKg!: number;
+
+  @ApiPropertyOptional({ name: 'estimated_co2_saved_kg', description: 'Optional estimated CO2 saved (kg)', minimum: 0 })
   @Expose({ name: 'estimated_co2_saved_kg' })
   @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0)
   estimatedCo2SavedKg?: number;
 }
