@@ -37,6 +37,9 @@ export class User {
   @Column({ type: 'text', nullable: true })
   passwordHash?: string | null;
 
+  @Column({ name: 'profile_image_url', type: 'text', nullable: true })
+  profileImageUrl?: string | null;
+
   @Column({
     type: 'enum',
     enum: UserStatus,

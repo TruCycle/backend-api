@@ -117,4 +117,14 @@ export class CreateItemDto {
   @IsObject()
   @Transform(({ value }) => (value && typeof value === 'object' ? value : undefined))
   metadata?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    name: 'estimated_co2_saved_kg',
+    description: 'Estimated CO2 saved if reused/recycled (kg)',
+    minimum: 0,
+    maximum: 100000,
+  })
+  @Expose({ name: 'estimated_co2_saved_kg' })
+  @IsOptional()
+  estimatedCo2SavedKg?: number;
 }

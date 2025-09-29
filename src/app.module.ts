@@ -16,6 +16,7 @@ import { CreateItemListing1700000000008 } from './database/migrations/1700000000
 import { CreateClaimsTable1700000000009 } from './database/migrations/1700000000009-CreateClaimsTable';
 import { AddClaimApprovedAt1700000000010 } from './database/migrations/1700000000010-AddClaimApprovedAt';
 import { AddClaimCompletionAndScanEvents1700000000011 } from './database/migrations/1700000000011-AddClaimCompletionAndScanEvents';
+import { AddUserProfileImageAndItemCo2AndReviews1700000000012 } from './database/migrations/1700000000012-AddUserProfileImageAndItemCo2AndReviews';
 import { GeoModule } from './geo/geo.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { AdminModule } from './modules/admin/admin.module';
@@ -25,6 +26,7 @@ import { ClaimsModule } from './modules/claims/claims.module';
 import { Item } from './modules/items/item.entity';
 import { ItemsModule } from './modules/items/items.module';
 import { MediaModule } from './modules/media/media.module';
+import { ReviewsModule } from './modules/reviews/reviews.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { QrModule } from './modules/qr/qr.module';
@@ -49,6 +51,7 @@ const baseModules: any[] = [
   NotificationsModule,
   AdminModule,
   MediaModule,
+  ReviewsModule,
 ];
 
 const dbModules: any[] = enableDb
@@ -79,6 +82,7 @@ const dbModules: any[] = enableDb
             CreateClaimsTable1700000000009,
             AddClaimApprovedAt1700000000010,
             AddClaimCompletionAndScanEvents1700000000011,
+            AddUserProfileImageAndItemCo2AndReviews1700000000012,
           ],
           migrationsRun: true,
           migrationsTransactionMode: 'each',

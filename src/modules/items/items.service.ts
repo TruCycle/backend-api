@@ -10,7 +10,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { ServiceZone } from '../addresses/service-zone.entity';
+import { Address } from '../addresses/address.entity';
 import { User, UserStatus } from '../users/user.entity';
+import { KycProfile, KycStatus } from '../users/kyc-profile.entity';
+import { UserReview } from '../reviews/user-review.entity';
 
 import { CreateItemDto, CreateItemImageDto } from './dto/create-item.dto';
 import { SearchItemsDto } from './dto/search-items.dto';
@@ -59,6 +62,9 @@ export class ItemsService {
     @InjectRepository(Item) private readonly items: Repository<Item>,
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(ServiceZone) private readonly zones: Repository<ServiceZone>,
+    @InjectRepository(Address) private readonly addresses: Repository<Address>,
+    @InjectRepository(KycProfile) private readonly kycs: Repository<KycProfile>,
+    @InjectRepository(UserReview) private readonly reviews: Repository<UserReview>,
     private readonly geocoding: ItemGeocodingService,
     private readonly qrImage: QrImageService,
   ) {}
@@ -265,6 +271,7 @@ export class ItemsService {
       location: { type: 'Point', coordinates: [location.longitude, location.latitude] },
       latitude: location.latitude,
       longitude: location.longitude,
+      estimatedCo2SavedKg: dto.estimatedCo2SavedKg ?? null,
     });
 
     const saved = await this.items.save(entity);
@@ -290,6 +297,10 @@ export class ItemsService {
       title: saved.title,
       status: saved.status,
       pickup_option: saved.pickupOption,
+      estimated_co2_saved_kg:
+        typeof saved.estimatedCo2SavedKg === 'number' && Number.isFinite(saved.estimatedCo2SavedKg)
+          ? Number(saved.estimatedCo2SavedKg)
+          : null,
       location: {
         address_line: saved.addressLine,
         postcode: saved.postcode,
@@ -301,13 +312,50 @@ export class ItemsService {
     };
   }
 
+  private displayName(user: User): string {
+    const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+    if (name) return name;
+    if (typeof user.email === 'string') return user.email.split('@')[0];
+    return '';
+  }
+
+  private async buildOwnerDetails(userId: string) {
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) return null;
+    const kyc = await this.kycs.findOne({ where: { user: { id: userId } }, relations: { user: true } });
+    const addrCount = await this.addresses.count({ where: { user: { id: userId } } });
+    const agg = await this.reviews
+      .createQueryBuilder('r')
+      .select('r.target_user_id', 'target_user_id')
+      .addSelect('AVG(r.rating)::float', 'avg_rating')
+      .addSelect('COUNT(1)', 'reviews_count')
+      .where('r.target_user_id = :uid', { uid: userId })
+      .groupBy('r.target_user_id')
+      .getRawOne<{ avg_rating: number; reviews_count: string }>();
+    const rating = agg ? Math.round(Number(agg.avg_rating) * 10) / 10 : 0;
+    const reviewsCount = agg ? Number(agg.reviews_count) : 0;
+
+    return {
+      id: user.id,
+      name: this.displayName(user),
+      profile_image: user.profileImageUrl ?? null,
+      verification: {
+        email_verified: user.status === UserStatus.ACTIVE,
+        identity_verified: kyc?.status === KycStatus.APPROVED,
+        address_verified: addrCount > 0,
+      },
+      rating,
+      reviews_count: reviewsCount,
+    };
+  }
+
   async getPublicItem(rawId: string) {
     const id = typeof rawId === 'string' ? rawId.trim() : '';
     if (!id) {
       throw new BadRequestException('Item id is required');
     }
 
-    const item = await this.items.findOne({ where: { id } });
+    const item = await this.items.findOne({ where: { id }, relations: { donor: true } });
     if (!item) {
       throw new NotFoundException('Item not found');
     }
@@ -334,6 +382,8 @@ export class ItemsService {
         ? item.createdAt.toISOString()
         : new Date(item.createdAt as unknown as string).toISOString();
 
+    const owner = item.donor ? await this.buildOwnerDetails(item.donor.id) : null;
+
     return {
       id: item.id,
       title: typeof item.title === 'string' ? item.title.trim() : item.title,
@@ -342,6 +392,10 @@ export class ItemsService {
           ? item.description.trim()
           : null,
       status: item.status,
+      estimated_co2_saved_kg:
+        typeof item.estimatedCo2SavedKg === 'number' && Number.isFinite(item.estimatedCo2SavedKg)
+          ? Number(item.estimatedCo2SavedKg)
+          : null,
       location: {
         postcode:
           typeof item.postcode === 'string'
@@ -359,6 +413,7 @@ export class ItemsService {
       pickup_option: item.pickupOption,
       metadata,
       created_at: createdAt,
+      owner,
     };
   }
 
@@ -403,6 +458,16 @@ export class ItemsService {
     }
     if (dto.metadata !== undefined) {
       item.metadata = this.sanitizeMetadata(dto.metadata);
+    }
+    if (dto.estimatedCo2SavedKg !== undefined) {
+      const val = dto.estimatedCo2SavedKg as any;
+      if (val === null) {
+        item.estimatedCo2SavedKg = null;
+      } else if (typeof val === 'number' && Number.isFinite(val) && val >= 0) {
+        item.estimatedCo2SavedKg = val;
+      } else {
+        throw new BadRequestException('estimated_co2_saved_kg must be a non-negative number');
+      }
     }
     if (dto.images !== undefined) {
       item.images = this.normalizeImagesForPersistence(dto.images);
@@ -537,6 +602,8 @@ export class ItemsService {
       .addSelect('item.status', 'status')
       .addSelect('item.pickup_option', 'pickup_option')
       .addSelect('item.qr_code_url', 'qr_code_url')
+      .addSelect('item.donor_id', 'donor_id')
+      .addSelect('item.estimated_co2_saved_kg', 'estimated_co2_saved_kg')
       .addSelect('item.images', 'images')
       .addSelect('item.created_at', 'created_at')
       .addSelect(`ST_Distance(item.location::geography, ${geographyPoint})`, 'distance_meters')
@@ -559,6 +626,50 @@ export class ItemsService {
     }
 
     const rows = await qb.getRawMany();
+
+    const donorIds = Array.from(new Set(rows.map((r: any) => r.donor_id).filter(Boolean)));
+    const donors = donorIds.length
+      ? await this.users
+          .createQueryBuilder('u')
+          .select(['u.id', 'u.firstName', 'u.lastName', 'u.email', 'u.status', 'u.profileImageUrl'])
+          .where('u.id IN (:...ids)', { ids: donorIds })
+          .getMany()
+      : [];
+    const donorMap = new Map(donors.map((u) => [u.id, u]));
+
+    const kycRows = donorIds.length
+      ? await this.kycs
+          .createQueryBuilder('k')
+          .select(['k.user_id AS user_id', 'k.status AS status'])
+          .where('k.user_id IN (:...ids)', { ids: donorIds })
+          .getRawMany<{ user_id: string; status: KycStatus }>()
+      : [];
+    const kycMap = new Map<string, KycStatus>(kycRows.map((r) => [r.user_id, r.status]));
+
+    const addrCounts = donorIds.length
+      ? await this.addresses
+          .createQueryBuilder('a')
+          .select('a.user_id', 'user_id')
+          .addSelect('COUNT(1)', 'cnt')
+          .where('a.user_id IN (:...ids)', { ids: donorIds })
+          .groupBy('a.user_id')
+          .getRawMany<{ user_id: string; cnt: string }>()
+      : [];
+    const addrMap = new Map<string, number>(addrCounts.map((r) => [r.user_id, Number(r.cnt)]));
+
+    const ratingAgg = donorIds.length
+      ? await this.reviews
+          .createQueryBuilder('r')
+          .select('r.target_user_id', 'user_id')
+          .addSelect('AVG(r.rating)::float', 'avg_rating')
+          .addSelect('COUNT(1)', 'reviews_count')
+          .where('r.target_user_id IN (:...ids)', { ids: donorIds })
+          .groupBy('r.target_user_id')
+          .getRawMany<{ user_id: string; avg_rating: number; reviews_count: string }>()
+      : [];
+    const ratingMap = new Map<string, { rating: number; count: number }>(
+      ratingAgg.map((r) => [r.user_id, { rating: Math.round(Number(r.avg_rating) * 10) / 10, count: Number(r.reviews_count) }]),
+    );
 
     const items = rows.map((row: any) => {
       const rawDistance = Number(row.distance_meters);
@@ -600,6 +711,22 @@ export class ItemsService {
 
       const title = typeof row.title === 'string' ? row.title.trim() : '';
 
+      const donor = donorMap.get(row.donor_id);
+      const owner = donor
+        ? {
+            id: donor.id,
+            name: this.displayName(donor),
+            profile_image: donor.profileImageUrl ?? null,
+            verification: {
+              email_verified: donor.status === UserStatus.ACTIVE,
+              identity_verified: kycMap.get(donor.id) === KycStatus.APPROVED,
+              address_verified: (addrMap.get(donor.id) || 0) > 0,
+            },
+            rating: ratingMap.get(donor.id)?.rating ?? 0,
+            reviews_count: ratingMap.get(donor.id)?.count ?? 0,
+          }
+        : null;
+
       return {
         id: row.id,
         title,
@@ -608,6 +735,13 @@ export class ItemsService {
         pickup_option: row.pickup_option,
         qr_code: qrCode,
         images,
+        estimated_co2_saved_kg:
+          typeof row.estimated_co2_saved_kg === 'number' && Number.isFinite(row.estimated_co2_saved_kg)
+            ? Number(row.estimated_co2_saved_kg)
+            : row.estimated_co2_saved_kg === null
+            ? null
+            : Number(row.estimated_co2_saved_kg || 0) || null,
+        owner,
         created_at: createdAtIso,
       };
     });

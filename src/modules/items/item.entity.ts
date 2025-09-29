@@ -104,6 +104,9 @@ export class Item {
   @Column({ name: 'qr_code_url', type: 'text', nullable: true })
   qrCodeUrl?: string | null;
 
+  @Column({ name: 'estimated_co2_saved_kg', type: 'double precision', nullable: true })
+  estimatedCo2SavedKg?: number | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateProfileImageDto } from './dto/update-profile-image.dto';
 import { UsersService } from './users.service';
 
 @ApiTags('users')
@@ -21,5 +22,16 @@ export class UsersController {
   @Post()
   async create(@Body() dto: CreateUserDto) {
     return this.users.create(dto);
+  }
+
+  @Get(':id/verification')
+  async verification(@Param('id') id: string) {
+    return this.users.getVerification(id);
+  }
+
+  @Patch('me/profile-image')
+  async updateProfileImage(@Req() req: any, @Body() dto: UpdateProfileImageDto) {
+    const userId = req?.user?.sub;
+    return this.users.updateProfileImage(userId, dto.profileImageUrl);
   }
 }
