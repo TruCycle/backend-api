@@ -16,14 +16,6 @@ export class ItemGeocodingService {
       throw new BadRequestException('Address information is required');
     }
 
-    const params = new URLSearchParams({
-      q: trimmed,
-      format: 'jsonv2',
-      limit: '1',
-      addressdetails: '0',
-    });
-
-    const url = `${this.endpoint}?${params.toString()}`;
     const fetchFn: any = (globalThis as any).fetch;
     if (typeof fetchFn !== 'function') {
       this.logger.error('Global fetch is not available in this runtime');
@@ -34,7 +26,14 @@ export class ItemGeocodingService {
     const controller = typeof AbortCtor === 'function' ? new AbortCtor() : null;
     const timer = controller ? setTimeout(() => controller.abort(), this.requestTimeoutMs) : null;
 
-    try {
+    const queryOnce = async (q: string) => {
+      const params = new URLSearchParams({
+        q,
+        format: 'jsonv2',
+        limit: '1',
+        addressdetails: '0',
+      });
+      const url = `${this.endpoint}?${params.toString()}`;
       const res = await fetchFn(url, {
         method: 'GET',
         headers: {
@@ -44,32 +43,59 @@ export class ItemGeocodingService {
         },
         signal: controller ? controller.signal : undefined,
       });
-
       if (!res || typeof res.status !== 'number') {
         throw new Error('Unexpected geocoder response');
       }
-
       if (res.status === 429) {
         this.logger.warn('Geocoder throttled the request (429)');
       }
-
       if (!res.ok) {
         this.logger.warn(`Geocoder responded with status ${res.status}`);
         throw new Error(`Geocoder responded with status ${res.status}`);
       }
-
       const payload: any = await res.json();
-      if (!Array.isArray(payload) || payload.length === 0) {
+      if (Array.isArray(payload) && payload.length > 0) {
+        return payload[0];
+      }
+      return null;
+    };
+
+    try {
+      // First attempt: as-is
+      let result: any = await queryOnce(trimmed);
+
+      // Heuristic fallbacks
+      if (!result) {
+        // Try extracting a UK postcode and geocoding that alone
+        const ukPostcodeMatch = trimmed.match(/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i);
+        if (ukPostcodeMatch?.[1]) {
+          const pc = ukPostcodeMatch[1].toUpperCase().replace(/\s+/g, ' ');
+          this.logger.debug(`Fallback geocoding with postcode only: ${pc}`);
+          result = await queryOnce(pc);
+        }
+      }
+
+      if (!result) {
+        // Try last comma-separated token (often most specific)
+        const parts = trimmed.split(',').map((p) => p.trim()).filter(Boolean);
+        if (parts.length > 1) {
+          const last = parts[parts.length - 1];
+          if (last && last.toLowerCase() !== trimmed.toLowerCase()) {
+            this.logger.debug(`Fallback geocoding with trailing token: ${last}`);
+            result = await queryOnce(last);
+          }
+        }
+      }
+
+      if (!result) {
         throw new BadRequestException('Unable to geocode the supplied address');
       }
 
-      const [first] = payload;
-      const latitude = Number(first.lat);
-      const longitude = Number(first.lon);
+      const latitude = Number(result.lat);
+      const longitude = Number(result.lon);
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
         throw new BadRequestException('Geocoder returned invalid coordinates');
       }
-
       return { latitude, longitude };
     } catch (err: any) {
       if (err?.name === 'AbortError') {
