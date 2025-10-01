@@ -82,6 +82,41 @@ npm run start:dev
 - Mutating routes will adopt Idempotency-Key in future iterations.
 - Modules created: auth, users, items, claims, shops, qr, search, notifications, admin, media, addresses, orders.
 
+## Messaging & Real-time Chat
+The messaging module enables a single private room between any two users. A room is lazily created when a participant joins it or when a message is sent. Only image attachments are supported for direct messages; every image is uploaded to Cloudinary automatically.
+
+### Environment variables
+- `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` — required for uploads.
+- `CLOUDINARY_MESSAGE_FOLDER` (optional) — Cloudinary folder for chat images. Defaults to `messages`.
+
+### HTTP endpoints
+All routes require a bearer token (protected with `JwtAuthGuard`).
+
+| Method & Path | Description |
+| --- | --- |
+| `POST /messages/rooms` | Ensure a room exists between the authenticated user and `otherUserId` (body). Returns room participants and the latest message. |
+| `GET /messages/rooms/active` | List all active rooms for the authenticated user, including both participants' basic bios and live presence (`online` flag). |
+| `GET /messages/rooms/:roomId/messages?limit&cursor` | Pull paginated messages ordered oldest → newest. Cursor is the last message ID from the previous page. |
+| `GET /messages/rooms/:roomId/search?query=...` | Search captions/general messages (minimum 3 characters). |
+| `POST /messages/rooms/:roomId/messages/image` | Upload an image message. Expects `multipart/form-data` with `image` (file) and optional `caption`. Non-image uploads are rejected. |
+| `POST /messages/rooms/:roomId/messages/general` | Create a general/system-style alert visible to both users (text body with optional `title`). |
+| `DELETE /messages/rooms/:roomId/messages` | Delete all chat history in the room. Emits a `room:cleared` socket event. |
+| `DELETE /messages/rooms/:roomId` | Delete the room (and its messages). Emits a `room:deleted` socket event. |
+
+Responses include `direction` fields (`incoming`, `outgoing`, `general`) so consumers can render messages relative to the requesting user.
+
+### WebSocket API
+- Namespace: `ws://<host>/messages`
+- Authenticate by sending a JWT access token as `auth: { token: '<jwt>' }`, `?token=<jwt>`, or an `Authorization: Bearer <jwt>` header during the handshake.
+- Upon connection, the gateway tracks online status and broadcasts `presence:update` events `{ userId, online }` in real time.
+- Join (or create) a room by emitting `room:join` with `{ otherUserId }`. The server responds with `room:joined` containing the room summary.
+- Message events:
+  - `message:new` — emitted to each participant with a personalised payload containing direction and metadata.
+  - `room:activity` — emitted when a room receives a new message with `{ roomId, updatedAt }`.
+  - `room:cleared` / `room:deleted` — emitted after history purge or room deletion.
+
+Presence checks are live; if all sockets for a user disconnect, a `presence:update` with `online: false` is broadcast immediately.
+
 ## API Response & Error Handling
 - Success envelope: `{ status: 'success', message: 'OK', data: <payload> }` (applied by a global interceptor). Routes can override `message`.
 - Error envelope: `{ status: 'error', message: <reason>, data: null }` (applied by a global exception filter).
