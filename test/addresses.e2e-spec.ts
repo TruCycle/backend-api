@@ -1,6 +1,7 @@
 /* eslint-disable import/no-unresolved */
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { Reflector } from '@nestjs/core';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import request from 'supertest';
 
@@ -43,7 +44,8 @@ describe('Addresses E2E (mocked DB + auth)', () => {
 
     app = moduleRef.createNestApplication();
     app.useGlobalFilters(new HttpExceptionFilter());
-    app.useGlobalInterceptors(new ResponseInterceptor());
+    const reflector = app.get(Reflector);
+    app.useGlobalInterceptors(new ResponseInterceptor(reflector));
     await app.init();
   });
 
