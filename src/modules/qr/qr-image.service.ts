@@ -1,4 +1,4 @@
-import { v2 as cloudinary, UploadApiErrorResponse, UploadApiOptions, UploadApiResponse } from 'cloudinary';
+import { v2 as cloudinary, UploadApiOptions, UploadApiResponse } from 'cloudinary';
 import QRCode from 'qrcode';
 
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
