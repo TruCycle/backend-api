@@ -103,6 +103,273 @@ All routes require a bearer token (protected with `JwtAuthGuard`).
 | `DELETE /messages/rooms/:roomId/messages` | Delete all chat history in the room. Emits a `room:cleared` socket event. |
 | `DELETE /messages/rooms/:roomId` | Delete the room (and its messages). Emits a `room:deleted` socket event. |
 
+#### Interactive tester
+- `GET /messages/public/tester` serves a lightweight Bootstrap UI for exploring the messaging API. Paste any JWT access token in the top-right field, and the page will persist your token, rooms, and cached conversations in `localStorage` so the session survives reloads.
+
+#### Request & response examples
+
+**Ensure (or create) a room**
+
+```
+POST /messages/rooms
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "otherUserId": "2c4c0f2c-97f2-4e4f-96b4-e8d9ba1d21f6"
+}
+```
+
+```
+HTTP/1.1 200 OK
+
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "id": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+    "participants": [
+      {
+        "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1",
+        "firstName": "Ada",
+        "lastName": "Lovelace",
+        "profileImageUrl": null,
+        "online": true
+      },
+      {
+        "id": "2c4c0f2c-97f2-4e4f-96b4-e8d9ba1d21f6",
+        "firstName": "Grace",
+        "lastName": "Hopper",
+        "profileImageUrl": null,
+        "online": false
+      }
+    ],
+    "lastMessage": {
+      "id": "1b8cf2e2-5f24-4dc4-8c0c-0c0fe5bc9f91",
+      "roomId": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+      "direction": "outgoing",
+      "category": "direct",
+      "imageUrl": null,
+      "caption": null,
+      "text": "Looking forward to the pickup tomorrow!",
+      "createdAt": "2024-06-01T13:45:00.000Z",
+      "sender": {
+        "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1",
+        "firstName": "Ada",
+        "lastName": "Lovelace",
+        "profileImageUrl": null
+      }
+    },
+    "createdAt": "2024-05-30T09:12:00.000Z",
+    "updatedAt": "2024-06-01T13:45:00.000Z"
+  }
+}
+```
+
+**List active rooms**
+
+```
+GET /messages/rooms/active
+Authorization: Bearer <token>
+```
+
+```
+HTTP/1.1 200 OK
+
+{
+  "status": "success",
+  "message": "OK",
+  "data": [
+    {
+      "id": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+      "participants": [
+        {
+          "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1",
+          "firstName": "Ada",
+          "lastName": "Lovelace",
+          "profileImageUrl": null,
+          "online": true
+        },
+        {
+          "id": "2c4c0f2c-97f2-4e4f-96b4-e8d9ba1d21f6",
+          "firstName": "Grace",
+          "lastName": "Hopper",
+          "profileImageUrl": null,
+          "online": false
+        }
+      ],
+      "lastMessage": {
+        "id": "1b8cf2e2-5f24-4dc4-8c0c-0c0fe5bc9f91",
+        "roomId": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+        "direction": "outgoing",
+        "category": "direct",
+        "imageUrl": null,
+        "caption": null,
+        "text": "Looking forward to the pickup tomorrow!",
+        "createdAt": "2024-06-01T13:45:00.000Z",
+        "sender": {
+          "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1",
+          "firstName": "Ada",
+          "lastName": "Lovelace",
+          "profileImageUrl": null
+        }
+      },
+      "createdAt": "2024-05-30T09:12:00.000Z",
+      "updatedAt": "2024-06-01T13:45:00.000Z"
+    }
+  ]
+}
+```
+
+**Retrieve paginated room messages**
+
+```
+GET /messages/rooms/a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c/messages?limit=20
+Authorization: Bearer <token>
+```
+
+```
+HTTP/1.1 200 OK
+
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "messages": [
+      {
+        "id": "1b8cf2e2-5f24-4dc4-8c0c-0c0fe5bc9f91",
+        "roomId": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+        "direction": "outgoing",
+        "category": "direct",
+        "imageUrl": null,
+        "caption": null,
+        "text": "Looking forward to the pickup tomorrow!",
+        "createdAt": "2024-06-01T13:45:00.000Z",
+        "sender": {
+          "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1",
+          "firstName": "Ada",
+          "lastName": "Lovelace",
+          "profileImageUrl": null
+        }
+      }
+    ],
+    "nextCursor": null
+  }
+}
+```
+
+**Send a general message**
+
+```
+POST /messages/rooms/a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c/messages/general
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "title": "Pickup reminder",
+  "text": "Our driver will arrive tomorrow between 9am and 11am."
+}
+```
+
+```
+HTTP/1.1 200 OK
+
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "id": "5d794f95-9c64-4048-9fdc-0f9617a9af93",
+    "roomId": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+    "direction": "general",
+    "category": "general",
+    "imageUrl": null,
+    "caption": "Pickup reminder",
+    "text": "Our driver will arrive tomorrow between 9am and 11am.",
+    "createdAt": "2024-06-01T14:00:00.000Z",
+    "sender": {
+      "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1",
+      "firstName": "Ada",
+      "lastName": "Lovelace",
+      "profileImageUrl": null
+    }
+  }
+}
+```
+
+**Send an image message**
+
+```
+POST /messages/rooms/a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c/messages/image
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+
+image=@pickup.jpg
+caption=Proof of collection
+```
+
+```
+HTTP/1.1 200 OK
+
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "id": "a7d9d7c5-6c6e-4d13-8f89-1fbcf9c1a4a2",
+    "roomId": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+    "direction": "outgoing",
+    "category": "direct",
+    "imageUrl": "https://cdn.trucycle.com/messages/image-123.png",
+    "caption": "Proof of collection",
+    "text": null,
+    "createdAt": "2024-06-01T14:05:00.000Z",
+    "sender": {
+      "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1",
+      "firstName": "Ada",
+      "lastName": "Lovelace",
+      "profileImageUrl": null
+    }
+  }
+}
+```
+
+**Clear a room conversation**
+
+```
+DELETE /messages/rooms/a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c/messages
+Authorization: Bearer <token>
+```
+
+```
+HTTP/1.1 200 OK
+
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "success": true
+  }
+}
+```
+
+**Delete a room**
+
+```
+DELETE /messages/rooms/a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c
+Authorization: Bearer <token>
+```
+
+```
+HTTP/1.1 200 OK
+
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "success": true
+  }
+}
+```
+
 Responses include `direction` fields (`incoming`, `outgoing`, `general`) so consumers can render messages relative to the requesting user.
 
 ### WebSocket API
