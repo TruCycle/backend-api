@@ -1,8 +1,13 @@
 import { Controller, Get, Header } from '@nestjs/common';
+import { ApiExcludeController } from '@nestjs/swagger';
 
-@Controller('messages/public')
+import { SkipResponseEnvelope } from '../../common/decorators/skip-response-envelope.decorator';
+
+@ApiExcludeController()
+@Controller('public/test')
 export class MessagesPublicController {
-  @Get('tester')
+  @SkipResponseEnvelope()
+  @Get('messages')
   @Header('Content-Type', 'text/html; charset=utf-8')
   getTester(): string {
     return `<!DOCTYPE html>

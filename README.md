@@ -104,7 +104,7 @@ All routes require a bearer token (protected with `JwtAuthGuard`).
 | `DELETE /messages/rooms/:roomId` | Delete the room (and its messages). Emits a `room:deleted` socket event. |
 
 #### Interactive tester
-- `GET /messages/public/tester` serves a lightweight Bootstrap UI for exploring the messaging API. Paste any JWT access token in the top-right field, and the page will persist your token, rooms, and cached conversations in `localStorage` so the session survives reloads.
+- `GET /public/test/messages` serves a lightweight Bootstrap UI for exploring the messaging API. Paste any JWT access token in the top-right field, and the page will persist your token, rooms, and cached conversations in `localStorage` so the session survives reloads.
 
 #### Request & response examples
 
