@@ -208,12 +208,12 @@ export class MessagesService {
       .leftJoinAndSelect('room.userOne', 'userOne')
       .leftJoinAndSelect('room.userTwo', 'userTwo')
       .where('room.id = :roomId', { roomId: room.id })
-      .orderBy('message.created_at', 'DESC')
+      .orderBy('message.createdAt', 'DESC')
       .addOrderBy('message.id', 'DESC')
       .take(limit + 1);
 
     if (cursorCreatedAt) {
-      builder.andWhere('message.created_at < :cursor', { cursor: cursorCreatedAt });
+      builder.andWhere('message.createdAt < :cursor', { cursor: cursorCreatedAt });
     }
 
     const records = await builder.getMany();
@@ -245,7 +245,7 @@ export class MessagesService {
         `(message.text ILIKE :term OR message.caption ILIKE :term)`,
         { term: `%${query}%` },
       )
-      .orderBy('message.created_at', 'DESC')
+      .orderBy('message.createdAt', 'DESC')
       .take(50)
       .getMany();
 
@@ -296,7 +296,7 @@ export class MessagesService {
       .leftJoinAndSelect('lastRoom.userOne', 'lastUserOne')
       .leftJoinAndSelect('lastRoom.userTwo', 'lastUserTwo')
       .where('lastRoom.id = :roomId', { roomId: room.id })
-      .orderBy('message.created_at', 'DESC')
+      .orderBy('message.createdAt', 'DESC')
       .addOrderBy('message.id', 'DESC')
       .getOne();
 
