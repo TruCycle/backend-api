@@ -13,7 +13,7 @@ This document outlines the system design and architecture of **TruCycle**, focus
 * **DB**: PostgreSQL with PostGIS (`CREATE EXTENSION postgis;`)
 * **Geo types**: `geometry(Point, 4326)`, `geometry(Polygon, 4326)` (store WGS84)
 * **Cache/Queue**: Redis (BullMQ for jobs)
-* **Objects**: S3/MinIO
+* **Objects**: Cloudinary (image storage)
 * **Observability**: OpenTelemetry SDK + exporters, structured logs (`pino` / `winston`)
 
 ---
@@ -216,4 +216,4 @@ Backend engineers interact with these via **GeoService**.
 **A) Onboarding & KYC (IdentityModule)**
 
 * OTP flow via `NotificationPort`.
-* KYC upload → stores doc URLs in S3.
+* KYC upload → stores doc URLs in Cloudinary.

@@ -1012,8 +1012,8 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
       "qty": 2,
       "status": "great",
       "photos": [
-        "s3-url-to-photo-1.jpg",
-        "s3-url-to-photo-2.jpg"
+        "https://res.cloudinary.com/<cloud-name>/image/upload/sample-photo-1.jpg",
+        "https://res.cloudinary.com/<cloud-name>/image/upload/sample-photo-2.jpg"
       ],
       "weee_data": {
         "make": "Samsung",
@@ -1036,7 +1036,10 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
       {
         "id": "g8h9i0j1-...",
         "declared_grade": "Great",
-        "photos": ["s3-url-to-photo-1.jpg", "s3-url-to-photo-2.jpg"]
+        "photos": [
+          "https://res.cloudinary.com/<cloud-name>/image/upload/sample-photo-1.jpg",
+          "https://res.cloudinary.com/<cloud-name>/image/upload/sample-photo-2.jpg"
+        ]
       }
     ]
   }

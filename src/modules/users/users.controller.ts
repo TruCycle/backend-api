@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
@@ -16,27 +16,40 @@ export class UsersController {
   constructor(private readonly users: UsersService) {}
 
   @Get()
+  @ApiOperation({ summary: 'List users (admin/debug)' })
+  @ApiOkResponse({ description: 'Array of users', schema: { example: { status: 'success', message: 'OK', data: [{ id: 'user-id', email: 'user@example.com' }] } } })
   async list() {
     return this.users.findAll();
   }
 
   @Post()
+  @ApiOperation({ summary: 'Create a user (admin/debug)' })
+  @ApiBody({ description: 'User creation payload', type: CreateUserDto })
+  @ApiOkResponse({ description: 'Created user', schema: { example: { status: 'success', message: 'OK', data: { id: 'user-id', email: 'user@example.com' } } } })
   async create(@Body() dto: CreateUserDto) {
     return this.users.create(dto);
   }
 
   @Get(':id/verification')
+  @ApiOperation({ summary: 'Retrieve user verification status' })
+  @ApiOkResponse({ description: 'Verification info', schema: { example: { status: 'success', message: 'OK', data: { verified: true, method: 'email' } } } })
   async verification(@Param('id') id: string) {
     return this.users.getVerification(id);
   }
 
   @Patch('me/profile-image')
+  @ApiOperation({ summary: 'Update current user profile image' })
+  @ApiBody({ description: 'Profile image payload', type: UpdateProfileImageDto })
+  @ApiOkResponse({ description: 'Updated image URL', schema: { example: { status: 'success', message: 'OK', data: { profileImageUrl: 'https://...' } } } })
   async updateProfileImage(@Req() req: any, @Body() dto: UpdateProfileImageDto) {
     const userId = req?.user?.sub;
     return this.users.updateProfileImage(userId, dto.profileImageUrl);
   }
 
   @Patch('me/profile')
+  @ApiOperation({ summary: 'Update current user profile' })
+  @ApiBody({ description: 'Profile fields payload', type: UpdateProfileDto })
+  @ApiOkResponse({ description: 'Updated profile', schema: { example: { status: 'success', message: 'OK', data: { firstName: 'Jane', lastName: 'Doe' } } } })
   async updateProfile(@Req() req: any, @Body() dto: UpdateProfileDto) {
     const userId = req?.user?.sub;
     return this.users.updateProfile(userId, dto);

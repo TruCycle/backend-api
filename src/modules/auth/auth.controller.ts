@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -19,11 +19,33 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Get('health')
+  @ApiOperation({ summary: 'Auth service health check' })
+  @ApiOkResponse({ description: 'Service is reachable', schema: { example: { status: 'success', message: 'OK', data: { status: 'ok' } } } })
   health() {
     return { status: 'ok' };
   }
 
   @Post('register')
+  @ApiOperation({ summary: 'Register a new user account' })
+  @ApiBody({ description: 'User registration payload', type: RegisterDto })
+  @ApiCreatedResponse({
+    description: 'User created successfully',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'User registered successfully.',
+        data: {
+          user: {
+            id: '3f2f8c2e-6b1a-4c8e-9a61-22f924e0f6f1',
+            firstName: 'Jane',
+            lastName: 'Doe',
+            email: 'jane@example.com',
+            status: 'pending',
+          },
+        },
+      },
+    },
+  })
   async register(@Body() dto: RegisterDto) {
     const { user } = await this.auth.register(
       dto.email,
@@ -47,7 +69,31 @@ export class AuthController {
   }
 
   @Post('login')
+  @ApiOperation({ summary: 'Log in with email and password' })
+  @ApiBody({ description: 'Login credentials', type: LoginDto })
   @HttpCode(200)
+  @ApiOkResponse({
+    description: 'Login success with access and refresh tokens',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'Login successful.',
+        data: {
+          user: {
+            id: '3f2f8c2e-6b1a-4c8e-9a61-22f924e0f6f1',
+            email: 'jane@example.com',
+            firstName: 'Jane',
+            lastName: 'Doe',
+            status: 'active',
+          },
+          tokens: {
+            accessToken: 'eyJhbGciOi...access',
+            refreshToken: 'eyJhbGciOi...refresh',
+          },
+        },
+      },
+    },
+  })
   async login(@Body() dto: LoginDto) {
     const { user, tokens } = await this.auth.login(dto.email, dto.password);
     return {
@@ -58,6 +104,9 @@ export class AuthController {
   }
 
   @Post('resend-verification')
+  @ApiOperation({ summary: 'Resend email verification link' })
+  @ApiBody({ description: 'Email to resend verification to', type: ResendVerificationDto })
+  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Verification email sent successfully.', data: null } } })
   async resendVerification(@Body() dto: ResendVerificationDto) {
     await this.auth.resendVerification(dto.email);
     // Always return success to avoid email enumeration
@@ -65,6 +114,9 @@ export class AuthController {
   }
 
   @Post('forget-password')
+  @ApiOperation({ summary: 'Request a password reset email' })
+  @ApiBody({ description: 'Email to send reset link to', type: ForgetPasswordDto })
+  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Reset password email sent successfully.', data: null } } })
   async forgetPassword(@Body() dto: ForgetPasswordDto) {
     await this.auth.requestPasswordReset(dto.email);
     // Always return success to avoid email enumeration
@@ -72,7 +124,31 @@ export class AuthController {
   }
 
   @Post('verify')
+  @ApiOperation({ summary: 'Verify a user using a token' })
+  @ApiBody({ description: 'Verification token payload', type: VerifyDto })
   @HttpCode(200)
+  @ApiOkResponse({
+    description: 'Verification success with user and tokens',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'Verification successfully.',
+        data: {
+          user: {
+            id: '3f2f8c2e-6b1a-4c8e-9a61-22f924e0f6f1',
+            firstName: 'Jane',
+            lastName: 'Doe',
+            email: 'jane@example.com',
+            status: 'active',
+          },
+          tokens: {
+            accessToken: 'eyJhbGciOi...access',
+            refreshToken: 'eyJhbGciOi...refresh',
+          },
+        },
+      },
+    },
+  })
   async verify(@Body() dto: VerifyDto) {
     const { user, tokens } = await this.auth.verifyUser(dto.token);
     return {
@@ -92,14 +168,36 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @ApiOperation({ summary: 'Reset password using a token' })
+  @ApiBody({ description: 'New password and reset token', type: ResetPasswordDto })
+  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Password changed successfully.', data: null } } })
   async resetPassword(@Body() dto: ResetPasswordDto) {
     await this.auth.resetPassword(dto.token, dto.new_password);
     return { status: 'success', message: 'Password changed successfully.', data: null };
   }
 
   @Get('me')
+  @ApiOperation({ summary: 'Retrieve the current user profile' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
+  @ApiOkResponse({
+    description: 'Current user basic profile',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'User retrieved successfully.',
+        data: {
+          user: {
+            id: '3f2f8c2e-6b1a-4c8e-9a61-22f924e0f6f1',
+            email: 'jane@example.com',
+            firstName: 'Jane',
+            lastName: 'Doe',
+            status: 'active',
+          },
+        },
+      },
+    },
+  })
   async me(@AuthUser() payload: any) {
     const user = await this.auth.getBasicProfileById(payload.sub);
     return {
