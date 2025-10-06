@@ -178,6 +178,34 @@ export class MessagesService {
     return view;
   }
 
+  async createDirectTextMessage(
+    roomId: string,
+    authorId: string,
+    text: string,
+  ): Promise<MessageViewModel> {
+    const room = await this.getRoomOrFail(roomId, authorId);
+    const body = (text ?? '').trim();
+    if (!body) {
+      throw new BadRequestException('Message text is required');
+    }
+    let message = this.messages.create({
+      room,
+      sender: { id: authorId } as User,
+      category: MessageCategory.DIRECT,
+      text: body,
+      caption: null,
+    });
+    message = await this.messages.save(message);
+    message = await this.messages.findOneOrFail({
+      where: { id: message.id },
+      relations: ['room', 'room.userOne', 'room.userTwo', 'sender'],
+    });
+    const view = this.mapMessageForUser(message, authorId);
+    await this.broadcastRealtimeMessage(message);
+    await this.touchRoom(room.id);
+    return view;
+  }
+
   async listMessages(
     roomId: string,
     userId: string,

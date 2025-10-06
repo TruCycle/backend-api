@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateProfileImageDto } from './dto/update-profile-image.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UsersService } from './users.service';
 
 @ApiTags('users')
@@ -33,5 +34,11 @@ export class UsersController {
   async updateProfileImage(@Req() req: any, @Body() dto: UpdateProfileImageDto) {
     const userId = req?.user?.sub;
     return this.users.updateProfileImage(userId, dto.profileImageUrl);
+  }
+
+  @Patch('me/profile')
+  async updateProfile(@Req() req: any, @Body() dto: UpdateProfileDto) {
+    const userId = req?.user?.sub;
+    return this.users.updateProfile(userId, dto);
   }
 }

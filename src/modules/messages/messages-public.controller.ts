@@ -22,28 +22,90 @@ export class MessagesPublicController {
       integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
       crossorigin="anonymous"
     />
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.socket.io/4.7.5/socket.io.min.js"
+      integrity="sha384-2huaZvOR9iDzHqslqwpR87isEmrfxqyWOF7hr7BY6KG0+hVKLoEXMPUJw3ynWuhO"
+      crossorigin="anonymous"
+    ></script>
     <style>
       body {
         background-color: #f5f5f5;
       }
       .message-bubble {
         max-width: 75%;
+        position: relative;
+        border-radius: 16px;
+        box-shadow: 0 1px 1px rgba(0,0,0,0.04);
       }
       .message-bubble.outgoing {
         margin-left: auto;
-        background-color: #0d6efd;
-        color: #fff;
+        background-color: #dcf8c6; /* WhatsApp-like green */
+        color: #111;
+        border: 1px solid #b2e59e;
+      }
+      .message-bubble.outgoing::after {
+        content: '';
+        position: absolute;
+        right: -8px;
+        top: 12px;
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 8px 0 8px 8px;
+        border-color: transparent transparent transparent #dcf8c6;
       }
       .message-bubble.incoming {
         margin-right: auto;
         background-color: #ffffff;
         color: #212529;
-        border: 1px solid rgba(0, 0, 0, 0.1);
+        border: 1px solid #e6e6e6;
+      }
+      .message-bubble.incoming::after {
+        content: '';
+        position: absolute;
+        left: -8px;
+        top: 12px;
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 8px 8px 8px 0;
+        border-color: transparent #ffffff transparent transparent;
       }
       .message-bubble.general {
         margin: 0 auto;
-        background-color: #ffc107;
-        color: #212529;
+        background-color: #fff3cd; /* warning-100 */
+        color: #664d03; /* warning-emphasis */
+        border: 1px solid #ffe69c; /* warning-300 */
+        max-width: 60%;
+        font-size: 0.95rem;
+      }
+      .date-chip {
+        display: inline-block;
+        background: #e9ecef;
+        color: #495057;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 0.75rem;
+      }
+      .image-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 8px;
+        align-items: start;
+      }
+      .image-grid.single {
+        display: block;
+        text-align: center;
+      }
+      .image-grid.single img {
+        width: 75%;
+        height: auto;
+      }
+      .image-grid img {
+        width: 100%;
+        height: auto;
+        border-radius: 8px;
       }
       .message-timestamp {
         font-size: 0.75rem;
@@ -91,6 +153,7 @@ export class MessagesPublicController {
             style="min-width: 280px"
           />
           <button type="submit" class="btn btn-primary btn-sm">Save</button>
+          <button type="button" id="openSystemMessage" class="btn btn-warning btn-sm">System Message</button>
         </form>
       </div>
 
@@ -139,21 +202,50 @@ export class MessagesPublicController {
               <div id="messagesList" class="chat-window flex-grow-1"></div>
               <form id="messageForm" class="mt-3">
                 <div class="mb-2">
-                  <label class="form-label small mb-1" for="messageTitle">Title (optional)</label>
-                  <input type="text" class="form-control" id="messageTitle" autocomplete="off" />
-                </div>
-                <div class="mb-2">
                   <label class="form-label small mb-1" for="messageText">Message</label>
-                  <textarea class="form-control" id="messageText" rows="3" placeholder="Write a general message"></textarea>
+                  <textarea class="form-control" id="messageText" rows="3" placeholder="Write a direct message"></textarea>
                 </div>
-                <div class="d-flex justify-content-between align-items-center">
-                  <div class="form-text">Messages are sent as general/system messages.</div>
+                <div class="mb-3">
+                  <label class="form-label small mb-1" for="messageFiles">Attachments (images)</label>
+                  <input type="file" class="form-control" id="messageFiles" accept="image/*" multiple />
+                </div>
+                <div class="d-flex justify-content-end align-items-center">
                   <button type="submit" class="btn btn-primary">Send</button>
                 </div>
               </form>
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- System Message Modal -->
+    <div class="modal fade" id="systemMessageModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog">
+        <form id="systemMessageForm" class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Send System Message</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label class="form-label" for="systemMessageRoom">Room</label>
+              <select id="systemMessageRoom" class="form-select"></select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="systemMessageTitle">Title (optional)</label>
+              <input type="text" id="systemMessageTitle" class="form-control" autocomplete="off" />
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="systemMessageText">Message</label>
+              <textarea id="systemMessageText" class="form-control" rows="3" placeholder="Write a general/system message"></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Send</button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -166,7 +258,11 @@ export class MessagesPublicController {
           selectedRoomId: null,
           messages: {},
           nextCursor: {},
+          currentUserId: null,
         };
+
+        const WS_NAMESPACE = '/messages';
+        let socket = null;
 
         const elements = {
           tokenForm: document.getElementById('tokenForm'),
@@ -181,10 +277,16 @@ export class MessagesPublicController {
           activeRoomTitle: document.getElementById('activeRoomTitle'),
           activeRoomMeta: document.getElementById('activeRoomMeta'),
           messageForm: document.getElementById('messageForm'),
-          messageTitle: document.getElementById('messageTitle'),
           messageText: document.getElementById('messageText'),
+          messageFiles: document.getElementById('messageFiles'),
           loadOlder: document.getElementById('loadOlder'),
           refreshMessages: document.getElementById('refreshMessages'),
+          openSystemMessage: document.getElementById('openSystemMessage'),
+          systemMessageModal: document.getElementById('systemMessageModal'),
+          systemMessageForm: document.getElementById('systemMessageForm'),
+          systemMessageRoom: document.getElementById('systemMessageRoom'),
+          systemMessageTitle: document.getElementById('systemMessageTitle'),
+          systemMessageText: document.getElementById('systemMessageText'),
         };
 
         function loadState() {
@@ -208,10 +310,186 @@ export class MessagesPublicController {
               selectedRoomId: state.selectedRoomId,
               messages: state.messages,
               nextCursor: state.nextCursor,
+              currentUserId: state.currentUserId,
             };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
           } catch (error) {
             console.warn('Unable to persist state', error);
+          }
+        }
+
+        function connectSocket() {
+          if (!state.token) return;
+          try {
+            if (socket) {
+              socket.removeAllListeners();
+              socket.disconnect();
+            }
+          } catch (_) {}
+
+          const origin = window.location.origin;
+          socket = window.io(origin + WS_NAMESPACE, {
+            auth: { token: state.token },
+            transports: ['websocket'],
+          });
+
+          socket.on('connect', () => {
+            showAlert('WebSocket connected.', 'success');
+            if (!state.rooms.length) {
+              fetchRooms();
+            }
+          });
+
+          socket.on('connect_error', (err) => {
+            const message = (err && err.message) || 'WebSocket connection failed.';
+            showAlert(message, 'danger');
+          });
+
+          socket.on('message:new', (message) => {
+            if (!message || !message.roomId) return;
+            const roomId = message.roomId;
+            const list = state.messages[roomId] || [];
+            list.push(message);
+            state.messages[roomId] = deduplicateMessages(list);
+            const idx = state.rooms.findIndex((r) => r.id === roomId);
+            if (idx >= 0) {
+              state.rooms[idx].updatedAt = message.createdAt;
+              state.rooms[idx].lastMessage = message;
+            }
+            saveState();
+            if (state.selectedRoomId === roomId) {
+              renderActiveRoom();
+            } else {
+              renderRooms();
+            }
+          });
+
+          socket.on('room:activity', (payload) => {
+            const roomId = payload && payload.roomId;
+            if (!roomId) return;
+            const idx = state.rooms.findIndex((r) => r.id === roomId);
+            if (idx >= 0) {
+              state.rooms[idx].updatedAt = payload.updatedAt || new Date().toISOString();
+              saveState();
+              renderRooms();
+              if (state.selectedRoomId === roomId) renderActiveRoom();
+            }
+          });
+
+          socket.on('room:cleared', (payload) => {
+            const roomId = payload && payload.roomId;
+            if (!roomId) return;
+            state.messages[roomId] = [];
+            saveState();
+            if (state.selectedRoomId === roomId) renderActiveRoom();
+          });
+
+          socket.on('room:deleted', (payload) => {
+            const roomId = payload && payload.roomId;
+            if (!roomId) return;
+            state.rooms = state.rooms.filter((r) => r.id !== roomId);
+            if (state.selectedRoomId === roomId) {
+              state.selectedRoomId = null;
+            }
+            delete state.messages[roomId];
+            delete state.nextCursor[roomId];
+            saveState();
+            renderRooms();
+            renderActiveRoom();
+          });
+
+          socket.on('presence:update', (payload) => {
+            const userId = payload && payload.userId;
+            const online = !!(payload && payload.online);
+            if (!userId) return;
+            let changed = false;
+            state.rooms.forEach((room) => {
+              room.participants.forEach((p) => {
+                if (p.id === userId && p.online !== online) {
+                  p.online = online;
+                  changed = true;
+                }
+              });
+            });
+            if (changed) {
+              saveState();
+              renderRooms();
+              renderActiveRoom();
+            }
+          });
+        }
+
+        function populateSystemRoomsSelect() {
+          const select = elements.systemMessageRoom;
+          if (!select) return;
+          select.innerHTML = '';
+          const rooms = [...(state.rooms || [])].sort(
+            (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+          );
+          if (!rooms.length) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = 'No rooms available';
+            select.appendChild(opt);
+            select.disabled = true;
+            return;
+          }
+          select.disabled = false;
+          for (const room of rooms) {
+            const opt = document.createElement('option');
+            opt.value = room.id;
+            const title = room.participants
+              .map((p) => \`\${p.firstName || ''} \${p.lastName || ''}\`.trim() || p.id)
+              .join(' / ');
+            opt.textContent = title || 'Room';
+            select.appendChild(opt);
+          }
+          const current = state.selectedRoomId || rooms[0]?.id;
+          if (current) select.value = current;
+        }
+
+        function openSystemMessageModal() {
+          if (!state.token) {
+            showAlert('Provide an auth token to send messages.', 'warning');
+            return;
+          }
+          populateSystemRoomsSelect();
+          elements.systemMessageTitle.value = '';
+          elements.systemMessageText.value = '';
+          const modal = bootstrap.Modal.getOrCreateInstance(elements.systemMessageModal);
+          modal.show();
+        }
+
+        async function sendSystemMessage(roomId, title, text) {
+          if (!roomId) {
+            showAlert('Select a room first.', 'warning');
+            return;
+          }
+          if (!text?.trim()) {
+            showAlert('Message text is required to send.', 'warning');
+            return;
+          }
+          clearAlerts();
+          try {
+            const url = window.location.origin + '/messages/rooms/' + encodeURIComponent(roomId) + '/messages/general';
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                ...getAuthHeaders(),
+              },
+              body: JSON.stringify({ title: title?.trim() || undefined, text: text.trim() }),
+            });
+            const payload = await response.json();
+            if (!response.ok || payload.status !== 'success') {
+              throw new Error(payload?.message || 'Failed to send system message');
+            }
+            const modal = bootstrap.Modal.getOrCreateInstance(elements.systemMessageModal);
+            modal.hide();
+            showAlert('System message sent.', 'success');
+          } catch (error) {
+            showAlert(error.message || 'Unable to send system message.');
           }
         }
 
@@ -312,50 +590,147 @@ export class MessagesPublicController {
             container.appendChild(empty);
             return;
           }
+          const groups = groupMessagesForRender(items);
 
-          items.forEach((message) => {
+          let lastDayKey = null;
+          groups.forEach((entry) => {
+            const baseDate = new Date(entry.createdAt);
+            const dayKey = baseDate.toDateString();
+            if (dayKey !== lastDayKey) {
+              const wrap = document.createElement('div');
+              wrap.className = 'text-center my-2';
+              const chip = document.createElement('span');
+              chip.className = 'date-chip';
+              chip.textContent = baseDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+              wrap.appendChild(chip);
+              container.appendChild(wrap);
+              lastDayKey = dayKey;
+            }
+
+            const directionClass = computeDirection(entry.firstMessage);
             const wrapper = document.createElement('div');
-            wrapper.className = \`rounded-3 p-3 mb-3 message-bubble \${message.direction}\`;
+            wrapper.className = \`rounded-3 p-3 mb-3 message-bubble \${directionClass}\`;
+
             const header = document.createElement('div');
             header.className = 'd-flex justify-content-between align-items-center mb-2';
-            const senderName = message.sender
-              ? \`\${message.sender.firstName || ''} \${message.sender.lastName || ''}\`.trim() || message.sender.id
+            const isGeneral = entry.firstMessage.category === 'general';
+            const hasSender = !!entry.firstMessage.sender;
+            const senderName = hasSender
+              ? \`\${entry.firstMessage.sender.firstName || ''} \${entry.firstMessage.sender.lastName || ''}\`.trim() || entry.firstMessage.sender.id
               : 'System';
             const sender = document.createElement('strong');
-            sender.textContent = \`\${senderName}\`;
+            sender.textContent = senderName;
             header.appendChild(sender);
+            if (isGeneral) {
+              const badge = document.createElement('span');
+              badge.className = hasSender ? 'badge bg-warning text-dark ms-2' : 'badge bg-dark ms-2';
+              badge.textContent = hasSender ? 'General' : 'System';
+              header.appendChild(badge);
+            }
             const timestamp = document.createElement('span');
             timestamp.className = 'message-timestamp';
-            timestamp.textContent = formatDate(message.createdAt);
+            timestamp.textContent = formatDate(entry.createdAt);
             header.appendChild(timestamp);
             wrapper.appendChild(header);
 
-            if (message.caption) {
-              const caption = document.createElement('div');
-              caption.className = 'message-caption fw-semibold';
-              caption.textContent = message.caption;
-              wrapper.appendChild(caption);
-            }
-
-            if (message.text) {
-              const text = document.createElement('div');
-              text.className = 'message-text';
-              text.textContent = message.text;
-              wrapper.appendChild(text);
-            }
-
-            if (message.imageUrl) {
-              const image = document.createElement('img');
-              image.src = message.imageUrl;
-              image.className = 'img-fluid rounded mt-2';
-              image.alt = 'Attached image';
-              wrapper.appendChild(image);
+            if (entry.type === 'bundle') {
+              const grid = document.createElement('div');
+              grid.className = 'image-grid' + (entry.messages.length === 1 ? ' single' : '');
+              entry.messages.forEach((m) => {
+                if (!m.imageUrl) return;
+                const img = document.createElement('img');
+                img.src = m.imageUrl;
+                img.alt = 'Attached image';
+                grid.appendChild(img);
+              });
+              wrapper.appendChild(grid);
+              const first = entry.messages[0];
+              if (first.caption) {
+                const caption = document.createElement('div');
+                caption.className = 'message-caption fw-semibold mt-2';
+                caption.textContent = first.caption;
+                wrapper.appendChild(caption);
+              }
+            } else {
+              const message = entry.firstMessage;
+              if (message.caption) {
+                const caption = document.createElement('div');
+                caption.className = 'message-caption fw-semibold';
+                caption.textContent = message.caption;
+                wrapper.appendChild(caption);
+              }
+              if (message.text) {
+                const text = document.createElement('div');
+                text.className = 'message-text';
+                text.textContent = message.text;
+                wrapper.appendChild(text);
+              }
+              if (message.imageUrl) {
+                const grid = document.createElement('div');
+                grid.className = 'image-grid single';
+                const img = document.createElement('img');
+                img.src = message.imageUrl;
+                img.alt = 'Attached image';
+                grid.appendChild(img);
+                wrapper.appendChild(grid);
+              }
             }
 
             container.appendChild(wrapper);
           });
 
           container.scrollTop = container.scrollHeight;
+        }
+
+        function groupMessagesForRender(items) {
+          const groups = [];
+          const MAX_MS = 15000; // 15 seconds window to bundle images
+          for (let i = 0; i < items.length; i++) {
+            const m = items[i];
+            if (m && m.imageUrl) {
+              const bucket = [m];
+              const dir = computeDirection(m);
+              const senderId = m.sender?.id || '';
+              const baseTime = new Date(m.createdAt).getTime();
+              let j = i + 1;
+              while (j < items.length) {
+                const n = items[j];
+                if (!n?.imageUrl) break;
+                if (computeDirection(n) !== dir) break;
+                if ((n.sender?.id || '') !== senderId) break;
+                const t = new Date(n.createdAt).getTime();
+                if (Math.abs(t - baseTime) > MAX_MS) break;
+                bucket.push(n);
+                j++;
+              }
+              i = j - 1;
+              groups.push({
+                type: 'bundle',
+                createdAt: m.createdAt,
+                firstMessage: m,
+                messages: bucket,
+              });
+            } else {
+              groups.push({
+                type: 'single',
+                createdAt: m.createdAt,
+                firstMessage: m,
+              });
+            }
+          }
+          return groups;
+        }
+
+        function computeDirection(message) {
+          try {
+            if (!message) return 'incoming';
+            if (message.category === 'general') return 'general';
+            const senderId = message.sender && message.sender.id;
+            if (senderId && state.currentUserId && senderId === state.currentUserId) return 'outgoing';
+            return 'incoming';
+          } catch (_) {
+            return 'incoming';
+          }
         }
 
         function escapeHtml(value) {
@@ -459,6 +834,49 @@ export class MessagesPublicController {
             return;
           }
           clearAlerts();
+          const handleRoomJoined = async (room) => {
+            if (!room || !room.id) return;
+            const existingIndex = state.rooms.findIndex((r) => r.id === room.id);
+            if (existingIndex >= 0) {
+              state.rooms[existingIndex] = room;
+            } else {
+              state.rooms.push(room);
+            }
+            state.selectedRoomId = room.id;
+            saveState();
+            renderRooms();
+            renderActiveRoom();
+            await refreshMessages();
+            showAlert('Room is ready.', 'success');
+          };
+
+          if (socket && socket.connected) {
+            try {
+              await new Promise((resolve, reject) => {
+                let settled = false;
+                const timer = setTimeout(() => {
+                  if (settled) return;
+                  settled = true;
+                  socket.off('room:joined', onJoined);
+                  reject(new Error('WebSocket join timed out'));
+                }, 2500);
+                const onJoined = async (room) => {
+                  if (settled) return;
+                  settled = true;
+                  clearTimeout(timer);
+                  socket.off('room:joined', onJoined);
+                  await handleRoomJoined(room);
+                  resolve();
+                };
+                socket.once('room:joined', onJoined);
+                socket.emit('room:join', { otherUserId });
+              });
+              return;
+            } catch (_) {
+              // Fallback to HTTP
+            }
+          }
+
           try {
             const response = await fetch(\`\${window.location.origin}/messages/rooms\`, {
               method: 'POST',
@@ -473,65 +891,121 @@ export class MessagesPublicController {
             if (!response.ok || payload.status !== 'success') {
               throw new Error(payload?.message || 'Failed to open room');
             }
-            const room = payload.data;
-            const existingIndex = state.rooms.findIndex((r) => r.id === room.id);
-            if (existingIndex >= 0) {
-              state.rooms[existingIndex] = room;
-            } else {
-              state.rooms.push(room);
-            }
-            state.selectedRoomId = room.id;
-            saveState();
-            renderRooms();
-            renderActiveRoom();
-            await refreshMessages();
-            showAlert('Room is ready.', 'success');
+            await handleRoomJoined(payload.data);
           } catch (error) {
             showAlert(error.message || 'Unable to open room.');
           }
         }
 
-        async function sendMessage(title, text) {
+        async function fetchMe() {
+          if (!state.token) return;
+          try {
+            const response = await fetch(\`\${window.location.origin}/auth/me\`, {
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                ...getAuthHeaders(),
+              },
+            });
+            const payload = await response.json();
+            if (!response.ok || payload.status !== 'success') {
+              throw new Error(payload?.message || 'Failed to fetch current user');
+            }
+            const id = payload?.data?.user?.id;
+            if (id) {
+              state.currentUserId = id;
+              saveState();
+            }
+          } catch (error) {
+            showAlert(error.message || 'Unable to fetch current user.', 'warning');
+          }
+        }
+
+        async function sendMessage(text) {
           const roomId = state.selectedRoomId;
           if (!roomId) return;
-          if (!text?.trim()) {
-            showAlert('Message text is required to send.', 'warning');
+          if (!socket || !socket.connected) {
+            showAlert('WebSocket is not connected. Save token again or refresh.', 'warning');
+            return;
+          }
+          const body = (text || '').trim();
+          const filesInput = elements.messageFiles;
+          const files = Array.from(filesInput?.files || []);
+          if (!body && files.length === 0) {
+            showAlert('Type a message or attach an image.', 'warning');
             return;
           }
           clearAlerts();
           try {
-            const response = await fetch(
-              \`\${window.location.origin}/messages/rooms/\${encodeURIComponent(roomId)}/messages/general\`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Accept: 'application/json',
-                  ...getAuthHeaders(),
-                },
-                body: JSON.stringify({ title: title?.trim() || undefined, text: text.trim() }),
-              },
+            const filePayload = await Promise.all(
+              files.map(async (file) => ({
+                name: file.name,
+                type: file.type || 'application/octet-stream',
+                data: await readFileAsBase64(file),
+              })),
             );
-            const payload = await response.json();
-            if (!response.ok || payload.status !== 'success') {
-              throw new Error(payload?.message || 'Failed to send message');
-            }
-            const message = payload.data;
-            const roomMessages = state.messages[roomId] || [];
-            roomMessages.push(message);
-            state.messages[roomId] = deduplicateMessages(roomMessages);
-            const roomIndex = state.rooms.findIndex((room) => room.id === roomId);
-            if (roomIndex >= 0) {
-              state.rooms[roomIndex].updatedAt = message.createdAt;
-              state.rooms[roomIndex].lastMessage = message;
-            }
-            saveState();
-            elements.messageTitle.value = '';
-            elements.messageText.value = '';
-            renderActiveRoom();
+
+            await new Promise((resolve, reject) => {
+              let settled = false;
+              const timeout = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(new Error('Timed out sending over WebSocket.'));
+              }, 4000);
+
+              const onSent = () => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                elements.messageText.value = '';
+                if (filesInput) filesInput.value = '';
+                resolve();
+              };
+
+              function cleanup() {
+                clearTimeout(timeout);
+                socket.off('message:sent', onSent);
+              }
+
+              socket.once('message:sent', onSent);
+              socket.emit('message:send', {
+                roomId,
+                text: body || undefined,
+                files: filePayload,
+              });
+            });
           } catch (error) {
             showAlert(error.message || 'Unable to send message.');
           }
+        }
+
+        function readFileAsBase64(file) {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              try {
+                const result = reader.result;
+                if (typeof result === 'string') {
+                  // Strip data URL prefix if present
+                  const comma = result.indexOf(',');
+                  resolve(comma > -1 ? result.slice(comma + 1) : result);
+                } else if (result instanceof ArrayBuffer) {
+                  const bytes = new Uint8Array(result);
+                  let binary = '';
+                  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+                  resolve(btoa(binary));
+                } else {
+                  reject(new Error('Unsupported file reader result'));
+                }
+              } catch (e) {
+                reject(e);
+              }
+            };
+            reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+            // Prefer readAsDataURL to keep type; will be stripped above
+            reader.readAsDataURL(file);
+          });
         }
 
         function deduplicateMessages(messages) {
@@ -552,16 +1026,19 @@ export class MessagesPublicController {
           renderActiveRoom();
         }
 
-        elements.tokenForm.addEventListener('submit', (event) => {
+        elements.tokenForm.addEventListener('submit', async (event) => {
           event.preventDefault();
           state.token = elements.tokenInput.value.trim();
+          state.currentUserId = null;
           saveState();
           if (!state.token) {
             showAlert('Auth token cleared. Provide a token to interact with the API.', 'warning');
             return;
           }
           showAlert('Token saved locally.', 'success');
+          await fetchMe();
           fetchRooms();
+          connectSocket();
         });
 
         elements.refreshRooms.addEventListener('click', (event) => {
@@ -577,6 +1054,7 @@ export class MessagesPublicController {
           state.selectedRoomId = null;
           state.messages = {};
           state.nextCursor = {};
+          state.currentUserId = null;
           hydrateUI();
           showAlert('Saved state cleared. Token removed.', 'warning');
         });
@@ -603,9 +1081,21 @@ export class MessagesPublicController {
 
         elements.messageForm.addEventListener('submit', async (event) => {
           event.preventDefault();
-          const title = elements.messageTitle.value;
           const text = elements.messageText.value;
-          await sendMessage(title, text);
+          await sendMessage(text);
+        });
+
+        elements.openSystemMessage.addEventListener('click', (event) => {
+          event.preventDefault();
+          openSystemMessageModal();
+        });
+
+        elements.systemMessageForm.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const roomId = elements.systemMessageRoom.value;
+          const title = elements.systemMessageTitle.value;
+          const text = elements.systemMessageText.value;
+          await sendSystemMessage(roomId, title, text);
         });
 
         loadState();
@@ -616,6 +1106,12 @@ export class MessagesPublicController {
         }
         if (state.token && !state.rooms.length) {
           fetchRooms();
+        }
+        if (state.token) {
+          if (!state.currentUserId) {
+            fetchMe();
+          }
+          connectSocket();
         }
       })();
     </script>

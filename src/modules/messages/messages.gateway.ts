@@ -23,6 +23,18 @@ interface BroadcastPayload {
   message: MessageViewModel;
 }
 
+interface SendMessageFilePayload {
+  name: string; // original file name
+  type: string; // mime type
+  data: string; // base64-encoded content
+}
+
+interface SendMessagePayload {
+  roomId: string;
+  text?: string;
+  files?: SendMessageFilePayload[];
+}
+
 @WebSocketGateway({
   cors: {
     origin: process.env.CORS_ORIGINS?.split(',').map((s) => s.trim()) || '*',
@@ -99,13 +111,68 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
 
   broadcastMessage(roomId: string, payloads: BroadcastPayload[]): void {
     for (const payload of payloads) {
-      const sockets = this.findSocketsForUser(payload.userId);
-      for (const socket of sockets) {
-        socket.join(roomId);
-        socket.emit('message:new', payload.message);
-      }
+      const socketIds = this.findSocketIdsForUser(payload.userId);
+      if (socketIds.length === 0) continue;
+      this.server.in(socketIds).socketsJoin(roomId);
+      this.server.to(socketIds).emit('message:new', payload.message);
     }
     this.server.to(roomId).emit('room:activity', { roomId, updatedAt: new Date().toISOString() });
+  }
+
+  @SubscribeMessage('message:send')
+  async handleSendMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: SendMessagePayload,
+  ): Promise<{ event: string; data: any }> {
+    const userId = client.data.userId as string | undefined;
+    if (!userId) {
+      throw new UnauthorizedException('Unauthenticated socket');
+    }
+    if (!payload?.roomId) {
+      throw new BadRequestException('roomId is required');
+    }
+
+    // Ensure the sender socket is in the room to receive room-scoped broadcasts
+    client.join(payload.roomId);
+
+    let primaryMessage: MessageViewModel | null = null;
+
+    // Optional direct text message (only when no files are attached)
+    if (payload.text && payload.text.trim() && !(Array.isArray(payload.files) && payload.files.length > 0)) {
+      primaryMessage = await this.messages.createDirectTextMessage(
+        payload.roomId,
+        userId,
+        payload.text,
+      );
+    }
+
+    // Optional image attachments (multiple). Each attachment is emitted as its own message.
+    if (Array.isArray(payload.files) && payload.files.length > 0) {
+      let first = true;
+      for (const f of payload.files) {
+        if (!f?.data || !f?.type || !f?.name) continue;
+        if (!f.type.toLowerCase().startsWith('image/')) {
+          throw new BadRequestException('Only image files are permitted');
+        }
+        const buffer = Buffer.from(f.data, 'base64');
+        const view = await this.messages.sendImageMessage(payload.roomId, userId, {
+          buffer,
+          originalname: f.name,
+          mimetype: f.type,
+        } as any, { caption: first && payload.text ? payload.text.trim() : null } as any);
+        if (first && !primaryMessage) {
+          primaryMessage = view;
+        }
+        first = false;
+      }
+    }
+
+    if (!primaryMessage) {
+      // No text provided; try to return the latest activity time via a synthetic ack
+      // Clients should rely on subsequent `message:new` events for attachment echoes.
+      return { event: 'message:sent', data: { success: true } } as any;
+    }
+    return { event: 'message:sent', data: primaryMessage };
   }
 
   emitRoomCleared(roomId: string): void {
@@ -140,16 +207,13 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.server.emit('presence:update', { userId, online });
   }
 
-  private findSocketsForUser(userId: string): Socket[] {
-    const sockets: Socket[] = [];
+  private findSocketIdsForUser(userId: string): string[] {
+    const ids: string[] = [];
     for (const [socketId, mappedUser] of this.socketUser.entries()) {
       if (mappedUser === userId) {
-        const socket = this.server.sockets.sockets.get(socketId);
-        if (socket) {
-          sockets.push(socket);
-        }
+        ids.push(socketId);
       }
     }
-    return sockets;
+    return ids;
   }
 }

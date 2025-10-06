@@ -128,7 +128,7 @@ HTTP/1.1 200 OK
   "message": "OK",
   "data": {
     "id": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
-    "participants": [
+  "participants": [
       {
         "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1",
         "firstName": "Ada",
@@ -372,17 +372,182 @@ HTTP/1.1 200 OK
 
 Responses include `direction` fields (`incoming`, `outgoing`, `general`) so consumers can render messages relative to the requesting user.
 
-### WebSocket API
-- Namespace: `ws://<host>/messages`
-- Authenticate by sending a JWT access token as `auth: { token: '<jwt>' }`, `?token=<jwt>`, or an `Authorization: Bearer <jwt>` header during the handshake.
-- Upon connection, the gateway tracks online status and broadcasts `presence:update` events `{ userId, online }` in real time.
-- Join (or create) a room by emitting `room:join` with `{ otherUserId }`. The server responds with `room:joined` containing the room summary.
-- Message events:
-  - `message:new` — emitted to each participant with a personalised payload containing direction and metadata.
-  - `room:activity` — emitted when a room receives a new message with `{ roomId, updatedAt }`.
-  - `room:cleared` / `room:deleted` — emitted after history purge or room deletion.
+### WebSocket API (Socket.IO)
+- Namespace: `http://<host>/messages` (Socket.IO namespace)
+- Auth: provide the JWT access token at handshake via one of:
+  - `auth: { token: '<jwt>' }` (recommended)
+  - Query string `?token=<jwt>`
+  - `Authorization: Bearer <jwt>` header
 
-Presence checks are live; if all sockets for a user disconnect, a `presence:update` with `online: false` is broadcast immediately.
+Connect example (browser):
+```
+import { io } from 'socket.io-client';
+
+const socket = io('http://localhost:3000/messages', {
+  auth: { token: '<jwt>' },
+  transports: ['websocket'],
+});
+
+socket.on('connect', () => console.log('connected', socket.id));
+socket.on('connect_error', (err) => console.error('ws error', err.message));
+```
+
+On connection the server marks you online and broadcasts presence updates. When your last socket disconnects, a `presence:update` with `online: false` is emitted.
+
+#### Client → Server events
+- `room:join`
+  - Request payload:
+    ```json
+    { "otherUserId": "2c4c0f2c-97f2-4e4f-96b4-e8d9ba1d21f6" }
+    ```
+  - Server response event: `room:joined`
+  - Response payload (ActiveRoomViewModel):
+    ```json
+    {
+      "id": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+      "participants": [
+        { "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1", "firstName": "Ada", "lastName": "Lovelace", "profileImageUrl": null, "online": true },
+        { "id": "2c4c0f2c-97f2-4e4f-96b4-e8d9ba1d21f6", "firstName": "Grace", "lastName": "Hopper", "profileImageUrl": null, "online": false }
+      ],
+      "lastMessage": {
+        "id": "1b8cf2e2-5f24-4dc4-8c0c-0c0fe5bc9f91",
+        "roomId": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+        "direction": "outgoing",
+        "category": "direct",
+        "imageUrl": null,
+        "caption": null,
+        "text": "Looking forward to the pickup tomorrow!",
+        "createdAt": "2024-06-01T13:45:00.000Z",
+        "sender": { "id": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1", "firstName": "Ada", "lastName": "Lovelace", "profileImageUrl": null }
+      },
+      "createdAt": "2024-05-30T09:12:00.000Z",
+      "updatedAt": "2024-06-01T13:45:00.000Z"
+    }
+    ```
+  - Notes: The server also joins the calling socket to the room channel so it can receive subsequent room broadcasts.
+
+- `message:send` (send a direct message with optional images)
+  - Request payload:
+    ```json
+    {
+      "roomId": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+      "text": "Hey there!",
+      "files": [
+        { "name": "photo.jpg", "type": "image/jpeg", "data": "<base64>" }
+      ]
+    }
+    ```
+  - Notes:
+    - Creates a direct text message if `text` is provided.
+    - For each image in `files[]`, creates a separate direct image message.
+    - Non-image `type`s are rejected.
+  - Server response event: `message:sent` with either the created text `MessageViewModel` or `{ success: true }` when only attachments were sent. All messages are also delivered via `message:new`.
+  - Side effects: broadcasts `message:new` to both participants and `room:activity { roomId, updatedAt }` to the room.
+
+#### Server → Client events
+- `message:new`
+  - Payload (MessageViewModel):
+    ```json
+    {
+      "id": "5d794f95-9c64-4048-9fdc-0f9617a9af93",
+      "roomId": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c",
+      "direction": "incoming",
+      "category": "direct",
+      "imageUrl": null,
+      "caption": null,
+      "text": "Hey, are we still on for tomorrow?",
+      "createdAt": "2024-06-01T14:00:00.000Z",
+      "sender": { "id": "2c4c0f2c-97f2-4e4f-96b4-e8d9ba1d21f6", "firstName": "Grace", "lastName": "Hopper", "profileImageUrl": null }
+    }
+    ```
+  - Delivery: Emitted individually to each participant’s active sockets with `direction` personalised for the recipient.
+
+- `room:activity`
+  - Payload:
+    ```json
+    { "roomId": "a438e1dc-1e7f-4b24-9d0f-4d2f2a5d5e7c", "updatedAt": "2024-06-01T14:00:00.000Z" }
+    ```
+
+- `presence:update`
+  - Payload:
+    ```json
+    { "userId": "9f0c9559-83d3-4afd-8a79-5f437c82c1d1", "online": true }
+    ```
+  - Emitted globally when a user connects their first socket (online: true) and when their final socket disconnects (online: false).
+
+- `room:cleared`
+  - Payload: `{ "roomId": "<uuid>" }`
+
+- `room:deleted`
+  - Payload: `{ "roomId": "<uuid>" }`
+
+#### Direction & categories
+- `category`: either `direct` (one-to-one chat) or `general` (system/general messages).
+- `direction` is computed for each recipient by the server:
+  - `general` for `category === 'general'`
+  - `outgoing` if the `sender.id` equals the recipient’s user id
+  - `incoming` otherwise
+
+#### Presence (online state)
+- The server maintains an in-memory map of `userId -> set(socketId)`.
+- When the first socket for a user connects, the user is considered online; when the last socket disconnects, they are considered offline.
+- `presence.update` events are broadcast for both transitions. The `online` flag in room participant lists (`GET /messages/rooms/active`) reflects this state at the time of the request.
+- Note: Presence is not persisted; a server restart clears all presence information.
+
+#### Event Payload Formats (summary)
+TypeScript-style shapes for quick reference:
+
+```
+type Direction = 'incoming' | 'outgoing' | 'general';
+type Category = 'direct' | 'general';
+
+interface MessageSender {
+  id: string;
+  firstName: string | null;
+  lastName: string | null;
+  profileImageUrl: string | null;
+}
+
+interface MessageViewModel {
+  id: string;
+  roomId: string;
+  direction: Direction;
+  category: Category;
+  imageUrl: string | null;
+  caption: string | null;
+  text: string | null;
+  createdAt: string; // ISO-8601
+  sender: MessageSender | null; // null for pure system messages
+}
+
+interface ActiveRoomViewModel {
+  id: string;
+  participants: Array<{
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    profileImageUrl: string | null;
+    online: boolean;
+  }>;
+  lastMessage: MessageViewModel | null;
+  createdAt: string; // ISO-8601
+  updatedAt: string; // ISO-8601
+}
+
+// Client → Server
+// event: 'room:join'
+interface JoinRoomPayload { otherUserId: string; }
+
+// Server → Client
+// event: 'room:joined' carries ActiveRoomViewModel
+// event: 'message:new' carries MessageViewModel
+interface RoomActivity { roomId: string; updatedAt: string; }
+interface PresenceUpdate { userId: string; online: boolean; }
+// events: 'room:activity' -> RoomActivity
+//         'presence:update' -> PresenceUpdate
+//         'room:cleared' -> { roomId: string }
+//         'room:deleted' -> { roomId: string }
+```
 
 ## API Response & Error Handling
 - Success envelope: `{ status: 'success', message: 'OK', data: <payload> }` (applied by a global interceptor). Routes can override `message`.
@@ -1095,3 +1260,41 @@ GET /items?lat=51.5072&lng=-0.1276&radius=5&status=active&category=furniture&pag
 - Behavior:
   - Requires the item to be in `pending_recycle_processing`; otherwise returns `409 Conflict`.
   - Sets the item status to `recycled` and records a `RECYCLE_OUT` scan, preserving an auditable event trail.
+
+## Users
+
+All routes require a bearer token (protected with `JwtAuthGuard`).
+
+### HTTP endpoints
+
+| Method & Path | Description |
+| --- | --- |
+| `PATCH /users/me/profile` | Update the authenticated user’s profile fields. |
+
+#### Update Profile (`PATCH /users/me/profile`)
+- Auth: `Authorization: Bearer <accessToken>`
+- Body (JSON; all fields optional, at least one required):
+```
+{
+  "first_name": "Ada",
+  "last_name": "Lovelace",
+  "phone": "+441234567890"
+}
+```
+- Notes:
+  - Omit a field to leave it unchanged.
+  - Send an empty string to clear a field (it becomes `null`).
+  - Max lengths: `first_name` 100, `last_name` 100, `phone` 32.
+- Response (200 OK):
+```
+{
+  "status": "success",
+  "message": "OK",
+  "data": {
+    "id": "<user-id>",
+    "first_name": "Ada",
+    "last_name": "Lovelace",
+    "phone": "+441234567890"
+  }
+}
+```

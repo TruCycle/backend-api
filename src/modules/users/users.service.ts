@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { KycProfile, KycStatus } from './kyc-profile.entity';
 import { User } from './user.entity';
 
@@ -52,5 +53,36 @@ export class UsersService {
     const saved = await this.repo.save(user);
     return { id: saved.id, profile_image_url: saved.profileImageUrl };
   }
-}
 
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.repo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    let changed = false;
+
+    if (typeof dto.firstName !== 'undefined') {
+      user.firstName = dto.firstName && dto.firstName.length > 0 ? dto.firstName : null;
+      changed = true;
+    }
+    if (typeof dto.lastName !== 'undefined') {
+      user.lastName = dto.lastName && dto.lastName.length > 0 ? dto.lastName : null;
+      changed = true;
+    }
+    if (typeof dto.phone !== 'undefined') {
+      user.phone = dto.phone && dto.phone.length > 0 ? dto.phone : null;
+      changed = true;
+    }
+
+    if (!changed) {
+      throw new BadRequestException('No valid fields provided');
+    }
+
+    const saved = await this.repo.save(user);
+    return {
+      id: saved.id,
+      first_name: saved.firstName ?? null,
+      last_name: saved.lastName ?? null,
+      phone: saved.phone ?? null,
+    };
+  }
+}
