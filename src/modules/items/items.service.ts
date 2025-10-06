@@ -279,7 +279,7 @@ export class ItemsService {
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.donor', 'donor')
       .where('item.donor_id = :userId', { userId: normalizedUserId })
-      .orderBy('item.created_at', 'DESC')
+      .orderBy('item.createdAt', 'DESC')
       .skip(offset)
       .take(limit);
 
@@ -386,7 +386,7 @@ export class ItemsService {
       .leftJoinAndSelect('claim.item', 'item')
       .leftJoinAndSelect('item.donor', 'donor')
       .where('claim.collector_id = :userId', { userId: normalizedUserId })
-      .orderBy('claim.created_at', 'DESC')
+      .orderBy('claim.createdAt', 'DESC')
       .skip(offset)
       .take(limit);
 
