@@ -17,6 +17,8 @@ export class ResponseInterceptor implements NestInterceptor {
   constructor(private readonly reflector: Reflector) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const http = context.switchToHttp();
+    const res: any = http.getResponse?.() ?? null;
     const shouldSkip = this.reflector.getAllAndOverride<boolean>(SKIP_RESPONSE_ENVELOPE_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -28,6 +30,11 @@ export class ResponseInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       map((data) => {
+        // Avoid wrapping 204 No Content responses
+        const statusCode = res?.statusCode;
+        if (statusCode === 204) {
+          return undefined;
+        }
         // If handler already returned a standard envelope, pass it through
         if (data && typeof data === 'object' && 'status' in data && 'data' in data) {
           return data;

@@ -16,7 +16,16 @@ export class ReviewsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiBody({ description: 'Review payload', type: CreateReviewDto })
-  @ApiOkResponse({ description: 'Created review', schema: { example: { status: 'success', message: 'OK', data: { id: 'review-id', rating: 5, comment: 'Great!', reviewerId: 'me', userId: 'them' } } } })
+  @ApiOkResponse({
+    description: 'Created review',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'OK',
+        data: { id: 'review-id', created_at: '2024-06-01T12:00:00.000Z' },
+      },
+    },
+  })
   async create(@Body() dto: CreateReviewDto, @Req() req: any) {
     const userId = req?.user?.sub;
     return this.reviews.create(userId, dto);
@@ -24,7 +33,28 @@ export class ReviewsController {
 
   @Get('users/:id/reviews')
   @ApiOperation({ summary: 'List reviews and aggregate rating for a user' })
-  @ApiOkResponse({ description: 'Reviews list and aggregates', schema: { example: { status: 'success', message: 'OK', data: { average: 4.8, count: 12, reviews: [{ id: 'r1', rating: 5, comment: 'Nice' }] } } } })
+  @ApiOkResponse({
+    description: 'Reviews list and aggregates',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'OK',
+        data: {
+          rating: 4.8,
+          reviews_count: 12,
+          reviews: [
+            {
+              id: 'r1',
+              rating: 5,
+              comment: 'Nice',
+              reviewer: { id: 'user-id', name: 'Jane Doe' },
+              created_at: '2024-06-01T10:00:00.000Z',
+            },
+          ],
+        },
+      },
+    },
+  })
   async list(@Param('id') id: string) {
     return this.reviews.listForUser(id);
   }
