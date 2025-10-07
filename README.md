@@ -37,6 +37,7 @@ npm run start:dev
 ```
 - Swagger UI: http://localhost:3000/docs
 - OpenAPI JSON: http://localhost:3000/openapi.json
+- Messaging Test Page: http://localhost:3000/public/test/messages
 
 ### Option B: Without Docker (local or hosted Postgres)
 
@@ -72,6 +73,7 @@ npm run start:dev
 ```
 - Swagger UI: http://localhost:3000/docs
 - OpenAPI JSON: http://localhost:3000/openapi.json
+- Messaging Test Page: http://localhost:3000/public/test/messages
 
 ### Notes on hosted Postgres
 - Supabase includes PostGIS; after creating a project, ensure `CREATE EXTENSION postgis;` (the migration also attempts this).
