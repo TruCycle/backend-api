@@ -15,8 +15,11 @@ async function bootstrap() {
     bufferLogs: true,
   });
 
+  // Configure CORS: allow `*` or a comma-separated list in CORS_ORIGINS
+  const corsEnv = process.env.CORS_ORIGINS?.trim();
+  const corsOrigin = !corsEnv || corsEnv === '*' ? '*' : corsEnv.split(',').map((s) => s.trim()).filter(Boolean);
   app.enableCors({
-    origin: process.env.CORS_ORIGINS?.split(',').map((s) => s.trim()) || '*',
+    origin: corsOrigin,
     credentials: false,
   });
 

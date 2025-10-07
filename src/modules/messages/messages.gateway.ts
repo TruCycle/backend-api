@@ -37,7 +37,10 @@ interface SendMessagePayload {
 
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGINS?.split(',').map((s) => s.trim()) || '*',
+    origin:
+      !process.env.CORS_ORIGINS || process.env.CORS_ORIGINS.trim() === '*'
+        ? '*'
+        : process.env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean),
     credentials: false,
   },
   namespace: '/messages',
