@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { PasswordService } from '../../common/security/password.service';
 import { EmailService } from '../notifications/email.service';
 import { Role, RoleCode } from '../users/role.entity';
+import { normalizeIncomingRole } from '../users/role.utils';
 import { UserRole } from '../users/user-role.entity';
 import { User, UserStatus } from '../users/user.entity';
 
@@ -56,7 +57,7 @@ export class AuthService {
     });
     const saved = await this.users.save(user);
 
-    const code = roleCode || RoleCode.CUSTOMER;
+    const code = normalizeIncomingRole(roleCode || RoleCode.CUSTOMER);
     const role = await this.getOrCreateRole(code);
     const link = this.userRoles.create({ user: saved, role });
     await this.userRoles.save(link);

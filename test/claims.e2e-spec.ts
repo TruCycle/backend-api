@@ -1,4 +1,4 @@
-﻿import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -85,7 +85,7 @@ describe('Claims E2E', () => {
     userRepo.findOne.mockResolvedValue(collector);
 
     const item: Partial<Item> = {
-      id: '9f5c2c8e',
+      id: '9f5c2c8e-0000-4000-a000-000000000000',
       status: ItemStatus.ACTIVE,
       donor: { id: 'donor-1' } as any,
     };
@@ -104,29 +104,56 @@ describe('Claims E2E', () => {
     const res = await request(app.getHttpServer())
       .post('/claims')
       .set('Authorization', 'Bearer fake-token')
-      .send({ item_id: '9f5c2c8e' });
+      .send({ item_id: '9f5c2c8e-0000-4000-a000-000000000000' });
 
     expect(res.status).toBe(201);
     expect(res.body.data).toEqual({
       id: 'f2a8471d',
-      item_id: '9f5c2c8e',
+      item_id: '9f5c2c8e-0000-4000-a000-000000000000',
       collector_id: 'collector-1',
       status: 'pending_approval',
       created_at: '2025-09-25T12:10:00.000Z',
     });
-    expect(itemRepo.update).toHaveBeenCalledWith('9f5c2c8e', { status: ItemStatus.CLAIMED });
+    expect(itemRepo.update).toHaveBeenCalledWith('9f5c2c8e-0000-4000-a000-000000000000', { status: ItemStatus.CLAIMED });
   });
 
-  it('POST /claims rejects users without collector privileges', async () => {
-    currentUser = { sub: 'user-2', roles: [RoleCode.CUSTOMER] };
+  it('POST /claims allows customers (treated as collectors)', async () => {
+    currentUser = { sub: 'customer-1', roles: [RoleCode.CUSTOMER] };
+
+    const customer: Partial<User> = { id: 'customer-1', status: UserStatus.ACTIVE };
+    userRepo.findOne.mockResolvedValue(customer);
+
+    const item: Partial<Item> = {
+      id: '9f5c2c8e-0000-4000-a000-000000000000',
+      status: ItemStatus.ACTIVE,
+      donor: { id: 'donor-1' } as any,
+    };
+    itemRepo.findOne.mockResolvedValue(item);
+
+    claimRepo.findOne.mockResolvedValue(undefined);
+
+    const createdAt = new Date('2025-09-25T12:10:00Z');
+    claimRepo.create.mockImplementation((data: any) => ({ id: 'f2a8471d', createdAt, ...data }));
+    claimRepo.save.mockImplementation(async (entity: any) => ({
+      ...entity,
+      id: 'f2a8471d',
+      createdAt,
+    }));
 
     const res = await request(app.getHttpServer())
       .post('/claims')
       .set('Authorization', 'Bearer fake-token')
-      .send({ item_id: '9f5c2c8e' });
+      .send({ item_id: '9f5c2c8e-0000-4000-a000-000000000000' });
 
-    expect(res.status).toBe(403);
-    expect(res.body.message).toBe('Collectors only');
+    expect(res.status).toBe(201);
+    expect(res.body.data).toEqual({
+      id: 'f2a8471d',
+      item_id: '9f5c2c8e-0000-4000-a000-000000000000',
+      collector_id: 'customer-1',
+      status: 'pending_approval',
+      created_at: '2025-09-25T12:10:00.000Z',
+    });
+    expect(itemRepo.update).toHaveBeenCalledWith('9f5c2c8e-0000-4000-a000-000000000000', { status: ItemStatus.CLAIMED });
   });
 
   it('POST /claims prevents duplicate active claims', async () => {
@@ -135,7 +162,7 @@ describe('Claims E2E', () => {
     const collector: Partial<User> = { id: 'collector-2', status: UserStatus.ACTIVE };
     userRepo.findOne.mockResolvedValue(collector);
     const item: Partial<Item> = {
-      id: '9f5c2c8e',
+      id: '9f5c2c8e-0000-4000-a000-000000000000',
       status: ItemStatus.ACTIVE,
       donor: { id: 'donor-1' } as any,
     };
@@ -145,7 +172,7 @@ describe('Claims E2E', () => {
     const res = await request(app.getHttpServer())
       .post('/claims')
       .set('Authorization', 'Bearer fake-token')
-      .send({ item_id: '9f5c2c8e' });
+      .send({ item_id: '9f5c2c8e-0000-4000-a000-000000000000' });
 
     expect(res.status).toBe(409);
     expect(res.body.message).toBe('This item already has an active claim');
