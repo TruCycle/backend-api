@@ -184,7 +184,8 @@ export class ClaimsService {
 
       const qb = claimRepo
         .createQueryBuilder('claim')
-        .setLock('pessimistic_write')
+        // Lock only the base table to avoid Postgres outer-join FOR UPDATE error
+        .setLock('pessimistic_write', ['claim'])
         .leftJoinAndSelect('claim.item', 'item')
         .leftJoinAndSelect('claim.collector', 'collector')
         .where('item.id = :itemId', { itemId });
@@ -307,7 +308,8 @@ export class ClaimsService {
 
       const qb = claimRepo
         .createQueryBuilder('claim')
-        .setLock('pessimistic_write')
+        // Lock only the base table to avoid Postgres outer-join FOR UPDATE error
+        .setLock('pessimistic_write', ['claim'])
         .leftJoinAndSelect('claim.item', 'item')
         .leftJoinAndSelect('item.donor', 'donor')
         .leftJoinAndSelect('claim.collector', 'collector')
