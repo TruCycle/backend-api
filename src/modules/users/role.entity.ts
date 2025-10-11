@@ -2,8 +2,6 @@ import { Column, Entity, PrimaryGeneratedColumn, Unique } from 'typeorm';
 
 export enum RoleCode {
   CUSTOMER = 'customer',
-  // Alias: donors are customers in domain language
-  DONOR = 'customer',
   COLLECTOR = 'collector',
   FACILITY = 'facility',
   ADMIN = 'admin',
