@@ -325,11 +325,8 @@ export class ClaimsService {
           pending: ClaimStatus.PENDING_APPROVAL,
         });
 
-      // Only restrict when a plain collector (not admin/facility/partner/donor)
-      const donorScopeRelaxed = true; // donor resolved after fetch
-      if (!isAdmin && !isFacility && !isPartner && isCollector) {
-        qb.andWhere('collector.id = :actorId', { actorId: actor.id });
-      }
+      // Do not restrict by collector here: donors (who carry the 'customer' alias that maps to 'collector')
+      // must be able to complete as the item owner. Authorization is enforced after fetching the claim.
 
       const claim = await qb.getOne();
       if (!claim) {
