@@ -14,6 +14,7 @@ import { CreateClaimsTable1700000000009 } from '../database/migrations/170000000
 import { AddClaimApprovedAt1700000000010 } from '../database/migrations/1700000000010-AddClaimApprovedAt';
 import { AddClaimCompletionAndScanEvents1700000000011 } from '../database/migrations/1700000000011-AddClaimCompletionAndScanEvents';
 import { AddUserProfileImageAndItemCo2AndReviews1700000000012 } from '../database/migrations/1700000000012-AddUserProfileImageAndItemCo2AndReviews';
+import { AllowMultipleClaimsPerItem1700000000014 } from '../database/migrations/1700000000014-AllowMultipleClaimsPerItem';
 import { Role } from '../modules/users/role.entity';
 import { UserRole } from '../modules/users/user-role.entity';
 import { User } from '../modules/users/user.entity';
@@ -41,6 +42,7 @@ async function run() {
       AddClaimApprovedAt1700000000010,
       AddClaimCompletionAndScanEvents1700000000011,
       AddUserProfileImageAndItemCo2AndReviews1700000000012,
+      AllowMultipleClaimsPerItem1700000000014,
     ],
     logging: cfg.db.logging,
     migrationsTransactionMode: 'each',

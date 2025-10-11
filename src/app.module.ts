@@ -18,6 +18,7 @@ import { AddClaimApprovedAt1700000000010 } from './database/migrations/170000000
 import { AddClaimCompletionAndScanEvents1700000000011 } from './database/migrations/1700000000011-AddClaimCompletionAndScanEvents';
 import { AddUserProfileImageAndItemCo2AndReviews1700000000012 } from './database/migrations/1700000000012-AddUserProfileImageAndItemCo2AndReviews';
 import { CreateMessagesTables1700000000013 } from './database/migrations/1700000000013-CreateMessagesTables';
+import { AllowMultipleClaimsPerItem1700000000014 } from './database/migrations/1700000000014-AllowMultipleClaimsPerItem';
 import { GeoModule } from './geo/geo.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { Claim } from './modules/claims/claim.entity';
@@ -81,6 +82,7 @@ const dbModules: any[] = enableDb
             AddClaimCompletionAndScanEvents1700000000011,
             AddUserProfileImageAndItemCo2AndReviews1700000000012,
             CreateMessagesTables1700000000013,
+            AllowMultipleClaimsPerItem1700000000014,
           ],
           migrationsRun: true,
           migrationsTransactionMode: 'each',

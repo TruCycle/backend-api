@@ -19,10 +19,8 @@ import { User, UserStatus } from '../users/user.entity';
 import { Claim, ClaimStatus } from './claim.entity';
 import { CreateClaimDto } from './dto/create-claim.dto';
 const CLAIMABLE_STATUSES: readonly ItemStatus[] = [ItemStatus.ACTIVE];
-const ACTIVE_CLAIM_STATUSES: readonly ClaimStatus[] = [
-  ClaimStatus.PENDING_APPROVAL,
-  ClaimStatus.APPROVED,
-];
+// Allow multiple pending requests: only an already-approved claim should block
+const ACTIVE_CLAIM_STATUSES: readonly ClaimStatus[] = [ClaimStatus.APPROVED];
 
 @Injectable()
 export class ClaimsService {
@@ -88,7 +86,6 @@ export class ClaimsService {
       status: ClaimStatus.PENDING_APPROVAL,
     });
     const saved = await this.claims.save(entity);
-    await this.items.update(item.id, { status: ItemStatus.CLAIMED });
 
     const createdAt =
       saved.createdAt instanceof Date && !Number.isNaN(saved.createdAt.getTime())
@@ -108,25 +105,39 @@ export class ClaimsService {
     if (!authPayload || typeof authPayload.sub !== 'string') {
       throw new UnauthorizedException('Authenticated user context not found');
     }
-    this.ensureAdminRole(authPayload);
+    const approverId = authPayload.sub;
+    const isAdmin = userHasRole(authPayload, RoleCode.ADMIN);
 
     const id = typeof rawId === 'string' ? rawId.trim() : '';
     if (!id) {
       throw new BadRequestException('Claim id is required');
     }
 
-    const claim = await this.claims.findOne({ where: { id } });
+    const claim = await this.claims.findOne({ where: { id }, relations: { item: { donor: true } } });
     if (!claim) {
       throw new NotFoundException('Claim not found');
     }
     if (claim.status !== ClaimStatus.PENDING_APPROVAL) {
       throw new ConflictException('Only pending claims can be approved');
     }
+    // Only the item donor or an admin can approve
+    const donorId = claim.item?.donor?.id;
+    if (!isAdmin && (!donorId || donorId !== approverId)) {
+      throw new ForbiddenException('Only the donor or an admin may approve this claim');
+    }
+    // Ensure item is active when approving the first claim
+    if (claim.item && claim.item.status !== ItemStatus.ACTIVE) {
+      throw new ConflictException('Item is not active for approval');
+    }
 
     claim.status = ClaimStatus.APPROVED;
     claim.approvedAt = new Date();
 
     const saved = await this.claims.save(claim);
+    // Mark the item as claimed on approval
+    if (claim.item?.id) {
+      await this.items.update(claim.item.id, { status: ItemStatus.CLAIMED });
+    }
 
     return {
       id: saved.id,
@@ -170,13 +181,28 @@ export class ClaimsService {
       const claimRepo = manager.getRepository(Claim);
       const itemRepo = manager.getRepository(Item);
 
-      const claim = await claimRepo
+      const qb = claimRepo
         .createQueryBuilder('claim')
         .setLock('pessimistic_write')
         .leftJoinAndSelect('claim.item', 'item')
         .leftJoinAndSelect('claim.collector', 'collector')
-        .where('item.id = :itemId', { itemId })
-        .getOne();
+        .where('item.id = :itemId', { itemId });
+
+      if (!isAdmin && !isFacility && isCollector) {
+        qb.andWhere('collector.id = :actorId', { actorId: actor.id });
+      }
+
+      qb.orderBy(
+        `CASE WHEN claim.status = :approved THEN 0 WHEN claim.status = :complete THEN 1 WHEN claim.status = :pending THEN 2 ELSE 3 END`,
+        'ASC',
+      ).addOrderBy('claim.created_at', 'DESC')
+        .setParameters({
+          approved: ClaimStatus.APPROVED,
+          complete: ClaimStatus.COMPLETE,
+          pending: ClaimStatus.PENDING_APPROVAL,
+        });
+
+      const claim = await qb.getOne();
 
       if (!claim) {
         throw new NotFoundException('Claim not found for item');

@@ -5,7 +5,6 @@
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
-  Unique,
   UpdateDateColumn,
 } from 'typeorm';
 
@@ -21,7 +20,6 @@ export enum ClaimStatus {
 }
 
 @Entity('claim')
-@Unique(['item'])
 export class Claim {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
