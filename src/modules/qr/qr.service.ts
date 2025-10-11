@@ -63,8 +63,9 @@ export class QrService {
     if (userHasRole(payload, RoleCode.ADMIN)) {
       return;
     }
-    if (!userHasRole(payload, RoleCode.FACILITY)) {
-      throw new ForbiddenException('Facility staff only');
+    // Allow partners as well as facility staff
+    if (!userHasAnyRole(payload, [RoleCode.FACILITY, RoleCode.PARTNER])) {
+      throw new ForbiddenException('Facility or partner staff only');
     }
   }
 

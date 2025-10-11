@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Claim } from '../claims/claim.entity';
 import { QrModule } from '../qr/qr.module';
+import { ClaimsModule } from '../claims/claims.module';
 import { UserReview } from '../reviews/user-review.entity';
 import { KycProfile } from '../users/kyc-profile.entity';
 import { User } from '../users/user.entity';
@@ -15,7 +16,7 @@ import { ItemsController } from './items.controller';
 import { ItemsService } from './items.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Item, Claim, User, KycProfile, UserReview]), QrModule],
+  imports: [TypeOrmModule.forFeature([Item, Claim, User, KycProfile, UserReview]), QrModule, ClaimsModule],
   controllers: [ItemsController],
   providers: [ItemsService, ItemGeocodingService, Co2EstimationService, JwtAuthGuard],
   exports: [TypeOrmModule, ItemsService],

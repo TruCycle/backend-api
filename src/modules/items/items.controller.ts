@@ -4,15 +4,17 @@ import { ApiBearerAuth, ApiBody, ApiNoContentResponse, ApiOkResponse, ApiOperati
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
 import { CreateItemDto } from './dto/create-item.dto';
+import { CollectItemDto } from './dto/collect-item.dto';
 import { SearchItemsDto } from './dto/search-items.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { UserCollectedItemsQueryDto, UserItemsQueryDto } from './dto/user-items-query.dto';
 import { ItemsService } from './items.service';
+import { ClaimsService } from '../claims/claims.service';
 
 @ApiTags('items')
 @Controller('items')
 export class ItemsController {
-  constructor(private readonly items: ItemsService) {}
+  constructor(private readonly items: ItemsService, private readonly claims: ClaimsService) {}
 
   @Get('health')
   @ApiOperation({ summary: 'Items service health check' })
@@ -257,6 +259,36 @@ export class ItemsController {
       throw new UnauthorizedException('Authenticated user context not found');
     }
     return this.items.createItem(userId, dto);
+  }
+
+  @Post(':id/collect')
+  @ApiOperation({ summary: 'Mark an item as collected (donor or collector)', operationId: 'collectItem' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiBody({ description: 'Optional shop id for donation drop-offs', type: CollectItemDto })
+  @ApiOkResponse({
+    description: 'Claim completion registered with outcome and scan history',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'OK',
+        data: {
+          id: 'claim-id',
+          status: 'complete',
+          scan_type: 'CLAIM_OUT',
+          scan_result: 'completed',
+          completed_at: '2024-06-01T11:00:00.000Z',
+          scan_events: [
+            { scan_type: 'CLAIM_OUT', shop_id: 'SHOP123', scanned_at: '2024-06-01T11:00:00.000Z' },
+          ],
+        },
+      },
+    },
+  })
+  async collect(@Param('id') itemId: string, @Body() dto: CollectItemDto, @Req() req: any) {
+    const user = req?.user;
+    if (!user) throw new UnauthorizedException('Authenticated user context not found');
+    return this.claims.completeClaimOutManual(user, itemId, dto.shopId);
   }
 }
 

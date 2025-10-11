@@ -153,10 +153,11 @@ export class ClaimsService {
 
     const isAdmin = userHasRole(authPayload, RoleCode.ADMIN);
     const isFacility = userHasRole(authPayload, RoleCode.FACILITY);
+    const isPartner = userHasRole(authPayload, RoleCode.PARTNER);
     const isCollector = userHasRole(authPayload, RoleCode.COLLECTOR);
 
-    if (!isAdmin && !isFacility && !isCollector) {
-      throw new ForbiddenException('Collectors or facility staff only');
+    if (!isAdmin && !isFacility && !isPartner && !isCollector) {
+      throw new ForbiddenException('Collectors, facility, or partner staff only');
     }
 
     const actor = await this.users.findOne({ where: { id: authPayload.sub } });
@@ -188,7 +189,7 @@ export class ClaimsService {
         .leftJoinAndSelect('claim.collector', 'collector')
         .where('item.id = :itemId', { itemId });
 
-      if (!isAdmin && !isFacility && isCollector) {
+      if (!isAdmin && !isFacility && !isPartner && isCollector) {
         qb.andWhere('collector.id = :actorId', { actorId: actor.id });
       }
 
@@ -216,7 +217,7 @@ export class ClaimsService {
         throw new ForbiddenException('Drop-off location mismatch');
       }
 
-      if (!isAdmin && !isFacility) {
+      if (!isAdmin && !isFacility && !isPartner) {
         if (!claim.collector || claim.collector.id !== actor.id) {
           throw new ForbiddenException('You are not allowed to complete this claim');
         }
@@ -263,6 +264,136 @@ export class ClaimsService {
 
       const events = await fetchScanEvents(manager, claim.item.id);
 
+      return {
+        id: claim.id,
+        status: claim.status,
+        scan_type: ScanType.CLAIM_OUT,
+        scan_result: 'completed',
+        completed_at: completionDate.toISOString(),
+        scan_events: events,
+      };
+    });
+  }
+
+  // Manual completion without QR; allows donor or collector (and admin/facility/partner)
+  async completeClaimOutManual(authPayload: any, rawItemId: string, rawShopId?: string) {
+    if (!authPayload || typeof authPayload.sub !== 'string') {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+
+    const isAdmin = userHasRole(authPayload, RoleCode.ADMIN);
+    const isFacility = userHasRole(authPayload, RoleCode.FACILITY);
+    const isPartner = userHasRole(authPayload, RoleCode.PARTNER);
+    const isCollector = userHasRole(authPayload, RoleCode.COLLECTOR);
+
+    const actor = await this.users.findOne({ where: { id: authPayload.sub } });
+    if (!actor) {
+      throw new UnauthorizedException('User record not found');
+    }
+    if (actor.status !== UserStatus.ACTIVE) {
+      throw new ForbiddenException('Inactive users cannot complete claims');
+    }
+
+    const itemId = typeof rawItemId === 'string' ? rawItemId.trim() : '';
+    if (!itemId) {
+      throw new BadRequestException('Item id is required');
+    }
+
+    const providedShopId = sanitizeShopId(rawShopId);
+
+    return this.claims.manager.transaction(async (manager) => {
+      const claimRepo = manager.getRepository(Claim);
+      const itemRepo = manager.getRepository(Item);
+
+      const qb = claimRepo
+        .createQueryBuilder('claim')
+        .setLock('pessimistic_write')
+        .leftJoinAndSelect('claim.item', 'item')
+        .leftJoinAndSelect('item.donor', 'donor')
+        .leftJoinAndSelect('claim.collector', 'collector')
+        .where('item.id = :itemId', { itemId })
+        .orderBy(
+          `CASE WHEN claim.status = :approved THEN 0 WHEN claim.status = :complete THEN 1 WHEN claim.status = :pending THEN 2 ELSE 3 END`,
+          'ASC',
+        )
+        .addOrderBy('claim.created_at', 'DESC')
+        .setParameters({
+          approved: ClaimStatus.APPROVED,
+          complete: ClaimStatus.COMPLETE,
+          pending: ClaimStatus.PENDING_APPROVAL,
+        });
+
+      // Only restrict when a plain collector (not admin/facility/partner/donor)
+      const donorScopeRelaxed = true; // donor resolved after fetch
+      if (!isAdmin && !isFacility && !isPartner && isCollector) {
+        qb.andWhere('collector.id = :actorId', { actorId: actor.id });
+      }
+
+      const claim = await qb.getOne();
+      if (!claim) {
+        throw new NotFoundException('Claim not found for item');
+      }
+
+      const donorId = claim.item?.donor?.id;
+
+      if (!isAdmin && !isFacility && !isPartner) {
+        const asCollector = !!(claim.collector && claim.collector.id === actor.id);
+        const asDonor = !!(donorId && donorId === actor.id);
+        if (!asCollector && !asDonor) {
+          throw new ForbiddenException('Only the donor or assigned collector may complete this claim');
+        }
+      }
+
+      // If donation flow has a drop-off location, require a matching shop id
+      const expectedShopId =
+        typeof claim.item?.dropoffLocationId === 'string' ? sanitizeShopId(claim.item.dropoffLocationId) : '';
+      if (expectedShopId) {
+        if (!providedShopId) {
+          throw new BadRequestException('shop_id is required for donation drop-offs');
+        }
+        if (expectedShopId.toLowerCase() !== providedShopId.toLowerCase()) {
+          throw new ForbiddenException('Drop-off location mismatch');
+        }
+      }
+
+      if (claim.status === ClaimStatus.REJECTED || claim.status === ClaimStatus.CANCELLED) {
+        throw new ConflictException('This claim can no longer be completed');
+      }
+      if (claim.status === ClaimStatus.PENDING_APPROVAL) {
+        throw new ConflictException('Claim must be approved before completion');
+      }
+
+      if (claim.status === ClaimStatus.COMPLETE) {
+        const completedAt =
+          claim.completedAt instanceof Date && !Number.isNaN(claim.completedAt.getTime()) ? claim.completedAt : new Date();
+        if (completedAt !== claim.completedAt) {
+          claim.completedAt = completedAt;
+          await claimRepo.save(claim);
+        }
+        const events = await fetchScanEvents(manager, claim.item.id);
+        return {
+          id: claim.id,
+          status: claim.status,
+          scan_type: ScanType.CLAIM_OUT,
+          scan_result: 'already_completed',
+          completed_at: completedAt.toISOString(),
+          scan_events: events,
+        };
+      }
+
+      if (claim.status !== ClaimStatus.APPROVED) {
+        throw new ConflictException('Claim is not eligible for completion');
+      }
+
+      const completionDate = new Date();
+      claim.status = ClaimStatus.COMPLETE;
+      claim.completedAt = completionDate;
+
+      await claimRepo.save(claim);
+      await itemRepo.update(claim.item.id, { status: ItemStatus.COMPLETE });
+      await recordScanEvent(manager, claim.item.id, ScanType.CLAIM_OUT, providedShopId || null, completionDate);
+
+      const events = await fetchScanEvents(manager, claim.item.id);
       return {
         id: claim.id,
         status: claim.status,

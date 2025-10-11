@@ -1303,3 +1303,57 @@ All routes require a bearer token (protected with `JwtAuthGuard`).
   }
 }
 ```
+
+## Partner Shops (Onboarding & Management)
+
+Partners can onboard and manage their own shops. A shop is a geocoded drop-off location owned by a partner user.
+
+- Roles
+  - Create/list/update/archive: `partner` (owner) or `admin`
+  - Public read: anyone can GET a specific shop or discover nearby shops
+
+- Endpoints
+  - POST `/shops`
+    - Auth: Bearer; Roles: partner/admin
+    - Body: `{ name, address_line, postcode, latitude, longitude }`
+    - Returns: created shop `{ id, name, address_line, postcode, latitude, longitude, active }`
+  - GET `/shops/me`
+    - Auth: Bearer; Roles: partner/admin
+    - Returns: shops owned by the authenticated partner
+  - GET `/shops/:id`
+    - Public; Returns: public shop details if `active=true`
+  - PATCH `/shops/:id`
+    - Auth: Bearer; Roles: partner owner or admin
+    - Body: any of `{ name, address_line, postcode, latitude, longitude, active }`
+    - Returns: updated shop
+  - DELETE `/shops/:id`
+    - Auth: Bearer; Roles: partner owner or admin
+    - Effect: sets `active=false` (soft archive). 204 No Content
+  - GET `/shops/nearby?lon=-0.12&lat=51.5&radius_m=4000`
+    - Public; Returns: `[{ id, name, distanceMeters }]`
+
+- Using Shops for “donate” Item Listings
+  1) Partner creates shop(s): `POST /shops`
+  2) Client discovers shops near donor: `GET /shops/nearby?lon&lat&radius_m`
+  3) Donor creates item with `pickup_option=donate` and `dropoff_location_id=<shop UUID>` via `POST /items`
+  4) On drop-off, staff scan QR at the shop (see QR: Drop-off In)
+
+Related code: `src/modules/shops/*`, migration `1700000000015-CreateShopTable.ts`.
+
+## QR & Collection Updates
+
+- Updated Role Rules
+  - Drop-off In: admin, facility, partner
+  - Claim Out: admin, facility, partner, or the assigned collector
+
+- Non-QR Collection Endpoint
+  - POST `/items/:id/collect`
+    - Auth: Bearer
+    - Roles: donor (item owner) or assigned collector; admin/facility/partner also permitted
+    - Body: `{ shop_id? }` (required if item has `dropoff_location_id`)
+    - Behavior: completes the item’s approved claim, records `CLAIM_OUT` scan event
+
+- Item State Transitions (to completion)
+  - Exchange: `active` → claim approved → `/qr/item/:id/claim-out` or `/items/:id/collect` → `complete`
+  - Donate: `pending_dropoff` → drop-off accepted → `awaiting_collection` → claim out → `complete`
+  - Recycle: `pending_recycle` → `/qr/item/:id/recycle-in` → `pending_recycle_processing` → `/qr/item/:id/recycle-out` → `recycled`
