@@ -27,8 +27,15 @@ export class AuthController {
   }
 
   @Post('register')
-  @ApiOperation({ summary: 'Register a new user account (optionally create first partner shop)', description: 'Include a `shop` object to register as a partner and create the first shop.' })
-  @ApiBody({ description: 'User registration payload. Include `shop` when registering as Partner.', type: RegisterDto })
+  @ApiOperation({
+    summary: 'Register a new user account',
+    description:
+      'To register as a partner you must include a valid `shop` payload. Partner role requires at least one shop and the first shop will be created during registration.',
+  })
+  @ApiBody({
+    description: 'User registration payload. Note: `role`="partner" requires a `shop` object (first shop will be created).',
+    type: RegisterDto,
+  })
   @ApiCreatedResponse({
     description: 'User created successfully',
     schema: {
@@ -227,10 +234,18 @@ export class AuthController {
   }
 
   @Post('upgrade-to-partner')
-  @ApiOperation({ summary: 'Upgrade the current user to Partner (optionally create first shop)' })
+  @ApiOperation({
+    summary: 'Upgrade the current user to Partner',
+    description:
+      'Partner role requires at least one shop. If you do not already have a shop, you must provide `shop` details to create your first shop as part of the upgrade.',
+  })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiBody({ description: 'Optional partner shop details for first shop creation', type: CreateShopDto, required: false })
+  @ApiBody({
+    description: 'Partner shop details. Required if the user has no existing shop; optional if at least one shop already exists.',
+    type: CreateShopDto,
+    required: false,
+  })
   @ApiOkResponse({
     description: 'User upgraded to partner and optional shop created',
     schema: {
