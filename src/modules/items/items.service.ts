@@ -26,6 +26,8 @@ const DEFAULT_PAGE = 1;
 const MAX_PAGE = 100;
 const PUBLIC_ITEM_STATUSES: readonly ItemStatus[] = [
   ItemStatus.ACTIVE,
+  // Once a claim is approved the item is still visible for tracking/logistics
+  ItemStatus.CLAIMED,
   ItemStatus.PENDING_DROPOFF,
   ItemStatus.AWAITING_COLLECTION,
   ItemStatus.PENDING_RECYCLE,
