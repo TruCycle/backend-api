@@ -46,20 +46,30 @@ export class ShopsService {
     if (user.status !== UserStatus.ACTIVE) {
       throw new ForbiddenException('Inactive users cannot manage shops');
     }
-    const isAdmin = userHasRole(authPayload, RoleCode.ADMIN);
+    const jwtIsAdmin = userHasRole(authPayload, RoleCode.ADMIN);
+    const dbIsAdmin = Array.isArray((user as any).userRoles)
+      ? (user as any).userRoles.some((ur: any) => ur?.role?.code === RoleCode.ADMIN)
+      : false;
+    const isAdmin = jwtIsAdmin || dbIsAdmin;
     return { user, isAdmin };
   }
 
-  private ensurePartnerActor(payload: any): void {
-    if (userHasRole(payload, RoleCode.ADMIN)) return;
-    if (!userHasRole(payload, RoleCode.PARTNER)) {
-      throw new ForbiddenException('Partners only');
+  private async ensurePartnerActor(payload: any): Promise<void> {
+    if (userHasRole(payload, RoleCode.ADMIN) || userHasRole(payload, RoleCode.PARTNER)) return;
+    const sub = typeof payload?.sub === 'string' ? payload.sub.trim() : '';
+    if (sub) {
+      const user = await this.users.findOne({ where: { id: sub } });
+      if (user && Array.isArray((user as any).userRoles)) {
+        const codes = (user as any).userRoles.map((ur: any) => ur?.role?.code);
+        if (codes?.includes(RoleCode.ADMIN) || codes?.includes(RoleCode.PARTNER)) return;
+      }
     }
+    throw new ForbiddenException('Partners only');
   }
 
   async createShop(authPayload: any, dto: CreateShopDto) {
     const { user } = await this.resolveActor(authPayload);
-    this.ensurePartnerActor(authPayload);
+    await this.ensurePartnerActor(authPayload);
     // Postcode has first priority: resolve coordinates using postcode only
     const located = await this.geocoding.forwardGeocode(dto.postcode);
     const lat = Number(located.latitude);
@@ -87,7 +97,7 @@ export class ShopsService {
 
   async listMyShops(authPayload: any) {
     const { user } = await this.resolveActor(authPayload);
-    this.ensurePartnerActor(authPayload);
+    await this.ensurePartnerActor(authPayload);
     const rows = await this.shops.find({ where: { owner: { id: user.id } }, order: { createdAt: 'DESC' } });
     return rows.map((r) => this.view(r));
   }
@@ -100,7 +110,7 @@ export class ShopsService {
 
   async updateShop(authPayload: any, id: string, dto: UpdateShopDto) {
     const { user, isAdmin } = await this.resolveActor(authPayload);
-    this.ensurePartnerActor(authPayload);
+    await this.ensurePartnerActor(authPayload);
     const shop = await this.shops.findOne({ where: { id }, relations: { owner: true } });
     if (!shop) throw new NotFoundException('Shop not found');
     if (!isAdmin && shop.owner.id !== user.id) throw new ForbiddenException('Not the owner');
@@ -148,7 +158,7 @@ export class ShopsService {
 
   async deleteShop(authPayload: any, id: string): Promise<void> {
     const { user, isAdmin } = await this.resolveActor(authPayload);
-    this.ensurePartnerActor(authPayload);
+    await this.ensurePartnerActor(authPayload);
     const shop = await this.shops.findOne({ where: { id }, relations: { owner: true } });
     if (!shop) return; // idempotent
     if (!isAdmin && shop.owner.id !== user.id) throw new ForbiddenException('Not the owner');
