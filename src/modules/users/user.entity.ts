@@ -33,6 +33,9 @@ export class User {
 
   @Column({ type: 'text', nullable: true })
   phone?: string | null;
+  
+  @Column({ type: 'text', nullable: true })
+  postcode?: string | null;
 
   @Column({ type: 'text', nullable: true })
   passwordHash?: string | null;

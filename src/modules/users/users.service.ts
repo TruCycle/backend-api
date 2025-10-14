@@ -72,6 +72,10 @@ export class UsersService {
       user.phone = dto.phone && dto.phone.length > 0 ? dto.phone : null;
       changed = true;
     }
+    if (typeof dto.postcode !== 'undefined') {
+      user.postcode = dto.postcode && dto.postcode.length > 0 ? dto.postcode : null;
+      changed = true;
+    }
 
     if (!changed) {
       throw new BadRequestException('No valid fields provided');
@@ -83,6 +87,7 @@ export class UsersService {
       first_name: saved.firstName ?? null,
       last_name: saved.lastName ?? null,
       phone: saved.phone ?? null,
+      postcode: saved.postcode ?? null,
     };
   }
 }

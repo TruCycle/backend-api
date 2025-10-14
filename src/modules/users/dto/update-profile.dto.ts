@@ -25,5 +25,11 @@ export class UpdateProfileDto {
   @MaxLength(32)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   phone?: string | null;
-}
 
+  @ApiPropertyOptional({ description: 'Postcode', maxLength: 32 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  postcode?: string | null;
+}
