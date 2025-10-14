@@ -15,6 +15,8 @@ function expandAliases(codes: string[]): string[] {
   // Treat customer as donor/collector and vice versa
   if (s.has(RoleCode.CUSTOMER)) s.add(RoleCode.COLLECTOR);
   if (s.has(RoleCode.COLLECTOR)) s.add(RoleCode.CUSTOMER);
+  // Partners should be able to perform collector actions
+  if (s.has(RoleCode.PARTNER)) s.add(RoleCode.COLLECTOR);
   return Array.from(s);
 }
 

@@ -49,7 +49,14 @@ export class AuthService {
   ) {
     const normalizedEmail = email.trim().toLowerCase();
     const existing = await this.users.findOne({ where: { email: normalizedEmail } });
-    if (existing) throw new ConflictException('Email already registered');
+    if (existing) {
+      // If a user re-registers without shop details, return a simple duplicate message
+      if (!shopDto) {
+        throw new ConflictException('Email already registered');
+      }
+      // If they included shop details (attempting partner), direct them to the upgrade endpoint
+      throw new ConflictException('Email already registered. Please log in and use the upgrade-to-partner endpoint.');
+    }
 
     const hash = await this.passwordService.hash(password);
     const user = this.users.create({
@@ -64,19 +71,13 @@ export class AuthService {
     // If a shop payload is provided, default to PARTNER role
     const inferredRole = roleCode ?? (shopDto ? RoleCode.PARTNER : undefined);
     const code = normalizeIncomingRole(inferredRole || RoleCode.CUSTOMER);
-    const role = await this.getOrCreateRole(code);
-    const link = this.userRoles.create({ user: saved, role });
-    await this.userRoles.save(link);
 
-    // Issue an access token (kept for backward compatibility/tests)
-    const token = await this.issueToken(saved);
-
-    // Generate a time-limited email verification token and send email
-    await this.sendVerificationEmail(saved);
-
-    // If registering as partner and shop payload present, create first shop
+    // Enforce: Partner role requires at least one shop
     let createdShop: any | undefined;
-    if (code === RoleCode.PARTNER && shopDto) {
+    if (code === RoleCode.PARTNER) {
+      if (!shopDto) {
+        throw new BadRequestException('Shop details are required to register as a partner');
+      }
       const lat = Number(shopDto.latitude);
       const lon = Number(shopDto.longitude);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
@@ -100,7 +101,70 @@ export class AuthService {
       createdShop = this.viewShop(savedShop);
     }
 
+    // Link role after enforcing partner shop requirement
+    const role = await this.getOrCreateRole(code);
+    const link = this.userRoles.create({ user: saved, role });
+    await this.userRoles.save(link);
+
+    // Issue an access token (kept for backward compatibility/tests)
+    const token = await this.issueToken(saved);
+
+    // Generate a time-limited email verification token and send email
+    await this.sendVerificationEmail(saved);
+
     return { user: await this.findUserWithRoles(saved.id), token, shop: createdShop };
+  }
+
+  async upgradeToPartner(authPayload: any, shopDto?: CreateShopDto) {
+    if (!authPayload || typeof authPayload.sub !== 'string') {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+    const userId = authPayload.sub.trim();
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('User record not found');
+
+    // Enforce: must have at least one shop to be partner
+    const existingShops = await this.shops.count({ where: { owner: { id: user.id } } });
+    let createdShop: any | undefined;
+    if (existingShops === 0 && !shopDto) {
+      throw new BadRequestException('Shop details are required to upgrade to partner');
+    }
+
+    if (shopDto) {
+      const lat = Number(shopDto.latitude);
+      const lon = Number(shopDto.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        throw new BadRequestException('Invalid shop coordinates');
+      }
+      const shop = this.shops.create({
+        owner: user,
+        name: shopDto.name,
+        phoneNumber: shopDto.phoneNumber,
+        addressLine: shopDto.addressLine,
+        postcode: shopDto.postcode,
+        latitude: lat,
+        longitude: lon,
+        openingHours: shopDto.openingHours
+          ? { days: shopDto.openingHours.days, open_time: shopDto.openingHours.open_time, close_time: shopDto.openingHours.close_time }
+          : undefined,
+        acceptableCategories: shopDto.acceptableCategories,
+        geom: { type: 'Point', coordinates: [lon, lat] } as any,
+      });
+      const savedShop = await this.shops.save(shop);
+      createdShop = this.viewShop(savedShop);
+    }
+
+    // Link partner role now (after ensuring shop requirement)
+    const partnerRole = await this.getOrCreateRole(RoleCode.PARTNER);
+    const links = await this.userRoles.find({ where: { user: { id: user.id } } });
+    const hasPartner = links.some((l) => l.role.code === partnerRole.code);
+    if (!hasPartner) {
+      const link = this.userRoles.create({ user, role: partnerRole });
+      await this.userRoles.save(link);
+    }
+
+    // Return updated user (with roles) and optionally the created shop
+    return { user: await this.findUserWithRoles(user.id), shop: createdShop };
   }
 
   async login(email: string, password: string) {

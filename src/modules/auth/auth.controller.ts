@@ -8,6 +8,7 @@ import { AuthService } from './auth.service';
 import { ForgetPasswordDto } from './dto/forget-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { CreateShopDto } from '../shops/dto/create-shop.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyDto } from './dto/verify.dto';
@@ -222,6 +223,42 @@ export class AuthController {
       data: {
         user,
       },
+    };
+  }
+
+  @Post('upgrade-to-partner')
+  @ApiOperation({ summary: 'Upgrade the current user to Partner (optionally create first shop)' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiBody({ description: 'Optional partner shop details for first shop creation', type: CreateShopDto, required: false })
+  @ApiOkResponse({
+    description: 'User upgraded to partner and optional shop created',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'Upgraded to partner successfully.',
+        data: {
+          user: { id: 'uuid', email: 'jane@example.com', roles: ['partner','customer'] },
+          shop: {
+            id: 'b84e...-uuid',
+            name: "Jane's Outlet",
+            address_line: '1 High St',
+            postcode: 'AB12 3CD',
+            latitude: 51.5,
+            longitude: -0.12,
+            acceptable_categories: ['furniture','electronics'],
+            active: true,
+          },
+        },
+      },
+    },
+  })
+  async upgradeToPartner(@AuthUser() payload: any, @Body() shopDto?: CreateShopDto) {
+    const { user, shop } = await this.auth.upgradeToPartner(payload, shopDto);
+    return {
+      status: 'success',
+      message: 'Upgraded to partner successfully.',
+      data: { user, ...(shop ? { shop } : {}) },
     };
   }
 }

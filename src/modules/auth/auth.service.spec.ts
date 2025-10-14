@@ -7,6 +7,7 @@ import { EmailService } from '../notifications/email.service';
 import { Role, RoleCode } from '../users/role.entity';
 import { UserRole } from '../users/user-role.entity';
 import { User, UserStatus } from '../users/user.entity';
+import { Shop } from '../shops/shop.entity';
 
 import { AuthService } from './auth.service';
 
@@ -24,6 +25,7 @@ describe('AuthService', () => {
   const userRepo = repoMock();
   const roleRepo = repoMock();
   const userRoleRepo = repoMock();
+  const shopRepo = repoMock();
   const password = new PasswordService();
   const jwt = {
     signAsync: jest.fn().mockResolvedValue('jwt-token'),
@@ -41,6 +43,7 @@ describe('AuthService', () => {
         { provide: getRepositoryToken(User), useValue: userRepo },
         { provide: getRepositoryToken(Role), useValue: roleRepo },
         { provide: getRepositoryToken(UserRole), useValue: userRoleRepo },
+        { provide: getRepositoryToken(Shop), useValue: shopRepo },
       ],
     }).compile();
     service = module.get(AuthService);
@@ -65,7 +68,7 @@ describe('AuthService', () => {
     expect(res.token).toBe('jwt-token');
   });
 
-  it('fails to register duplicate email', async () => {
+  it('fails to register duplicate email and suggests upgrade', async () => {
     userRepo.findOne.mockResolvedValue({ id: 'exists' });
     await expect(service.register('a@b.com', 'Password123!')).rejects.toThrow('Email already registered');
   });
