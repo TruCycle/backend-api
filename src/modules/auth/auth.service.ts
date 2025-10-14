@@ -332,12 +332,15 @@ export class AuthService {
   async getBasicProfileById(id: string) {
     const user = await this.users.findOne({ where: { id } });
     if (!user) throw new UnauthorizedException('Invalid token');
+    const links = await this.userRoles.find({ where: { user: { id } } });
+    const roles = links.map((l) => l.role.code);
     return {
       id: user.id,
       firstName: user.firstName ?? null,
       lastName: user.lastName ?? null,
       email: user.email,
       status: user.status,
+      roles,
     };
   }
 
