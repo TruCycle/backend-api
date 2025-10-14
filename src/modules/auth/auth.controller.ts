@@ -265,16 +265,22 @@ export class AuthController {
             acceptable_categories: ['furniture','electronics'],
             active: true,
           },
+          tokens: {
+            accessToken: 'eyJhbGciOi...access',
+            refreshToken: 'eyJhbGciOi...refresh',
+            accessTokenExpiry: '2025-10-31T12:00:00.000Z',
+            refreshTokenExpiry: '2025-11-30T12:00:00.000Z',
+          },
         },
       },
     },
   })
   async upgradeToPartner(@AuthUser() payload: any, @Body() shopDto?: CreateShopDto) {
-    const { user, shop } = await this.auth.upgradeToPartner(payload, shopDto);
+    const { user, shop, tokens } = await this.auth.upgradeToPartner(payload, shopDto);
     return {
       status: 'success',
       message: 'Upgraded to partner successfully.',
-      data: { user, ...(shop ? { shop } : {}) },
+      data: { user, ...(shop ? { shop } : {}), tokens },
     };
   }
 }

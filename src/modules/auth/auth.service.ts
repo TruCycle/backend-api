@@ -200,8 +200,17 @@ export class AuthService {
       await this.userRoles.save(link);
     }
 
-    // Return updated user (with roles) and optionally the created shop
-    return { user: await this.findUserWithRoles(user.id), shop: createdShop };
+    // Return updated user (with roles), optional created shop, and refreshed tokens including new roles
+    const updatedUser = await this.findUserWithRoles(user.id);
+    const accessToken = await this.issueToken(user);
+    const refreshToken = await this.issueRefreshToken(user);
+    const tokens = {
+      accessToken,
+      refreshToken,
+      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
+      refreshTokenExpiry: this.getExpiryFromJwt(refreshToken),
+    };
+    return { user: updatedUser, shop: createdShop, tokens };
   }
 
   async login(email: string, password: string) {
