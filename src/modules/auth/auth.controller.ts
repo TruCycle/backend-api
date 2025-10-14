@@ -217,6 +217,7 @@ export class AuthController {
             firstName: 'Jane',
             lastName: 'Doe',
             status: 'active',
+            roles: ['customer', 'partner'],
           },
         },
       },
