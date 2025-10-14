@@ -63,10 +63,15 @@ export class ShopsService {
     const entity = this.shops.create({
       owner: user,
       name: dto.name,
+      phoneNumber: dto.phoneNumber,
       addressLine: dto.addressLine,
       postcode: dto.postcode,
       latitude: lat,
       longitude: lon,
+      openingHours: dto.openingHours
+        ? { days: dto.openingHours.days, open_time: dto.openingHours.open_time, close_time: dto.openingHours.close_time }
+        : undefined,
+      acceptableCategories: dto.acceptableCategories,
       // Geometry is set via raw SQL on insert/update, but we keep a copy here for symmetry
       geom: { type: 'Point', coordinates: [lon, lat] } as any,
     });
@@ -95,10 +100,17 @@ export class ShopsService {
     if (!isAdmin && shop.owner.id !== user.id) throw new ForbiddenException('Not the owner');
 
     if (dto.name !== undefined) shop.name = dto.name;
+    if (dto.phoneNumber !== undefined) shop.phoneNumber = dto.phoneNumber;
     if (dto.addressLine !== undefined) shop.addressLine = dto.addressLine;
     if (dto.postcode !== undefined) shop.postcode = dto.postcode;
     if (dto.latitude !== undefined) shop.latitude = Number(dto.latitude);
     if (dto.longitude !== undefined) shop.longitude = Number(dto.longitude);
+    if (dto.openingHours !== undefined) {
+      shop.openingHours = dto.openingHours
+        ? { days: dto.openingHours.days, open_time: dto.openingHours.open_time, close_time: dto.openingHours.close_time }
+        : null;
+    }
+    if (dto.acceptableCategories !== undefined) shop.acceptableCategories = dto.acceptableCategories ?? null;
     if (dto.latitude !== undefined || dto.longitude !== undefined) {
       if (!Number.isFinite(shop.latitude) || !Number.isFinite(shop.longitude)) {
         throw new BadRequestException('Invalid coordinates');
@@ -137,14 +149,16 @@ export class ShopsService {
     return {
       id: s.id,
       name: s.name,
+      phone_number: s.phoneNumber ?? null,
       address_line: s.addressLine,
       postcode: s.postcode,
       latitude: s.latitude,
       longitude: s.longitude,
+      opening_hours: s.openingHours ?? null,
+      acceptable_categories: s.acceptableCategories ?? [],
       active: s.active,
       created_at: s.createdAt,
       updated_at: s.updatedAt,
     };
   }
 }
-

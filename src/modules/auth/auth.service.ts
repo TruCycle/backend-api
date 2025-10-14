@@ -9,6 +9,8 @@ import { Role, RoleCode } from '../users/role.entity';
 import { normalizeIncomingRole } from '../users/role.utils';
 import { UserRole } from '../users/user-role.entity';
 import { User, UserStatus } from '../users/user.entity';
+import { Shop } from '../shops/shop.entity';
+import { CreateShopDto } from '../shops/dto/create-shop.dto';
 
 interface JwtPayload {
   sub: string;
@@ -22,6 +24,7 @@ export class AuthService {
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(Role) private readonly roles: Repository<Role>,
     @InjectRepository(UserRole) private readonly userRoles: Repository<UserRole>,
+    @InjectRepository(Shop) private readonly shops: Repository<Shop>,
     private readonly passwordService: PasswordService,
     private readonly jwt: JwtService,
     private readonly email: EmailService,
@@ -42,6 +45,7 @@ export class AuthService {
     roleCode?: RoleCode,
     firstName?: string,
     lastName?: string,
+    shopDto?: CreateShopDto,
   ) {
     const normalizedEmail = email.trim().toLowerCase();
     const existing = await this.users.findOne({ where: { email: normalizedEmail } });
@@ -57,7 +61,9 @@ export class AuthService {
     });
     const saved = await this.users.save(user);
 
-    const code = normalizeIncomingRole(roleCode || RoleCode.CUSTOMER);
+    // If a shop payload is provided, default to PARTNER role
+    const inferredRole = roleCode ?? (shopDto ? RoleCode.PARTNER : undefined);
+    const code = normalizeIncomingRole(inferredRole || RoleCode.CUSTOMER);
     const role = await this.getOrCreateRole(code);
     const link = this.userRoles.create({ user: saved, role });
     await this.userRoles.save(link);
@@ -68,7 +74,33 @@ export class AuthService {
     // Generate a time-limited email verification token and send email
     await this.sendVerificationEmail(saved);
 
-    return { user: await this.findUserWithRoles(saved.id), token };
+    // If registering as partner and shop payload present, create first shop
+    let createdShop: any | undefined;
+    if (code === RoleCode.PARTNER && shopDto) {
+      const lat = Number(shopDto.latitude);
+      const lon = Number(shopDto.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        throw new BadRequestException('Invalid shop coordinates');
+      }
+      const shop = this.shops.create({
+        owner: saved,
+        name: shopDto.name,
+        phoneNumber: shopDto.phoneNumber,
+        addressLine: shopDto.addressLine,
+        postcode: shopDto.postcode,
+        latitude: lat,
+        longitude: lon,
+        openingHours: shopDto.openingHours
+          ? { days: shopDto.openingHours.days, open_time: shopDto.openingHours.open_time, close_time: shopDto.openingHours.close_time }
+          : undefined,
+        acceptableCategories: shopDto.acceptableCategories,
+        geom: { type: 'Point', coordinates: [lon, lat] } as any,
+      });
+      const savedShop = await this.shops.save(shop);
+      createdShop = this.viewShop(savedShop);
+    }
+
+    return { user: await this.findUserWithRoles(saved.id), token, shop: createdShop };
   }
 
   async login(email: string, password: string) {
@@ -288,5 +320,22 @@ export class AuthService {
     } catch {
       // Non-fatal if email fails
     }
+  }
+
+  private viewShop(s: Shop) {
+    return {
+      id: s.id,
+      name: s.name,
+      phone_number: s.phoneNumber ?? null,
+      address_line: s.addressLine,
+      postcode: s.postcode,
+      latitude: s.latitude,
+      longitude: s.longitude,
+      opening_hours: s.openingHours ?? null,
+      acceptable_categories: s.acceptableCategories ?? [],
+      active: s.active,
+      created_at: s.createdAt,
+      updated_at: s.updatedAt,
+    };
   }
 }

@@ -10,11 +10,12 @@ import { User } from '../users/user.entity';
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { Shop } from '../shops/shop.entity';
 
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Role, UserRole]),
+    TypeOrmModule.forFeature([User, Role, UserRole, Shop]),
     forwardRef(() => NotificationsModule),
   ],
   controllers: [AuthController],

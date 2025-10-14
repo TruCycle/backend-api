@@ -26,8 +26,8 @@ export class AuthController {
   }
 
   @Post('register')
-  @ApiOperation({ summary: 'Register a new user account' })
-  @ApiBody({ description: 'User registration payload', type: RegisterDto })
+  @ApiOperation({ summary: 'Register a new user account (optionally create first partner shop)', description: 'Include a `shop` object to register as a partner and create the first shop.' })
+  @ApiBody({ description: 'User registration payload. Include `shop` when registering as Partner.', type: RegisterDto })
   @ApiCreatedResponse({
     description: 'User created successfully',
     schema: {
@@ -41,18 +41,32 @@ export class AuthController {
             lastName: 'Doe',
             email: 'jane@example.com',
             status: 'pending',
+            roles: ['partner'],
           },
+          shop: {
+            id: 'b84e...-uuid',
+            name: 'Jane\'s Outlet',
+            phone_number: '+44 20 7946 0958',
+            address_line: '1 High St',
+            postcode: 'AB12 3CD',
+            latitude: 51.5,
+            longitude: -0.12,
+            opening_hours: { days: ['Mon','Tue','Wed','Thu','Fri'], open_time: '09:00', close_time: '17:00' },
+            acceptable_categories: ['furniture','electronics'],
+            active: true,
+          }
         },
       },
     },
   })
   async register(@Body() dto: RegisterDto) {
-    const { user } = await this.auth.register(
+    const { user, shop } = await this.auth.register(
       dto.email,
       dto.password,
       dto.role,
       dto.first_name,
       dto.last_name,
+      dto.shop,
     );
     return {
       message: 'User registered successfully.',
@@ -63,7 +77,9 @@ export class AuthController {
           lastName: user.lastName ?? null,
           email: user.email,
           status: user.status,
+          roles: (user as any).roles ?? undefined,
         },
+        ...(shop ? { shop } : {}),
       },
     };
   }

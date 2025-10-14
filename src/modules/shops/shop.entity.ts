@@ -22,11 +22,24 @@ export class Shop {
   @Column({ type: 'text' })
   name!: string;
 
+  @Column({ name: 'phone_number', type: 'text', nullable: true })
+  phoneNumber?: string | null;
+
   @Column({ name: 'address_line', type: 'text' })
   addressLine!: string;
 
   @Column({ type: 'text' })
   postcode!: string;
+
+  @Column({ name: 'opening_hours', type: 'jsonb', nullable: true })
+  openingHours?: {
+    days?: string[];
+    open_time?: string;
+    close_time?: string;
+  } | null;
+
+  @Column({ name: 'acceptable_categories', type: 'jsonb', nullable: true })
+  acceptableCategories?: string[] | null;
 
   @Column({ type: 'double precision' })
   latitude!: number;
@@ -51,4 +64,3 @@ export class Shop {
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt!: Date;
 }
-

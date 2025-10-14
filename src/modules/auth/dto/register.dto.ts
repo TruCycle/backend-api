@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
   IsOptional,
@@ -9,6 +9,7 @@ import {
 } from 'class-validator';
 
 import { RoleCode } from '../../users/role.entity';
+import { CreateShopDto } from '../../shops/dto/create-shop.dto';
 
 export class RegisterDto {
   @ApiProperty({ example: 'Jane' })
@@ -35,4 +36,8 @@ export class RegisterDto {
   @ApiProperty({ enum: RoleCode, required: false })
   @IsOptional()
   role?: RoleCode;
+
+  @ApiPropertyOptional({ description: 'Partner shop details (required when registering as a partner)', type: CreateShopDto })
+  @IsOptional()
+  shop?: CreateShopDto;
 }
