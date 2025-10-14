@@ -73,6 +73,7 @@ export class ShopsService {
       phoneNumber: dto.phoneNumber,
       addressLine: dto.addressLine,
       postcode: dto.postcode,
+      operationalNotes: dto.operationalNotes,
       latitude: lat,
       longitude: lon,
       openingHours: dto.openingHours
@@ -118,6 +119,7 @@ export class ShopsService {
         : null;
     }
     if (dto.acceptableCategories !== undefined) shop.acceptableCategories = dto.acceptableCategories ?? null;
+    if (dto.operationalNotes !== undefined) shop.operationalNotes = dto.operationalNotes ?? null;
     if (dto.latitude !== undefined || dto.longitude !== undefined) {
       if (!Number.isFinite(shop.latitude) || !Number.isFinite(shop.longitude)) {
         throw new BadRequestException('Invalid coordinates');
@@ -153,6 +155,7 @@ export class ShopsService {
         phone_number: r.phone_number ?? null,
         address_line: r.address_line,
         postcode: r.postcode,
+        operational_notes: r.operational_notes ?? null,
         latitude: Number(r.latitude),
         longitude: Number(r.longitude),
         opening_hours: r.opening_hours ?? null,
@@ -180,6 +183,7 @@ export class ShopsService {
       phone_number: s.phoneNumber ?? null,
       address_line: s.addressLine,
       postcode: s.postcode,
+      operational_notes: s.operationalNotes ?? null,
       latitude: s.latitude,
       longitude: s.longitude,
       opening_hours: s.openingHours ?? null,

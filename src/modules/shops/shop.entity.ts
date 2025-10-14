@@ -41,6 +41,9 @@ export class Shop {
   @Column({ name: 'acceptable_categories', type: 'jsonb', nullable: true })
   acceptableCategories?: string[] | null;
 
+  @Column({ name: 'operational_notes', type: 'text', nullable: true })
+  operationalNotes?: string | null;
+
   @Column({ type: 'double precision' })
   latitude!: number;
 

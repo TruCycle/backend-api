@@ -64,4 +64,12 @@ export class UpdateShopDto {
   @IsArray()
   @IsString({ each: true })
   acceptableCategories?: string[];
+
+  @ApiPropertyOptional({ name: 'operational_notes', description: 'Operational notes or instructions for donors/staff', maxLength: 2000 })
+  @Expose({ name: 'operational_notes' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  operationalNotes?: string;
 }

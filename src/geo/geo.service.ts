@@ -23,6 +23,7 @@ export class GeoService {
               postcode,
               latitude,
               longitude,
+              operational_notes,
               opening_hours,
               acceptable_categories,
               active,

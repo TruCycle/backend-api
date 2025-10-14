@@ -43,6 +43,7 @@ export class ShopsController {
             postcode: 'AB12 3CD',
             latitude: 51.5072,
             longitude: -0.1276,
+            operational_notes: 'Back entrance on Church St. Ring bell.',
             opening_hours: { days: ['Mon','Tue','Wed','Thu','Fri'], open_time: '09:00', close_time: '17:00' },
             acceptable_categories: ['furniture','electronics'],
             distanceMeters: 250,
@@ -55,6 +56,7 @@ export class ShopsController {
             postcode: 'EF45 6GH',
             latitude: 51.51,
             longitude: -0.13,
+            operational_notes: null,
             opening_hours: null,
             acceptable_categories: [],
             distanceMeters: 980,
@@ -96,7 +98,7 @@ export class ShopsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiBody({ description: 'Shop details', type: CreateShopDto })
-  @ApiCreatedResponse({ description: 'Shop created', schema: { example: { id: 'uuid', name: 'Shop A', phone_number: '+44 20 7946 0958', address_line: '1 High St', postcode: 'AB12 3CD', latitude: 51.5, longitude: -0.12, opening_hours: { days: ['Mon','Tue','Wed','Thu','Fri'], open_time: '09:00', close_time: '17:00' }, acceptable_categories: ['furniture','electronics'], active: true } } })
+  @ApiCreatedResponse({ description: 'Shop created', schema: { example: { id: 'uuid', name: 'Shop A', phone_number: '+44 20 7946 0958', address_line: '1 High St', postcode: 'AB12 3CD', latitude: 51.5, longitude: -0.12, operational_notes: 'Back entrance on Church St. Ring bell.', opening_hours: { days: ['Mon','Tue','Wed','Thu','Fri'], open_time: '09:00', close_time: '17:00' }, acceptable_categories: ['furniture','electronics'], active: true } } })
   async create(@Body() dto: CreateShopDto, @Req() req: any) {
     const user = req?.user;
     if (!user) throw new UnauthorizedException('Missing user context');

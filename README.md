@@ -1315,8 +1315,8 @@ Partners can onboard and manage their own shops. A shop is a geocoded drop-off l
 - Endpoints
   - POST `/shops`
     - Auth: Bearer; Roles: partner/admin
-    - Body: `{ name, address_line, postcode, latitude, longitude }`
-    - Returns: created shop `{ id, name, address_line, postcode, latitude, longitude, active }`
+    - Body: `{ name, phone_number?, address_line, postcode, latitude, longitude, opening_hours?, acceptable_categories?, operational_notes? }`
+    - Returns: created shop `{ id, name, phone_number, address_line, postcode, latitude, longitude, opening_hours, acceptable_categories, operational_notes, active }`
   - GET `/shops/me`
     - Auth: Bearer; Roles: partner/admin
     - Returns: shops owned by the authenticated partner
@@ -1324,13 +1324,13 @@ Partners can onboard and manage their own shops. A shop is a geocoded drop-off l
     - Public; Returns: public shop details if `active=true`
   - PATCH `/shops/:id`
     - Auth: Bearer; Roles: partner owner or admin
-    - Body: any of `{ name, address_line, postcode, latitude, longitude, active }`
+    - Body: any of `{ name, phone_number, address_line, postcode, latitude, longitude, opening_hours, acceptable_categories, operational_notes, active }`
     - Returns: updated shop
   - DELETE `/shops/:id`
     - Auth: Bearer; Roles: partner owner or admin
     - Effect: sets `active=false` (soft archive). 204 No Content
   - GET `/shops/nearby?lon=-0.12&lat=51.5&radius_m=4000`
-    - Public; Returns: `[{ id, name, phone_number, address_line, postcode, latitude, longitude, opening_hours, acceptable_categories, distanceMeters }]`
+    - Public; Returns: `[{ id, name, phone_number, address_line, postcode, latitude, longitude, operational_notes, opening_hours, acceptable_categories, distanceMeters }]`
 
 - Using Shops for “donate” Item Listings
   1) Partner creates shop(s): `POST /shops`
