@@ -552,10 +552,10 @@ export class ItemsService {
       throw new BadRequestException('dropoff_location_id is required for donate pickups');
     }
 
-    const query = `${dto.addressLine}, ${dto.postcode}`;
+    // Geocode strictly by postcode to avoid noisy address lines
     let location: ItemLocation;
     try {
-      location = await this.geocoding.forwardGeocode(query);
+      location = await this.geocoding.forwardGeocode(dto.postcode);
     } catch (err) {
       if (err instanceof BadRequestException) throw err;
       throw new ServiceUnavailableException('Failed to geocode address');
@@ -838,9 +838,10 @@ export class ItemsService {
       if (!addressLine || !postcode) {
         throw new BadRequestException('address_line and postcode are required when updating the location');
       }
+      // Re-geocode by postcode only (postcode has priority)
       let location: ItemLocation;
       try {
-        location = await this.geocoding.forwardGeocode(`${addressLine}, ${postcode}`);
+        location = await this.geocoding.forwardGeocode(postcode);
       } catch (err) {
         if (err instanceof BadRequestException) throw err;
         throw new ServiceUnavailableException('Failed to geocode updated address');

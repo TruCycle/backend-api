@@ -117,9 +117,8 @@ export class AuthService {
       if (!shopDto) {
         throw new BadRequestException('Shop details are required to register as a partner');
       }
-      // postcode/address has priority over any provided coordinates
-      const query = shopDto.addressLine ? `${shopDto.addressLine}, ${shopDto.postcode}` : shopDto.postcode;
-      const located = await this.geocodeAddress(query);
+      // Geocode using postcode only (postcode has priority)
+      const located = await this.geocodeAddress(shopDto.postcode);
       const lat = Number(located.latitude);
       const lon = Number(located.longitude);
       const shop = this.shops.create({
@@ -170,9 +169,8 @@ export class AuthService {
     }
 
     if (shopDto) {
-      // postcode/address has priority over any provided coordinates
-      const query = shopDto.addressLine ? `${shopDto.addressLine}, ${shopDto.postcode}` : shopDto.postcode;
-      const located = await this.geocodeAddress(query);
+      // Geocode using postcode only (postcode has priority)
+      const located = await this.geocodeAddress(shopDto.postcode);
       const lat = Number(located.latitude);
       const lon = Number(located.longitude);
       const shop = this.shops.create({

@@ -60,9 +60,8 @@ export class ShopsService {
   async createShop(authPayload: any, dto: CreateShopDto) {
     const { user } = await this.resolveActor(authPayload);
     this.ensurePartnerActor(authPayload);
-    // Postcode/address has first priority: resolve coordinates from postcode (and address line if available)
-    const query = dto.addressLine ? `${dto.addressLine}, ${dto.postcode}` : dto.postcode;
-    const located = await this.geocoding.forwardGeocode(query);
+    // Postcode has first priority: resolve coordinates using postcode only
+    const located = await this.geocoding.forwardGeocode(dto.postcode);
     const lat = Number(located.latitude);
     const lon = Number(located.longitude);
 
@@ -111,15 +110,14 @@ export class ShopsService {
     if (dto.addressLine !== undefined) shop.addressLine = dto.addressLine;
     if (dto.postcode !== undefined) shop.postcode = dto.postcode;
 
-    // If postcode/address is updated, recompute coordinates from postcode (postcode has priority)
+    // If postcode/address is updated, recompute coordinates using postcode only (postcode has priority)
     if (dto.postcode !== undefined || dto.addressLine !== undefined) {
       const addressLine = dto.addressLine ?? shop.addressLine;
       const postcode = dto.postcode ?? shop.postcode;
       if (!addressLine || !postcode) {
         throw new BadRequestException('address_line and postcode are required when updating the location');
       }
-      const query = `${addressLine}, ${postcode}`;
-      const located = await this.geocoding.forwardGeocode(query);
+      const located = await this.geocoding.forwardGeocode(postcode);
       shop.latitude = Number(located.latitude);
       shop.longitude = Number(located.longitude);
       shop.geom = { type: 'Point', coordinates: [shop.longitude, shop.latitude] } as any;
