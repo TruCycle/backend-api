@@ -56,7 +56,7 @@ export class SearchItemsDto {
   lng?: number;
 
   @ApiPropertyOptional({
-    description: 'Fallback postcode when lat/lng are omitted (forward geocoded via OpenStreetMap)',
+    description: 'Postcode to search near. If provided, it overrides lat/lng (forward geocoded via OpenStreetMap).',
     maxLength: 32,
   })
   @IsOptional()

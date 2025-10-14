@@ -48,15 +48,17 @@ export class CreateShopDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   postcode!: string;
 
-  @ApiProperty({ description: 'Latitude (WGS84)', minimum: -90, maximum: 90 })
+  @ApiPropertyOptional({ description: 'Latitude (WGS84). Ignored when postcode is provided', minimum: -90, maximum: 90 })
+  @IsOptional()
   @IsNumber({ maxDecimalPlaces: 8 })
   @Min(-90)
-  latitude!: number;
+  latitude?: number;
 
-  @ApiProperty({ description: 'Longitude (WGS84)', minimum: -180, maximum: 180 })
+  @ApiPropertyOptional({ description: 'Longitude (WGS84). Ignored when postcode is provided', minimum: -180, maximum: 180 })
+  @IsOptional()
   @IsNumber({ maxDecimalPlaces: 8 })
   @Min(-180)
-  longitude!: number;
+  longitude?: number;
 
   @ApiPropertyOptional({ name: 'opening_hours', description: 'Opening days and times', type: OpeningHoursDto })
   @Expose({ name: 'opening_hours' })

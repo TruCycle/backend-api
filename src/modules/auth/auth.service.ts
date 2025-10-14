@@ -30,6 +30,45 @@ export class AuthService {
     private readonly email: EmailService,
   ) {}
 
+  // Minimal internal geocoder to prioritise postcode/address over lat/lng during shop creation
+  private async geocodeAddress(query: string): Promise<{ latitude: number; longitude: number }> {
+    const trimmed = (query ?? '').trim();
+    if (!trimmed) throw new BadRequestException('Address information is required');
+
+    const endpoint = process.env.OSM_SEARCH_URL || 'https://nominatim.openstreetmap.org/search';
+    const userAgent = process.env.OSM_USER_AGENT || 'TruCycleBackend/0.1 (+https://trucycle.com/contact)';
+    const timeoutMs = Number(process.env.OSM_TIMEOUT_MS || 5000);
+
+    const fetchFn: any = (globalThis as any).fetch;
+    if (typeof fetchFn !== 'function') throw new Error('Geocoder unavailable');
+
+    const AbortCtor: any = (globalThis as any).AbortController;
+    const controller = typeof AbortCtor === 'function' ? new AbortCtor() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const params = new URLSearchParams({ q: trimmed, format: 'jsonv2', limit: '1', addressdetails: '0' });
+      const url = `${endpoint}?${params.toString()}`;
+      const res = await fetchFn(url, {
+        method: 'GET',
+        headers: { 'User-Agent': userAgent, Accept: 'application/json', 'Accept-Language': 'en' },
+        signal: controller ? controller.signal : undefined,
+      });
+      if (!res || !res.ok) throw new Error(`Geocoder responded with status ${res?.status}`);
+      const payload: any = await res.json();
+      if (!Array.isArray(payload) || payload.length === 0) {
+        throw new BadRequestException('Unable to geocode the supplied address');
+      }
+      const latitude = Number(payload[0]?.lat);
+      const longitude = Number(payload[0]?.lon);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        throw new BadRequestException('Geocoder returned invalid coordinates');
+      }
+      return { latitude, longitude };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   private async getOrCreateRole(code: RoleCode): Promise<Role> {
     let role = await this.roles.findOne({ where: { code } });
     if (!role) {
@@ -78,11 +117,11 @@ export class AuthService {
       if (!shopDto) {
         throw new BadRequestException('Shop details are required to register as a partner');
       }
-      const lat = Number(shopDto.latitude);
-      const lon = Number(shopDto.longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        throw new BadRequestException('Invalid shop coordinates');
-      }
+      // postcode/address has priority over any provided coordinates
+      const query = shopDto.addressLine ? `${shopDto.addressLine}, ${shopDto.postcode}` : shopDto.postcode;
+      const located = await this.geocodeAddress(query);
+      const lat = Number(located.latitude);
+      const lon = Number(located.longitude);
       const shop = this.shops.create({
         owner: saved,
         name: shopDto.name,
@@ -131,11 +170,11 @@ export class AuthService {
     }
 
     if (shopDto) {
-      const lat = Number(shopDto.latitude);
-      const lon = Number(shopDto.longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        throw new BadRequestException('Invalid shop coordinates');
-      }
+      // postcode/address has priority over any provided coordinates
+      const query = shopDto.addressLine ? `${shopDto.addressLine}, ${shopDto.postcode}` : shopDto.postcode;
+      const located = await this.geocodeAddress(query);
+      const lat = Number(located.latitude);
+      const lon = Number(located.longitude);
       const shop = this.shops.create({
         owner: user,
         name: shopDto.name,

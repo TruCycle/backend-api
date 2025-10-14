@@ -60,12 +60,11 @@ export class ShopsService {
   async createShop(authPayload: any, dto: CreateShopDto) {
     const { user } = await this.resolveActor(authPayload);
     this.ensurePartnerActor(authPayload);
-
-    const lat = Number(dto.latitude);
-    const lon = Number(dto.longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      throw new BadRequestException('Invalid coordinates');
-    }
+    // Postcode/address has first priority: resolve coordinates from postcode (and address line if available)
+    const query = dto.addressLine ? `${dto.addressLine}, ${dto.postcode}` : dto.postcode;
+    const located = await this.geocoding.forwardGeocode(query);
+    const lat = Number(located.latitude);
+    const lon = Number(located.longitude);
 
     const entity = this.shops.create({
       owner: user,
@@ -111,8 +110,30 @@ export class ShopsService {
     if (dto.phoneNumber !== undefined) shop.phoneNumber = dto.phoneNumber;
     if (dto.addressLine !== undefined) shop.addressLine = dto.addressLine;
     if (dto.postcode !== undefined) shop.postcode = dto.postcode;
-    if (dto.latitude !== undefined) shop.latitude = Number(dto.latitude);
-    if (dto.longitude !== undefined) shop.longitude = Number(dto.longitude);
+
+    // If postcode/address is updated, recompute coordinates from postcode (postcode has priority)
+    if (dto.postcode !== undefined || dto.addressLine !== undefined) {
+      const addressLine = dto.addressLine ?? shop.addressLine;
+      const postcode = dto.postcode ?? shop.postcode;
+      if (!addressLine || !postcode) {
+        throw new BadRequestException('address_line and postcode are required when updating the location');
+      }
+      const query = `${addressLine}, ${postcode}`;
+      const located = await this.geocoding.forwardGeocode(query);
+      shop.latitude = Number(located.latitude);
+      shop.longitude = Number(located.longitude);
+      shop.geom = { type: 'Point', coordinates: [shop.longitude, shop.latitude] } as any;
+    } else {
+      // Otherwise, allow direct coordinate update if provided explicitly
+      if (dto.latitude !== undefined) shop.latitude = Number(dto.latitude);
+      if (dto.longitude !== undefined) shop.longitude = Number(dto.longitude);
+      if (dto.latitude !== undefined || dto.longitude !== undefined) {
+        if (!Number.isFinite(shop.latitude) || !Number.isFinite(shop.longitude)) {
+          throw new BadRequestException('Invalid coordinates');
+        }
+        shop.geom = { type: 'Point', coordinates: [shop.longitude, shop.latitude] } as any;
+      }
+    }
     if (dto.openingHours !== undefined) {
       shop.openingHours = dto.openingHours
         ? { days: dto.openingHours.days, open_time: dto.openingHours.open_time, close_time: dto.openingHours.close_time }
@@ -120,12 +141,7 @@ export class ShopsService {
     }
     if (dto.acceptableCategories !== undefined) shop.acceptableCategories = dto.acceptableCategories ?? null;
     if (dto.operationalNotes !== undefined) shop.operationalNotes = dto.operationalNotes ?? null;
-    if (dto.latitude !== undefined || dto.longitude !== undefined) {
-      if (!Number.isFinite(shop.latitude) || !Number.isFinite(shop.longitude)) {
-        throw new BadRequestException('Invalid coordinates');
-      }
-      shop.geom = { type: 'Point', coordinates: [shop.longitude, shop.latitude] } as any;
-    }
+    // active handled below
     if (dto.active !== undefined) shop.active = !!dto.active;
 
     const saved = await this.shops.save(shop);

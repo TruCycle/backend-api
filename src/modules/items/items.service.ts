@@ -909,25 +909,24 @@ export class ItemsService {
   }
 
   async searchPublicListings(dto: SearchItemsDto) {
-    let originLat =
-      typeof dto.lat === 'number' && Number.isFinite(dto.lat) ? dto.lat : undefined;
-    let originLng =
-      typeof dto.lng === 'number' && Number.isFinite(dto.lng) ? dto.lng : undefined;
-
-    if (originLat === undefined || originLng === undefined) {
-      const postcode = dto.postcode;
-      if (!postcode) {
-        throw new BadRequestException('Provide either lat/lng or postcode to search items');
-      }
+    // If postcode is provided, it has priority over lat/lng
+    const pc = (dto.postcode ?? '').trim();
+    let originLat: number | undefined = undefined;
+    let originLng: number | undefined = undefined;
+    if (pc) {
       try {
-        const located = await this.geocoding.forwardGeocode(postcode);
+        const located = await this.geocoding.forwardGeocode(pc);
         originLat = located.latitude;
         originLng = located.longitude;
       } catch (err) {
-        if (err instanceof BadRequestException) {
-          throw err;
-        }
+        if (err instanceof BadRequestException) throw err;
         throw new ServiceUnavailableException('Failed to resolve postcode to coordinates');
+      }
+    } else {
+      originLat = typeof dto.lat === 'number' && Number.isFinite(dto.lat) ? dto.lat : undefined;
+      originLng = typeof dto.lng === 'number' && Number.isFinite(dto.lng) ? dto.lng : undefined;
+      if (originLat === undefined || originLng === undefined) {
+        throw new BadRequestException('Provide either lat/lng or postcode to search items');
       }
     }
 
