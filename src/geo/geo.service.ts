@@ -16,10 +16,21 @@ export class GeoService {
   async nearestShops(lon: number, lat: number, radiusDeg = 0.05) {
     const point = this.makePoint(lon, lat);
     return this.dataSource.query(
-      `SELECT id, name, ST_AsGeoJSON(geom) AS geom,
-              ST_Distance(geom, ${point}) AS distance
+      `SELECT id,
+              name,
+              phone_number,
+              address_line,
+              postcode,
+              latitude,
+              longitude,
+              opening_hours,
+              acceptable_categories,
+              active,
+              ST_AsGeoJSON(geom) AS geom,
+              ST_Distance(geom::geography, ${point}::geography) AS distance_meters
          FROM shop
-        WHERE ST_DWithin(geom, ${point}, $1)
+        WHERE active = TRUE
+          AND ST_DWithin(geom, ${point}, $1)
         ORDER BY geom <-> ${point}
         LIMIT 25`,
       [radiusDeg],

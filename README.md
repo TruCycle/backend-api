@@ -1330,7 +1330,7 @@ Partners can onboard and manage their own shops. A shop is a geocoded drop-off l
     - Auth: Bearer; Roles: partner owner or admin
     - Effect: sets `active=false` (soft archive). 204 No Content
   - GET `/shops/nearby?lon=-0.12&lat=51.5&radius_m=4000`
-    - Public; Returns: `[{ id, name, distanceMeters }]`
+    - Public; Returns: `[{ id, name, phone_number, address_line, postcode, latitude, longitude, opening_hours, acceptable_categories, distanceMeters }]`
 
 - Using Shops for “donate” Item Listings
   1) Partner creates shop(s): `POST /shops`

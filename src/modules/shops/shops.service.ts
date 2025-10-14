@@ -144,12 +144,23 @@ export class ShopsService {
   async findNearby(lon: number, lat: number, radiusMeters?: number) {
     const radiusDeg = typeof radiusMeters === 'number' && radiusMeters > 0 ? radiusMeters / 1000 / 111 : 0.05;
     const rows = await this.geo.nearestShops(lon, lat, radiusDeg);
-    // rows: id, name, geom (GeoJSON string), distance
-    return rows.map((r: any) => ({
-      id: r.id,
-      name: r.name,
-      distanceMeters: Number(r.distance) || null,
-    }));
+    // rows include extra shop columns and distance in meters
+    return rows.map((r: any) => {
+      const distanceRaw = Number(r.distance_meters);
+      return {
+        id: r.id,
+        name: r.name,
+        phone_number: r.phone_number ?? null,
+        address_line: r.address_line,
+        postcode: r.postcode,
+        latitude: Number(r.latitude),
+        longitude: Number(r.longitude),
+        opening_hours: r.opening_hours ?? null,
+        acceptable_categories: Array.isArray(r.acceptable_categories) ? r.acceptable_categories : [],
+        // keep existing field name for backward compatibility
+        distanceMeters: Number.isFinite(distanceRaw) ? Math.round(distanceRaw) : null,
+      };
+    });
   }
 
   // Convenience: geocode postcode/address and reuse coordinate search
