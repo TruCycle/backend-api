@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, UnauthorizedException, UseGuards, BadRequestException } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CreateShopDto } from './dto/create-shop.dto';
 import { UpdateShopDto } from './dto/update-shop.dto';
 import { ShopsService } from './shops.service';
+import { ShopItemsQueryDto } from './dto/shop-items-query.dto';
 
 @ApiTags('shops')
 @Controller('shops')
@@ -18,16 +19,54 @@ export class ShopsController {
   }
 
   @Get('nearby')
-  @ApiOperation({ summary: 'Find nearby shops by coordinates', operationId: 'shopsNearby' })
-  @ApiQuery({ name: 'lon', required: true, type: Number })
-  @ApiQuery({ name: 'lat', required: true, type: Number })
-  @ApiQuery({ name: 'radius_m', required: false, type: Number, description: 'Search radius in meters (default ~5500m)' })
-  @ApiOkResponse({ description: 'Nearby shops list', schema: { example: { status: 'success', message: 'OK', data: [{ id: 'b84e...-uuid', name: 'Partner Shop', distanceMeters: 250 }] } } })
-  async nearby(@Query('lon') lon: string, @Query('lat') lat: string, @Query('radius_m') radius?: string) {
-    const lonN = Number(lon);
-    const latN = Number(lat);
+  @ApiOperation({
+    summary: 'Find nearby shops by coordinates or postcode',
+    description: 'Provide either lon/lat, or a postcode to geocode. If `postcode` is provided, `lon` and `lat` are ignored.',
+    operationId: 'shopsNearby',
+  })
+  @ApiQuery({ name: 'lon', required: false, type: Number, description: 'Longitude in degrees (WGS84)', example: -0.1276 })
+  @ApiQuery({ name: 'lat', required: false, type: Number, description: 'Latitude in degrees (WGS84)', example: 51.5072 })
+  @ApiQuery({ name: 'postcode', required: false, type: String, description: 'UK postcode or address to geocode', example: 'SW1A 1AA' })
+  @ApiQuery({ name: 'radius_m', required: false, type: Number, description: 'Search radius in meters (default ~5500m)', example: 2000 })
+  @ApiOkResponse({
+    description: 'Nearby shops list',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'OK',
+        data: [
+          { id: 'b84e0c5d-3f9b-4a6e-9b6b-9a5d4f2b1234', name: 'Partner Shop', distanceMeters: 250 },
+          { id: '0b86d6fb-5b12-4e45-a5ed-93b30fe7518a', name: 'Another Shop', distanceMeters: 980 },
+        ],
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid query parameters',
+    schema: {
+      example: { status: 'error', message: 'Either postcode or lon/lat is required' },
+    },
+  })
+  async nearby(
+    @Query('lon') lon?: string,
+    @Query('lat') lat?: string,
+    @Query('postcode') postcode?: string,
+    @Query('radius_m') radius?: string,
+  ) {
     const rN = radius !== undefined ? Number(radius) : undefined;
-    return this.shops.findNearby(lonN, latN, rN);
+    const pc = (postcode ?? '').trim();
+
+    if (pc) {
+      return this.shops.findNearbyByPostcode(pc, rN);
+    }
+
+    if (lon !== undefined && lat !== undefined) {
+      const lonN = Number(lon);
+      const latN = Number(lat);
+      return this.shops.findNearby(lonN, latN, rN);
+    }
+
+    throw new BadRequestException('Either postcode or lon/lat is required');
   }
 
   @Post()
@@ -82,5 +121,27 @@ export class ShopsController {
     const user = req?.user;
     if (!user) throw new UnauthorizedException('Missing user context');
     await this.shops.deleteShop(user, id);
+  }
+
+  @Get('me/items')
+  @ApiOperation({ summary: 'List items across my shops (partner/admin)', operationId: 'listMyShopItems' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOkResponse({ description: 'Items and pagination', schema: { example: { items: [], pagination: { page: 1, limit: 10, total: 0, total_pages: 0 } } } })
+  async listMyShopItems(@Query() query: ShopItemsQueryDto, @Req() req: any) {
+    const user = req?.user;
+    if (!user) throw new UnauthorizedException('Missing user context');
+    return this.shops.listMyShopItems(user, query);
+  }
+
+  @Get(':id/items')
+  @ApiOperation({ summary: 'List items associated with a shop (partner/admin)', operationId: 'listShopItems' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOkResponse({ description: 'Items and pagination', schema: { example: { items: [], pagination: { page: 1, limit: 10, total: 0, total_pages: 0 } } } })
+  async listShopItems(@Param('id') id: string, @Query() query: ShopItemsQueryDto, @Req() req: any) {
+    const user = req?.user;
+    if (!user) throw new UnauthorizedException('Missing user context');
+    return this.shops.listShopItems(user, id, query);
   }
 }
