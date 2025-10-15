@@ -57,7 +57,7 @@ const IMPACT_ITEM_STATUSES: readonly ItemStatus[] = [
 ];
 const DEFAULT_MONTHLY_CO2_GOAL_KG = 50;
 
-interface DropoffLocationView {
+export interface DropoffLocationView {
   id: string;
   name: string;
   phone_number: string | null;
