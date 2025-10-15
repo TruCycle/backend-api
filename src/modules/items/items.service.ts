@@ -7,6 +7,7 @@ import { QrImageService } from '../qr/qr-image.service';
 import { UserReview } from '../reviews/user-review.entity';
 import { KycProfile, KycStatus } from '../users/kyc-profile.entity';
 import { User, UserStatus } from '../users/user.entity';
+import { Shop } from '../shops/shop.entity';
 
 import { Co2EstimationService } from './co2-estimation.service';
 import { CreateItemDto, CreateItemImageDto } from './dto/create-item.dto';
@@ -56,6 +57,22 @@ const IMPACT_ITEM_STATUSES: readonly ItemStatus[] = [
 ];
 const DEFAULT_MONTHLY_CO2_GOAL_KG = 50;
 
+interface DropoffLocationView {
+  id: string;
+  name: string;
+  phone_number: string | null;
+  address_line: string;
+  postcode: string;
+  operational_notes: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  opening_hours: { days?: string[]; open_time?: string; close_time?: string } | null;
+  acceptable_categories: string[];
+  active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 @Injectable()
 export class ItemsService {
   private readonly logger = new Logger(ItemsService.name);
@@ -66,6 +83,7 @@ export class ItemsService {
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(KycProfile) private readonly kycs: Repository<KycProfile>,
     @InjectRepository(UserReview) private readonly reviews: Repository<UserReview>,
+    @InjectRepository(Shop) private readonly shops: Repository<Shop>,
     private readonly geocoding: ItemGeocodingService,
     private readonly qrImage: QrImageService,
     private readonly co2: Co2EstimationService,
@@ -228,6 +246,69 @@ export class ItemsService {
     return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
   }
 
+  private sanitizeShopId(input: unknown): string {
+    return typeof input === 'string' ? input.trim() : '';
+  }
+
+  private formatShopForOutput(shop: Shop): DropoffLocationView {
+    const phoneNumber =
+      typeof shop.phoneNumber === 'string' && shop.phoneNumber.trim() ? shop.phoneNumber.trim() : null;
+    const operationalNotes =
+      typeof shop.operationalNotes === 'string' && shop.operationalNotes.trim() ? shop.operationalNotes.trim() : null;
+    const latitude = Number.isFinite(shop.latitude) ? Number(shop.latitude) : null;
+    const longitude = Number.isFinite(shop.longitude) ? Number(shop.longitude) : null;
+    const openingHours = shop.openingHours ? { ...shop.openingHours } : null;
+    const acceptableCategories = Array.isArray(shop.acceptableCategories) ? [...shop.acceptableCategories] : [];
+
+    return {
+      id: shop.id,
+      name: shop.name,
+      phone_number: phoneNumber,
+      address_line: shop.addressLine,
+      postcode: shop.postcode,
+      operational_notes: operationalNotes,
+      latitude,
+      longitude,
+      opening_hours: openingHours,
+      acceptable_categories: acceptableCategories,
+      active: !!shop.active,
+      created_at: this.formatDate(shop.createdAt),
+      updated_at: this.formatDate(shop.updatedAt),
+    };
+  }
+
+  private async loadDropoffLocations(
+    ids: ReadonlyArray<string | null | undefined>,
+  ): Promise<Map<string, DropoffLocationView>> {
+    const sanitized = Array.from(
+      new Set(
+        ids
+          .map((id) => this.sanitizeShopId(id))
+          .filter((id): id is string => typeof id === 'string' && id.length > 0),
+      ),
+    );
+
+    if (sanitized.length === 0) {
+      return new Map();
+    }
+
+    const shops = await this.shops.find({ where: { id: In(sanitized), active: true } });
+    const entries = shops.map((shop) => [shop.id, this.formatShopForOutput(shop)] as const);
+    return new Map(entries);
+  }
+
+  private async loadDropoffLocation(shopId?: string | null): Promise<DropoffLocationView | null> {
+    const sanitized = this.sanitizeShopId(shopId);
+    if (!sanitized) {
+      return null;
+    }
+    const shop = await this.shops.findOne({ where: { id: sanitized, active: true } });
+    if (!shop) {
+      return null;
+    }
+    return this.formatShopForOutput(shop);
+  }
+
   private async fetchScanEvents(itemId: string) {
     try {
       const rows: any[] = await this.items.query(
@@ -298,6 +379,8 @@ export class ItemsService {
         : [];
     const claimMap = new Map<string, Claim>(claimRows.map((claim) => [claim.item.id, claim]));
 
+    const dropoffMap = await this.loadDropoffLocations(rows.map((item) => item.dropoffLocationId));
+
     const items = rows.map((item) => {
       const claim = claimMap.get(item.id);
       const metadata = this.sanitizeMetadata(item.metadata ?? undefined);
@@ -342,6 +425,7 @@ export class ItemsService {
           latitude,
           longitude,
         },
+        dropoff_location: dropoffMap.get(this.sanitizeShopId(item.dropoffLocationId)) ?? null,
         created_at: this.formatDate(item.createdAt),
         claim: claim
           ? {
@@ -414,6 +498,8 @@ export class ItemsService {
     );
     const ownerMap = new Map(ownerPairs);
 
+    const dropoffMap = await this.loadDropoffLocations(claims.map((claim) => claim.item?.dropoffLocationId));
+
     const items = claims.map((claim) => {
       const item = claim.item;
       const metadata = item ? this.sanitizeMetadata(item.metadata ?? undefined) : null;
@@ -460,6 +546,7 @@ export class ItemsService {
                 latitude,
                 longitude,
               },
+              dropoff_location: dropoffMap.get(this.sanitizeShopId(item.dropoffLocationId)) ?? null,
               created_at: this.formatDate(item.createdAt),
               owner,
             }
@@ -725,6 +812,7 @@ export class ItemsService {
         : new Date(item.createdAt as unknown as string).toISOString();
 
     const owner = item.donor ? await this.buildOwnerDetails(item.donor.id) : null;
+    const dropoffLocation = await this.loadDropoffLocation(item.dropoffLocationId);
 
     return {
       id: item.id,
@@ -756,6 +844,7 @@ export class ItemsService {
       metadata,
       created_at: createdAt,
       owner,
+      dropoff_location: dropoffLocation,
     };
   }
 
@@ -973,6 +1062,7 @@ export class ItemsService {
       .addSelect('item.pickup_option', 'pickup_option')
       .addSelect('item.qr_code_url', 'qr_code_url')
       .addSelect('item.donor_id', 'donor_id')
+      .addSelect('item.dropoff_location_id', 'dropoff_location_id')
       .addSelect('item.estimated_co2_saved_kg', 'estimated_co2_saved_kg')
       .addSelect('item.images', 'images')
       .addSelect('item.created_at', 'created_at')
@@ -996,6 +1086,7 @@ export class ItemsService {
     }
 
     const rows = await qb.getRawMany();
+    const dropoffMap = await this.loadDropoffLocations(rows.map((row: any) => row.dropoff_location_id));
 
     const donorIds = Array.from(new Set(rows.map((r: any) => r.donor_id).filter(Boolean)));
     const donors = donorIds.length
@@ -1100,6 +1191,8 @@ export class ItemsService {
           }
         : null;
 
+      const dropoffLocation = dropoffMap.get(this.sanitizeShopId(row.dropoff_location_id)) ?? null;
+
       return {
         id: row.id,
         title,
@@ -1115,6 +1208,7 @@ export class ItemsService {
             ? null
             : Number(row.estimated_co2_saved_kg || 0) || null,
         owner,
+        dropoff_location: dropoffLocation,
         created_at: createdAtIso,
       };
     });

@@ -201,20 +201,27 @@ export class ShopsService {
   }
 
   private view(s: Shop) {
+    const phoneNumber = typeof s.phoneNumber === 'string' && s.phoneNumber.trim() ? s.phoneNumber.trim() : null;
+    const operationalNotes = typeof s.operationalNotes === 'string' && s.operationalNotes.trim() ? s.operationalNotes.trim() : null;
+    const latitude = Number.isFinite(s.latitude) ? Number(s.latitude) : null;
+    const longitude = Number.isFinite(s.longitude) ? Number(s.longitude) : null;
+    const openingHours = s.openingHours ? { ...s.openingHours } : null;
+    const acceptableCategories = Array.isArray(s.acceptableCategories) ? [...s.acceptableCategories] : [];
+
     return {
       id: s.id,
       name: s.name,
-      phone_number: s.phoneNumber ?? null,
+      phone_number: phoneNumber,
       address_line: s.addressLine,
       postcode: s.postcode,
-      operational_notes: s.operationalNotes ?? null,
-      latitude: s.latitude,
-      longitude: s.longitude,
-      opening_hours: s.openingHours ?? null,
-      acceptable_categories: s.acceptableCategories ?? [],
-      active: s.active,
-      created_at: s.createdAt,
-      updated_at: s.updatedAt,
+      operational_notes: operationalNotes,
+      latitude,
+      longitude,
+      opening_hours: openingHours,
+      acceptable_categories: acceptableCategories,
+      active: !!s.active,
+      created_at: this.formatDate(s.createdAt),
+      updated_at: this.formatDate(s.updatedAt),
     };
   }
 
@@ -311,6 +318,7 @@ export class ShopsService {
       const longitude =
         typeof item.longitude === 'number' && Number.isFinite(item.longitude) ? Number(item.longitude) : null;
       const claim = claimMap.get(item.id) || null;
+      const dropoffLocation = this.view(shop);
       return {
         id: item.id,
         title: typeof item.title === 'string' ? item.title.trim() : '',
@@ -346,6 +354,7 @@ export class ShopsService {
                 : null,
             }
           : null,
+        dropoff_location: dropoffLocation,
       };
     });
 
@@ -365,6 +374,7 @@ export class ShopsService {
       return { items: [], pagination: { page: 1, limit: dto?.limit ?? 10, total: 0, total_pages: 0 } };
     }
     const shopIds = myShops.map((s) => s.id);
+    const shopEntityMap = new Map(myShops.map((shop) => [shop.id, shop]));
 
     const limitRaw = dto?.limit;
     let limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) ? limitRaw : 10;
@@ -404,6 +414,8 @@ export class ShopsService {
       const longitude =
         typeof item.longitude === 'number' && Number.isFinite(item.longitude) ? Number(item.longitude) : null;
       const claim = claimMap.get(item.id) || null;
+      const dropoffEntity = shopEntityMap.get(item.dropoffLocationId ?? '');
+      const dropoffLocation = dropoffEntity ? this.view(dropoffEntity) : null;
       return {
         id: item.id,
         title: typeof item.title === 'string' ? item.title.trim() : '',
@@ -439,6 +451,7 @@ export class ShopsService {
                 : null,
             }
           : null,
+        dropoff_location: dropoffLocation,
       };
     });
 

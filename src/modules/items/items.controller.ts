@@ -43,6 +43,25 @@ export class ItemsController {
               qr_code: 'https://cdn.../qr.png',
               images: [{ url: 'https://...', altText: null }],
               estimated_co2_saved_kg: 1.2,
+              dropoff_location: {
+                id: 'shop-id',
+                name: 'TruCycle Hub',
+                phone_number: '+44 20 7946 0958',
+                address_line: '1 High St',
+                postcode: 'AB12 3CD',
+                operational_notes: 'Back entrance on Church St. Ring bell.',
+                latitude: 51.509,
+                longitude: -0.133,
+                opening_hours: {
+                  days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+                  open_time: '09:00',
+                  close_time: '17:00',
+                },
+                acceptable_categories: ['furniture', 'electronics'],
+                active: true,
+                created_at: '2024-05-20T08:00:00.000Z',
+                updated_at: '2024-05-20T08:00:00.000Z',
+              },
               owner: {
                 id: 'user-id',
                 name: 'Jane Doe',
@@ -84,6 +103,25 @@ export class ItemsController {
               estimated_co2_saved_kg: 1.2,
               metadata: null,
               location: { address_line: '10 Downing St', postcode: 'SW1A 2AA', latitude: 51.5034, longitude: -0.1276 },
+              dropoff_location: {
+                id: 'shop-id',
+                name: 'TruCycle Hub',
+                phone_number: '+44 20 7946 0958',
+                address_line: '1 High St',
+                postcode: 'AB12 3CD',
+                operational_notes: 'Back entrance on Church St. Ring bell.',
+                latitude: 51.509,
+                longitude: -0.133,
+                opening_hours: {
+                  days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+                  open_time: '09:00',
+                  close_time: '17:00',
+                },
+                acceptable_categories: ['furniture', 'electronics'],
+                active: true,
+                created_at: '2024-05-20T08:00:00.000Z',
+                updated_at: '2024-05-20T08:00:00.000Z',
+              },
               created_at: '2024-06-01T10:00:00.000Z',
               claim: null,
             },
@@ -128,6 +166,25 @@ export class ItemsController {
                 images: [{ url: 'https://...', altText: null }],
                 estimated_co2_saved_kg: 0.2,
                 location: { address_line: '1 Recycling Way', postcode: 'RC1 2CL', latitude: 51.5, longitude: -0.1 },
+                dropoff_location: {
+                  id: 'shop-id',
+                  name: 'TruCycle Hub',
+                  phone_number: '+44 20 7946 0958',
+                  address_line: '1 High St',
+                  postcode: 'AB12 3CD',
+                  operational_notes: 'Back entrance on Church St. Ring bell.',
+                  latitude: 51.509,
+                  longitude: -0.133,
+                  opening_hours: {
+                    days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+                    open_time: '09:00',
+                    close_time: '17:00',
+                  },
+                  acceptable_categories: ['furniture', 'electronics'],
+                  active: true,
+                  created_at: '2024-05-20T08:00:00.000Z',
+                  updated_at: '2024-05-20T08:00:00.000Z',
+                },
                 created_at: '2024-06-01T09:00:00.000Z',
                 owner: { id: 'user-id', name: 'Jane Doe', profile_image: null },
               },
@@ -179,7 +236,58 @@ export class ItemsController {
   }
   @Get(':id')
   @ApiOperation({ summary: 'Retrieve a single item listing by id', operationId: 'getItemById' })
-  @ApiOkResponse({ description: 'Item details', schema: { example: { status: 'success', message: 'OK', data: { id: 'item-id', title: 'Reusable bottle' } } } })
+  @ApiOkResponse({
+    description: 'Item details',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'OK',
+        data: {
+          id: 'item-id',
+          title: 'Reusable bottle',
+          description: 'A like-new reusable water bottle with bamboo lid.',
+          status: 'active',
+          pickup_option: 'exchange',
+          estimated_co2_saved_kg: 1.2,
+          location: { postcode: 'SW1A 2AA', latitude: 51.5034, longitude: -0.1276 },
+          qr_code: 'https://cdn.../qr.png',
+          scan_events: [
+            { scan_type: 'CLAIM_IN', shop_id: 'shop-id', scanned_at: '2024-06-02T09:00:00.000Z' },
+          ],
+          images: [{ url: 'https://...', alt_text: null }],
+          metadata: { colour: 'blue', capacity_l: 0.75 },
+          created_at: '2024-06-01T10:00:00.000Z',
+          owner: {
+            id: 'user-id',
+            name: 'Jane Doe',
+            profile_image: null,
+            verification: { email_verified: true, identity_verified: true, address_verified: true },
+            rating: 4.9,
+            reviews_count: 12,
+          },
+          dropoff_location: {
+            id: 'shop-id',
+            name: 'TruCycle Hub',
+            phone_number: '+44 20 7946 0958',
+            address_line: '1 High St',
+            postcode: 'AB12 3CD',
+            operational_notes: 'Back entrance on Church St. Ring bell.',
+            latitude: 51.509,
+            longitude: -0.133,
+            opening_hours: {
+              days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+              open_time: '09:00',
+              close_time: '17:00',
+            },
+            acceptable_categories: ['furniture', 'electronics'],
+            active: true,
+            created_at: '2024-05-20T08:00:00.000Z',
+            updated_at: '2024-05-20T08:00:00.000Z',
+          },
+        },
+      },
+    },
+  })
   async findOne(@Param('id') id: string) {
     return this.items.getPublicItem(id);
   }

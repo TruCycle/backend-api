@@ -98,7 +98,26 @@ export class ShopsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiBody({ description: 'Shop details', type: CreateShopDto })
-  @ApiCreatedResponse({ description: 'Shop created', schema: { example: { id: 'uuid', name: 'Shop A', phone_number: '+44 20 7946 0958', address_line: '1 High St', postcode: 'AB12 3CD', latitude: 51.5, longitude: -0.12, operational_notes: 'Back entrance on Church St. Ring bell.', opening_hours: { days: ['Mon','Tue','Wed','Thu','Fri'], open_time: '09:00', close_time: '17:00' }, acceptable_categories: ['furniture','electronics'], active: true } } })
+  @ApiCreatedResponse({
+    description: 'Shop created',
+    schema: {
+      example: {
+        id: 'uuid',
+        name: 'Shop A',
+        phone_number: '+44 20 7946 0958',
+        address_line: '1 High St',
+        postcode: 'AB12 3CD',
+        operational_notes: 'Back entrance on Church St. Ring bell.',
+        latitude: 51.5,
+        longitude: -0.12,
+        opening_hours: { days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], open_time: '09:00', close_time: '17:00' },
+        acceptable_categories: ['furniture', 'electronics'],
+        active: true,
+        created_at: '2024-05-20T08:00:00.000Z',
+        updated_at: '2024-05-20T08:00:00.000Z',
+      },
+    },
+  })
   async create(@Body() dto: CreateShopDto, @Req() req: any) {
     const user = req?.user;
     if (!user) throw new UnauthorizedException('Missing user context');
@@ -109,7 +128,28 @@ export class ShopsController {
   @ApiOperation({ summary: 'List shops owned by the authenticated partner', operationId: 'listMyShops' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOkResponse({ description: 'List of owned shops', schema: { example: [{ id: 'uuid', name: 'Shop A' }] } })
+  @ApiOkResponse({
+    description: 'List of owned shops',
+    schema: {
+      example: [
+        {
+          id: 'uuid',
+          name: 'Shop A',
+          phone_number: '+44 20 7946 0958',
+          address_line: '1 High St',
+          postcode: 'AB12 3CD',
+          operational_notes: 'Back entrance on Church St. Ring bell.',
+          latitude: 51.5,
+          longitude: -0.12,
+          opening_hours: { days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], open_time: '09:00', close_time: '17:00' },
+          acceptable_categories: ['furniture', 'electronics'],
+          active: true,
+          created_at: '2024-05-20T08:00:00.000Z',
+          updated_at: '2024-05-20T08:00:00.000Z',
+        },
+      ],
+    },
+  })
   async listMine(@Req() req: any) {
     const user = req?.user;
     if (!user) throw new UnauthorizedException('Missing user context');
@@ -118,7 +158,26 @@ export class ShopsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get public shop details by id', operationId: 'getShop' })
-  @ApiOkResponse({ description: 'Shop', schema: { example: { id: 'uuid', name: 'Shop A' } } })
+  @ApiOkResponse({
+    description: 'Shop',
+    schema: {
+      example: {
+        id: 'uuid',
+        name: 'Shop A',
+        phone_number: '+44 20 7946 0958',
+        address_line: '1 High St',
+        postcode: 'AB12 3CD',
+        operational_notes: 'Back entrance on Church St. Ring bell.',
+        latitude: 51.5,
+        longitude: -0.12,
+        opening_hours: { days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], open_time: '09:00', close_time: '17:00' },
+        acceptable_categories: ['furniture', 'electronics'],
+        active: true,
+        created_at: '2024-05-20T08:00:00.000Z',
+        updated_at: '2024-05-20T08:00:00.000Z',
+      },
+    },
+  })
   async getOne(@Param('id') id: string) {
     return this.shops.getShopPublic(id);
   }
@@ -128,7 +187,26 @@ export class ShopsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiBody({ description: 'Fields to update', type: UpdateShopDto })
-  @ApiOkResponse({ description: 'Updated shop', schema: { example: { id: 'uuid', name: 'Updated Name' } } })
+  @ApiOkResponse({
+    description: 'Updated shop',
+    schema: {
+      example: {
+        id: 'uuid',
+        name: 'Updated Name',
+        phone_number: '+44 20 7946 0958',
+        address_line: '1 High St',
+        postcode: 'AB12 3CD',
+        operational_notes: 'Back entrance on Church St. Ring bell.',
+        latitude: 51.5,
+        longitude: -0.12,
+        opening_hours: { days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], open_time: '09:00', close_time: '17:00' },
+        acceptable_categories: ['furniture', 'electronics'],
+        active: true,
+        created_at: '2024-05-20T08:00:00.000Z',
+        updated_at: '2024-06-01T08:00:00.000Z',
+      },
+    },
+  })
   async update(@Param('id') id: string, @Body() dto: UpdateShopDto, @Req() req: any) {
     const user = req?.user;
     if (!user) throw new UnauthorizedException('Missing user context');
@@ -151,7 +229,50 @@ export class ShopsController {
   @ApiOperation({ summary: 'List items across my shops (partner/admin)', operationId: 'listMyShopItems' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOkResponse({ description: 'Items and pagination', schema: { example: { items: [], pagination: { page: 1, limit: 10, total: 0, total_pages: 0 } } } })
+  @ApiOkResponse({
+    description: 'Items and pagination',
+    schema: {
+      example: {
+        items: [
+          {
+            id: 'item-id',
+            title: 'Reusable bottle',
+            status: 'pending_dropoff',
+            pickup_option: 'donate',
+            qr_code: 'https://.../qr.png',
+            images: [{ url: 'https://...', alt_text: null }],
+            estimated_co2_saved_kg: 1.2,
+            metadata: { brand: 'TruCycle' },
+            location: { address_line: '10 Downing St', postcode: 'SW1A 2AA', latitude: 51.5034, longitude: -0.1276 },
+            created_at: '2024-06-01T10:00:00.000Z',
+            claim: {
+              id: 'claim-id',
+              status: 'pending_dropoff',
+              approved_at: '2024-06-02T09:00:00.000Z',
+              completed_at: null,
+              collector: { id: 'collector-id', name: 'John Smith', profile_image: null },
+            },
+            dropoff_location: {
+              id: 'shop-id',
+              name: 'TruCycle Hub',
+              phone_number: '+44 20 7946 0958',
+              address_line: '1 High St',
+              postcode: 'AB12 3CD',
+              operational_notes: 'Back entrance on Church St. Ring bell.',
+              latitude: 51.509,
+              longitude: -0.133,
+              opening_hours: { days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], open_time: '09:00', close_time: '17:00' },
+              acceptable_categories: ['furniture', 'electronics'],
+              active: true,
+              created_at: '2024-05-20T08:00:00.000Z',
+              updated_at: '2024-05-20T08:00:00.000Z',
+            },
+          },
+        ],
+        pagination: { page: 1, limit: 10, total: 1, total_pages: 1 },
+      },
+    },
+  })
   async listMyShopItems(@Query() query: ShopItemsQueryDto, @Req() req: any) {
     const user = req?.user;
     if (!user) throw new UnauthorizedException('Missing user context');
@@ -162,7 +283,50 @@ export class ShopsController {
   @ApiOperation({ summary: 'List items associated with a shop (partner/admin)', operationId: 'listShopItems' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOkResponse({ description: 'Items and pagination', schema: { example: { items: [], pagination: { page: 1, limit: 10, total: 0, total_pages: 0 } } } })
+  @ApiOkResponse({
+    description: 'Items and pagination',
+    schema: {
+      example: {
+        items: [
+          {
+            id: 'item-id',
+            title: 'Reusable bottle',
+            status: 'pending_dropoff',
+            pickup_option: 'donate',
+            qr_code: 'https://.../qr.png',
+            images: [{ url: 'https://...', alt_text: null }],
+            estimated_co2_saved_kg: 1.2,
+            metadata: { brand: 'TruCycle' },
+            location: { address_line: '10 Downing St', postcode: 'SW1A 2AA', latitude: 51.5034, longitude: -0.1276 },
+            created_at: '2024-06-01T10:00:00.000Z',
+            claim: {
+              id: 'claim-id',
+              status: 'pending_dropoff',
+              approved_at: '2024-06-02T09:00:00.000Z',
+              completed_at: null,
+              collector: { id: 'collector-id', name: 'John Smith', profile_image: null },
+            },
+            dropoff_location: {
+              id: 'shop-id',
+              name: 'TruCycle Hub',
+              phone_number: '+44 20 7946 0958',
+              address_line: '1 High St',
+              postcode: 'AB12 3CD',
+              operational_notes: 'Back entrance on Church St. Ring bell.',
+              latitude: 51.509,
+              longitude: -0.133,
+              opening_hours: { days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], open_time: '09:00', close_time: '17:00' },
+              acceptable_categories: ['furniture', 'electronics'],
+              active: true,
+              created_at: '2024-05-20T08:00:00.000Z',
+              updated_at: '2024-05-20T08:00:00.000Z',
+            },
+          },
+        ],
+        pagination: { page: 1, limit: 10, total: 1, total_pages: 1 },
+      },
+    },
+  })
   async listShopItems(@Param('id') id: string, @Query() query: ShopItemsQueryDto, @Req() req: any) {
     const user = req?.user;
     if (!user) throw new UnauthorizedException('Missing user context');
