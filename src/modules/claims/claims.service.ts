@@ -18,7 +18,7 @@ import { User, UserStatus } from '../users/user.entity';
 
 import { Claim, ClaimStatus } from './claim.entity';
 import { CreateClaimDto } from './dto/create-claim.dto';
-const CLAIMABLE_STATUSES: readonly ItemStatus[] = [ItemStatus.ACTIVE];
+const CLAIMABLE_STATUSES: readonly ItemStatus[] = [ItemStatus.ACTIVE, ItemStatus.AWAITING_COLLECTION];
 // Allow multiple pending requests: only an already-approved claim should block
 const ACTIVE_CLAIM_STATUSES: readonly ClaimStatus[] = [ClaimStatus.APPROVED];
 
@@ -126,7 +126,7 @@ export class ClaimsService {
       throw new ForbiddenException('Only the donor or an admin may approve this claim');
     }
     // Ensure item is active when approving the first claim
-    if (claim.item && claim.item.status !== ItemStatus.ACTIVE) {
+    if (claim.item && !CLAIMABLE_STATUSES.includes(claim.item.status)) {
       throw new ConflictException('Item is not active for approval');
     }
 
@@ -134,10 +134,6 @@ export class ClaimsService {
     claim.approvedAt = new Date();
 
     const saved = await this.claims.save(claim);
-    // Mark the item as claimed on approval
-    if (claim.item?.id) {
-      await this.items.update(claim.item.id, { status: ItemStatus.CLAIMED });
-    }
 
     return {
       id: saved.id,

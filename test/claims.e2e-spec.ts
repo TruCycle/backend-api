@@ -114,7 +114,7 @@ describe('Claims E2E', () => {
       status: 'pending_approval',
       created_at: '2025-09-25T12:10:00.000Z',
     });
-    expect(itemRepo.update).toHaveBeenCalledWith('9f5c2c8e-0000-4000-a000-000000000000', { status: ItemStatus.CLAIMED });
+    expect(itemRepo.update).not.toHaveBeenCalled();
   });
 
   it('POST /claims allows customers (treated as collectors)', async () => {
@@ -153,7 +153,7 @@ describe('Claims E2E', () => {
       status: 'pending_approval',
       created_at: '2025-09-25T12:10:00.000Z',
     });
-    expect(itemRepo.update).toHaveBeenCalledWith('9f5c2c8e-0000-4000-a000-000000000000', { status: ItemStatus.CLAIMED });
+    expect(itemRepo.update).not.toHaveBeenCalled();
   });
 
   it('POST /claims prevents duplicate active claims', async () => {
@@ -216,11 +216,17 @@ describe('Claims E2E', () => {
   it('PATCH /claims/:id/approve forbids non-admin users', async () => {
     currentUser = { sub: 'collector-1', roles: [RoleCode.COLLECTOR] };
 
+    claimRepo.findOne.mockResolvedValue({
+      id: 'f2a8471d',
+      status: ClaimStatus.PENDING_APPROVAL,
+      item: { donor: { id: 'donor-1' } } as any,
+    });
+
     const res = await request(app.getHttpServer())
       .patch('/claims/f2a8471d/approve')
       .set('Authorization', 'Bearer fake-token');
 
     expect(res.status).toBe(403);
-    expect(res.body.message).toBe('Admins only');
+    expect(res.body.message).toBe('Only the donor or an admin may approve this claim');
   });
 });
