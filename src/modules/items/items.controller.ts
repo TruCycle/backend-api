@@ -321,8 +321,27 @@ export class ItemsController {
       },
     },
   })
-  async findOne(@Param('id') id: string) {
-    return this.items.getPublicItem(id);
+  async findOne(@Param('id') id: string, @Req() req: any) {
+    // Best-effort: if bearer token present, include claim info for that user
+    let currentUserId: string | undefined = undefined;
+    try {
+      const raw = (req?.headers?.authorization as string | undefined)?.trim();
+      if (raw) {
+        let token = raw;
+        const bearer = /^Bearer\s+/i;
+        while (bearer.test(token)) token = token.replace(bearer, '').trim();
+        if (token) {
+          const payload: any = await this.jwt.verifyAsync(token);
+          const sub = payload?.sub;
+          if (typeof sub === 'string' && sub.trim()) {
+            currentUserId = sub.trim();
+          }
+        }
+      }
+    } catch {
+      // ignore invalid/missing token and continue anonymously
+    }
+    return this.items.getPublicItem(id, currentUserId);
   }
 
   @Patch(':id')

@@ -782,7 +782,7 @@ export class ItemsService {
     };
   }
 
-  async getPublicItem(rawId: string) {
+  async getPublicItem(rawId: string, currentUserId?: string) {
     const id = typeof rawId === 'string' ? rawId.trim() : '';
     if (!id) {
       throw new BadRequestException('Item id is required');
@@ -818,6 +818,19 @@ export class ItemsService {
     const owner = item.donor ? await this.buildOwnerDetails(item.donor.id) : null;
     const dropoffLocation = await this.loadDropoffLocation(item.dropoffLocationId);
 
+    // If a user context is provided, best-effort load their claim for this item
+    let userClaim: Claim | null = null;
+    if (currentUserId && typeof currentUserId === 'string') {
+      try {
+        const found = await this.claims.findOne({
+          where: { item: { id }, collector: { id: currentUserId } },
+        });
+        userClaim = found ?? null;
+      } catch {
+        userClaim = null;
+      }
+    }
+
     return {
       id: item.id,
       title: typeof item.title === 'string' ? item.title.trim() : item.title,
@@ -851,6 +864,13 @@ export class ItemsService {
       created_at: createdAt,
       owner,
       dropoff_location: dropoffLocation,
+      claim: userClaim
+        ? {
+            status: userClaim.status,
+            requested_at: this.formatDate(userClaim.createdAt),
+            claimed_at: this.formatDate(userClaim.completedAt),
+          }
+        : null,
     };
   }
 
