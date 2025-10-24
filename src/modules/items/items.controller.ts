@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { ApiBearerAuth, ApiBody, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags, ApiCreatedResponse } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -14,7 +15,11 @@ import { ClaimsService } from '../claims/claims.service';
 @ApiTags('items')
 @Controller('items')
 export class ItemsController {
-  constructor(private readonly items: ItemsService, private readonly claims: ClaimsService) {}
+  constructor(
+    private readonly items: ItemsService,
+    private readonly claims: ClaimsService,
+    private readonly jwt: JwtService,
+  ) {}
 
   @Get('health')
   @ApiOperation({ summary: 'Items service health check' })
@@ -38,11 +43,14 @@ export class ItemsController {
               id: 'item-id',
               title: 'Reusable bottle',
               status: 'active',
+              condition: 'good',
+              category: 'kitchen',
               distance_km: 0.8,
               pickup_option: 'exchange',
               qr_code: 'https://cdn.../qr.png',
               images: [{ url: 'https://...', altText: null }],
               estimated_co2_saved_kg: 1.2,
+              claim: { status: 'approved', requested_at: '2024-06-01T10:00:00.000Z', claimed_at: null },
               dropoff_location: {
                 id: 'shop-id',
                 name: 'TruCycle Hub',
@@ -77,8 +85,27 @@ export class ItemsController {
       },
     },
   })
-  async search(@Query() query: SearchItemsDto) {
-    return this.items.searchPublicListings(query);
+  async search(@Query() query: SearchItemsDto, @Req() req: any) {
+    // Best-effort: if bearer token present, include claim info for that user
+    let currentUserId: string | undefined = undefined;
+    try {
+      const raw = (req?.headers?.authorization as string | undefined)?.trim();
+      if (raw) {
+        let token = raw;
+        const bearer = /^Bearer\s+/i;
+        while (bearer.test(token)) token = token.replace(bearer, '').trim();
+        if (token) {
+          const payload: any = await this.jwt.verifyAsync(token);
+          const sub = payload?.sub;
+          if (typeof sub === 'string' && sub.trim()) {
+            currentUserId = sub.trim();
+          }
+        }
+      }
+    } catch {
+      // ignore invalid/missing token and continue anonymously
+    }
+    return this.items.searchPublicListings(query, currentUserId);
   }
 
   @Get('me/listed')
@@ -97,6 +124,8 @@ export class ItemsController {
               id: 'item-id',
               title: 'Reusable bottle',
               status: 'active',
+              condition: 'good',
+              category: 'kitchen',
               pickup_option: 'exchange',
               qr_code: 'https://...',
               images: [{ url: 'https://...', altText: null }],
@@ -161,6 +190,8 @@ export class ItemsController {
                 id: 'item-id',
                 title: 'Aluminum can',
                 status: 'recycled',
+                condition: 'fair',
+                category: 'recyclables',
                 pickup_option: 'recycle',
                 qr_code: 'https://...',
                 images: [{ url: 'https://...', altText: null }],
@@ -247,6 +278,8 @@ export class ItemsController {
           title: 'Reusable bottle',
           description: 'A like-new reusable water bottle with bamboo lid.',
           status: 'active',
+          condition: 'like_new',
+          category: 'kitchen',
           pickup_option: 'exchange',
           estimated_co2_saved_kg: 1.2,
           location: { postcode: 'SW1A 2AA', latitude: 51.5034, longitude: -0.1276 },

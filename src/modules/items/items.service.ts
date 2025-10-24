@@ -402,6 +402,8 @@ export class ItemsService {
         id: item.id,
         title: typeof item.title === 'string' ? item.title.trim() : '',
         status: item.status,
+        condition: item.condition,
+        category: item.category,
         pickup_option: item.pickupOption,
         qr_code:
           typeof item.qrCodeUrl === 'string' && item.qrCodeUrl.trim()
@@ -523,6 +525,8 @@ export class ItemsService {
               id: item.id,
               title: typeof item.title === 'string' ? item.title.trim() : '',
               status: item.status,
+              condition: item.condition,
+              category: item.category,
               pickup_option: item.pickupOption,
               qr_code:
                 typeof item.qrCodeUrl === 'string' && item.qrCodeUrl.trim()
@@ -822,6 +826,8 @@ export class ItemsService {
           ? item.description.trim()
           : null,
       status: item.status,
+      condition: item.condition,
+      category: item.category,
       estimated_co2_saved_kg:
         typeof item.estimatedCo2SavedKg === 'number' && Number.isFinite(item.estimatedCo2SavedKg)
           ? Number(item.estimatedCo2SavedKg)
@@ -1000,7 +1006,7 @@ export class ItemsService {
     await this.items.remove(item);
   }
 
-  async searchPublicListings(dto: SearchItemsDto) {
+  async searchPublicListings(dto: SearchItemsDto, currentUserId?: string) {
     // If postcode is provided, it has priority over lat/lng
     const pc = (dto.postcode ?? '').trim();
     let originLat: number | undefined = undefined;
@@ -1062,6 +1068,8 @@ export class ItemsService {
       .select('item.id', 'id')
       .addSelect('item.title', 'title')
       .addSelect('item.status', 'status')
+      .addSelect('item.condition', 'condition')
+      .addSelect('item.category', 'category')
       .addSelect('item.pickup_option', 'pickup_option')
       .addSelect('item.qr_code_url', 'qr_code_url')
       .addSelect('item.donor_id', 'donor_id')
@@ -1138,6 +1146,16 @@ export class ItemsService {
       ratingAgg.map((r) => [r.user_id, { rating: Math.round(Number(r.avg_rating) * 10) / 10, count: Number(r.reviews_count) }]),
     );
 
+    // If an authenticated user is present, load their claims for these items
+    let userClaimMap = new Map<string, Claim>();
+    if (currentUserId && rows.length) {
+      const itemIds = Array.from(new Set(rows.map((r: any) => r.id)));
+      const userClaims = await this.claims.find({
+        where: { collector: { id: currentUserId }, item: { id: In(itemIds) } },
+      });
+      userClaimMap = new Map(userClaims.map((c) => [c.item.id, c]));
+    }
+
     const items = rows.map((row: any) => {
       const rawDistance = Number(row.distance_meters);
       const distanceKm = Number.isFinite(rawDistance)
@@ -1196,10 +1214,14 @@ export class ItemsService {
 
       const dropoffLocation = dropoffMap.get(this.sanitizeShopId(row.dropoff_location_id)) ?? null;
 
+      const claim = userClaimMap.get(row.id);
+
       return {
         id: row.id,
         title,
         status: row.status,
+        condition: row.condition,
+        category: row.category,
         distance_km: distanceKm ?? null,
         pickup_option: row.pickup_option,
         qr_code: qrCode,
@@ -1213,6 +1235,13 @@ export class ItemsService {
         owner,
         dropoff_location: dropoffLocation,
         created_at: createdAtIso,
+        claim: claim
+          ? {
+              status: claim.status,
+              requested_at: this.formatDate(claim.createdAt),
+              claimed_at: this.formatDate(claim.completedAt),
+            }
+          : null,
       };
     });
 
