@@ -29,6 +29,7 @@ export class ItemsController {
   }
 
   @Get()
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Retrieve public item listings near a location', operationId: 'searchItems' })
   @ApiOkResponse({
     description: 'List of public items with search origin',
@@ -266,6 +267,7 @@ export class ItemsController {
     return this.items.getUserImpactMetrics(userId);
   }
   @Get(':id')
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Retrieve a single item listing by id', operationId: 'getItemById' })
   @ApiOkResponse({
     description: 'Item details',
