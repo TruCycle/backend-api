@@ -57,7 +57,7 @@ const IMPACT_ITEM_STATUSES: readonly ItemStatus[] = [
 ];
 const DEFAULT_MONTHLY_CO2_GOAL_KG = 50;
 
-interface DropoffLocationView {
+export interface DropoffLocationView {
   id: string;
   name: string;
   phone_number: string | null;
@@ -1045,9 +1045,12 @@ export class ItemsService {
     page = Math.min(Math.max(Math.trunc(page), 1), MAX_PAGE);
     const offset = (page - 1) * limit;
 
-    const statusFilter =
-      typeof dto.status === 'string' ? (dto.status as ItemStatus) : ItemStatus.ACTIVE;
-    if (!PUBLIC_ITEM_STATUSES.includes(statusFilter)) {
+    const requestedStatus = typeof dto.status === 'string' ? (dto.status as ItemStatus) : null;
+    const statusFilters = requestedStatus
+      ? [requestedStatus]
+      : [ItemStatus.ACTIVE, ItemStatus.AWAITING_COLLECTION];
+    const invalidStatus = statusFilters.find((status) => !PUBLIC_ITEM_STATUSES.includes(status));
+    if (invalidStatus) {
       throw new BadRequestException('Requested status is not available for public listings');
     }
 
@@ -1067,7 +1070,7 @@ export class ItemsService {
       .addSelect('item.images', 'images')
       .addSelect('item.created_at', 'created_at')
       .addSelect(`ST_Distance(item.location::geography, ${geographyPoint})`, 'distance_meters')
-      .where('item.status = :status', { status: statusFilter })
+      .where('item.status IN (:...statuses)', { statuses: statusFilters })
       .andWhere(`ST_DWithin(item.location::geography, ${geographyPoint}, :radiusMeters)`)
       .orderBy('distance_meters', 'ASC')
       .offset(offset)
