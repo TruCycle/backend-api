@@ -13,6 +13,7 @@ import { ItemsService } from './items.service';
 import { ClaimsService } from '../claims/claims.service';
 
 @ApiTags('items')
+@ApiBearerAuth()
 @Controller('items')
 export class ItemsController {
   constructor(
@@ -29,7 +30,6 @@ export class ItemsController {
   }
 
   @Get()
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Retrieve public item listings near a location', operationId: 'searchItems' })
   @ApiOkResponse({
     description: 'List of public items with search origin',
@@ -111,7 +111,6 @@ export class ItemsController {
 
   @Get('me/listed')
   @ApiOperation({ summary: 'List items created by the authenticated user', operationId: 'listMyItems' })
-  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOkResponse({
     description: 'User items and pagination',
@@ -171,7 +170,6 @@ export class ItemsController {
 
   @Get('me/collected')
   @ApiOperation({ summary: 'List items collected by the authenticated user', operationId: 'listMyCollectedItems' })
-  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOkResponse({
     description: 'Collected items and pagination',
@@ -237,7 +235,6 @@ export class ItemsController {
 
   @Get('me/impact')
   @ApiOperation({ summary: 'Get environmental impact metrics for the authenticated user', operationId: 'getMyImpactMetrics' })
-  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOkResponse({
     description: 'Impact metrics summary',
@@ -267,7 +264,6 @@ export class ItemsController {
     return this.items.getUserImpactMetrics(userId);
   }
   @Get(':id')
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Retrieve a single item listing by id', operationId: 'getItemById' })
   @ApiOkResponse({
     description: 'Item details',
@@ -348,7 +344,6 @@ export class ItemsController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update an existing item listing', operationId: 'updateItem' })
-  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiBody({ description: 'Fields to update on the item', type: UpdateItemDto })
   @ApiOkResponse({
@@ -380,7 +375,6 @@ export class ItemsController {
   @Delete(':id')
   @ApiOperation({ summary: 'Delete an existing item listing', operationId: 'deleteItem' })
   @ApiNoContentResponse({ description: 'Item deleted' })
-  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @HttpCode(204)
   async remove(@Param('id') id: string, @Req() req: any) {
@@ -393,7 +387,6 @@ export class ItemsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new item listing', operationId: 'createItem' })
-  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiBody({ description: 'Item details to create', type: CreateItemDto })
   @ApiCreatedResponse({
@@ -425,7 +418,6 @@ export class ItemsController {
 
   @Post(':id/collect')
   @ApiOperation({ summary: 'Mark an item as collected (donor or collector)', operationId: 'collectItem' })
-  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiBody({ description: 'Optional shop id for donation drop-offs', type: CollectItemDto })
   @ApiOkResponse({
@@ -453,4 +445,3 @@ export class ItemsController {
     return this.claims.completeClaimOutManual(user, itemId, dto.shopId);
   }
 }
-
