@@ -70,6 +70,17 @@ export class ClaimsService {
       throw new ForbiddenException('You cannot claim an item you listed');
     }
 
+    // Ensure this collector has not already created a claim for this item
+    const existingForCollector = await this.claims.findOne({
+      where: {
+        item: { id: item.id },
+        collector: { id: collector.id },
+      },
+    });
+    if (existingForCollector) {
+      throw new ConflictException('You have already claimed this item');
+    }
+
     const activeClaim = await this.claims.findOne({
       where: {
         item: { id: item.id },
