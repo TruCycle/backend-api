@@ -17,6 +17,8 @@ import { userHasRole } from '../users/role.utils';
 import { User, UserStatus } from '../users/user.entity';
 
 import { Claim, ClaimStatus } from './claim.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { Shop } from '../shops/shop.entity';
 import { CreateClaimDto } from './dto/create-claim.dto';
 const CLAIMABLE_STATUSES: readonly ItemStatus[] = [ItemStatus.ACTIVE, ItemStatus.AWAITING_COLLECTION];
 // Allow multiple pending requests: only an already-approved claim should block
@@ -28,6 +30,8 @@ export class ClaimsService {
     @InjectRepository(Claim) private readonly claims: Repository<Claim>,
     @InjectRepository(Item) private readonly items: Repository<Item>,
     @InjectRepository(User) private readonly users: Repository<User>,
+    @InjectRepository(Shop) private readonly shops: Repository<Shop>,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private ensureCollectorRole(payload: any) {
@@ -98,6 +102,14 @@ export class ClaimsService {
     });
     const saved = await this.claims.save(entity);
 
+    // Notifications: donor and collector
+    try {
+      const donorId = item.donor?.id;
+      if (donorId) {
+        await this.notifications.notifyItemClaimRequested(donorId, collector.id, item.id, item.title ?? undefined);
+      }
+    } catch {}
+
     const createdAt =
       saved.createdAt instanceof Date && !Number.isNaN(saved.createdAt.getTime())
         ? saved.createdAt.toISOString()
@@ -124,7 +136,7 @@ export class ClaimsService {
       throw new BadRequestException('Claim id is required');
     }
 
-    const claim = await this.claims.findOne({ where: { id }, relations: { item: { donor: true } } });
+    const claim = await this.claims.findOne({ where: { id }, relations: { item: { donor: true }, collector: true } });
     if (!claim) {
       throw new NotFoundException('Claim not found');
     }
@@ -145,6 +157,13 @@ export class ClaimsService {
     claim.approvedAt = new Date();
 
     const saved = await this.claims.save(claim);
+
+    // Notify collector of approval
+    try {
+      if (claim.collector?.id) {
+        await this.notifications.notifyItemClaimApproved(claim.collector.id, claim.item.id, claim.item.title ?? undefined);
+      }
+    } catch {}
 
     return {
       id: saved.id,
@@ -269,6 +288,24 @@ export class ClaimsService {
       await claimRepo.save(claim);
       await itemRepo.update(claim.item.id, { status: ItemStatus.COMPLETE });
       await recordScanEvent(manager, claim.item.id, ScanType.CLAIM_OUT, shopId, completionDate);
+
+      // Notifications: collection + drop-off
+      try {
+        const donorId = claim.item?.donor?.id;
+        const collectorId = claim.collector?.id;
+        if (donorId && collectorId) {
+          await this.notifications.notifyItemCollected(donorId, collectorId, claim.item.id, claim.item.title ?? undefined);
+        }
+        if (shopId) {
+          // Notify donor of drop-off
+          if (donorId) await this.notifications.notifyDropOff(donorId, claim.item.id, claim.item.title ?? undefined);
+          // Notify shop owner of drop-in
+          const shop = await this.shops.findOne({ where: { id: shopId }, relations: { owner: true } });
+          if (shop?.owner?.id && donorId) {
+            await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
+          }
+        }
+      } catch {}
 
       const events = await fetchScanEvents(manager, claim.item.id);
 
@@ -398,6 +435,22 @@ export class ClaimsService {
       await claimRepo.save(claim);
       await itemRepo.update(claim.item.id, { status: ItemStatus.COMPLETE });
       await recordScanEvent(manager, claim.item.id, ScanType.CLAIM_OUT, providedShopId || null, completionDate);
+
+      // Notifications: collection + drop-off
+      try {
+        const donorId = claim.item?.donor?.id;
+        const collectorId = claim.collector?.id;
+        if (donorId && collectorId) {
+          await this.notifications.notifyItemCollected(donorId, collectorId, claim.item.id, claim.item.title ?? undefined);
+        }
+        if (providedShopId) {
+          if (donorId) await this.notifications.notifyDropOff(donorId, claim.item.id, claim.item.title ?? undefined);
+          const shop = await this.shops.findOne({ where: { id: providedShopId }, relations: { owner: true } });
+          if (shop?.owner?.id && donorId) {
+            await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
+          }
+        }
+      } catch {}
 
       const events = await fetchScanEvents(manager, claim.item.id);
       return {

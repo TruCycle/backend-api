@@ -11,13 +11,14 @@ import { User } from '../users/user.entity';
 import { Shop } from '../shops/shop.entity';
 
 import { Co2EstimationService } from './co2-estimation.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { ItemGeocodingService } from './item-geocoding.service';
 import { Item } from './item.entity';
 import { ItemsController } from './items.controller';
 import { ItemsService } from './items.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Item, Claim, User, KycProfile, UserReview, Shop]), QrModule, ClaimsModule],
+  imports: [TypeOrmModule.forFeature([Item, Claim, User, KycProfile, UserReview, Shop]), QrModule, ClaimsModule, NotificationsModule],
   controllers: [ItemsController],
   providers: [ItemsService, ItemGeocodingService, Co2EstimationService, JwtAuthGuard],
   exports: [TypeOrmModule, ItemsService],

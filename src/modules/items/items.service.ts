@@ -10,6 +10,7 @@ import { User, UserStatus } from '../users/user.entity';
 import { Shop } from '../shops/shop.entity';
 
 import { Co2EstimationService } from './co2-estimation.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateItemDto, CreateItemImageDto } from './dto/create-item.dto';
 import { SearchItemsDto } from './dto/search-items.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
@@ -87,6 +88,7 @@ export class ItemsService {
     private readonly geocoding: ItemGeocodingService,
     private readonly qrImage: QrImageService,
     private readonly co2: Co2EstimationService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private readonly qrBaseUrl = (process.env.ITEM_QR_BASE_URL || 'https://cdn.trucycle.com/qrs').replace(/\/$/, '');
@@ -700,6 +702,18 @@ export class ItemsService {
         saved.qrCodeUrl = this.buildQrCodeUrl(saved.id);
         await this.items.update(saved.id, { qrCodeUrl: saved.qrCodeUrl });
       }
+    }
+
+    // If donation with drop-off location, notify shop owner + donor of a new drop-in intent
+    try {
+      if (saved.pickupOption === ItemPickupOption.DONATE && saved.dropoffLocationId) {
+        const shop = await this.shops.findOne({ where: { id: saved.dropoffLocationId }, relations: { owner: true } });
+        if (shop?.owner?.id && saved.donor?.id) {
+          await this.notifications.notifyDropIn(shop.owner.id, saved.donor.id, saved.id, saved.title ?? undefined);
+        }
+      }
+    } catch (err) {
+      this.logger.debug(`Drop-in notify failed for item ${saved.id}: ${err instanceof Error ? err.message : err}`);
     }
 
     // Compute CO2 estimate (non-blocking if it fails)

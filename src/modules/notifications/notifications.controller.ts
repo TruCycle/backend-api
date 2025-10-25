@@ -16,13 +16,40 @@ export class NotificationsController {
   @ApiOperation({ summary: 'List notifications for the current user' })
   @ApiQuery({ name: 'unread', required: false, schema: { type: 'boolean' } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 } })
-  @ApiOkResponse({ description: 'Array of notifications' })
+  @ApiOkResponse({
+    description: 'Array of notifications',
+    schema: {
+      example: [
+        {
+          id: '3b6e6f89-3a1b-4f12-9f51-1f2a4b0aa001',
+          type: 'item.claim.request',
+          title: 'New claim request',
+          body: 'Your item “Bike” has a new claim request.',
+          data: { itemId: 'c9c2f0fd-2f0a-4f9b-9b70-2e84d8a1b2d3' },
+          read: false,
+          readAt: null,
+          createdAt: '2025-10-07T12:34:56.000Z',
+        },
+      ],
+    },
+  })
   async list(@Req() req: any, @Query() query: ListNotificationsQueryDto) {
     const userId = req.user.id as string;
     const unread = typeof query.unread === 'string' ? query.unread === 'true' : undefined;
     const limit = query.limit ? Number(query.limit) : undefined;
     const rows = await this.notifications.listForUser(userId, { unread, limit });
     return rows;
+  }
+
+  @Get('unread-count')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get unread notifications count for the current user' })
+  @ApiOkResponse({ description: 'Unread count payload', schema: { example: { count: 3 } } })
+  async unreadCount(@Req() req: any) {
+    const userId = req.user.id as string;
+    const count = await this.notifications.countUnread(userId);
+    return { count };
   }
 
   @Post('send')

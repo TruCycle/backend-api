@@ -42,6 +42,10 @@ export class NotificationsService {
     return rows.map((n) => this.view(n));
   }
 
+  async countUnread(userId: string): Promise<number> {
+    return this.notifications.count({ where: { user: { id: userId }, read: false } });
+  }
+
   async createAndEmit(
     userId: string,
     type: NotificationType,

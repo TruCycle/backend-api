@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -7,10 +7,12 @@ import { User } from '../users/user.entity';
 
 import { Claim } from './claim.entity';
 import { ClaimsController } from './claims.controller';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { Shop } from '../shops/shop.entity';
 import { ClaimsService } from './claims.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Claim, Item, User])],
+  imports: [TypeOrmModule.forFeature([Claim, Item, User, Shop]), forwardRef(() => NotificationsModule)],
   controllers: [ClaimsController],
   providers: [ClaimsService, JwtAuthGuard],
   exports: [ClaimsService],
