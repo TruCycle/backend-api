@@ -9,6 +9,7 @@ import { Role, RoleCode } from '../users/role.entity';
 import { normalizeIncomingRole } from '../users/role.utils';
 import { UserRole } from '../users/user-role.entity';
 import { User, UserStatus } from '../users/user.entity';
+import { KycProfile, KycStatus } from '../users/kyc-profile.entity';
 import { Shop } from '../shops/shop.entity';
 import { CreateShopDto } from '../shops/dto/create-shop.dto';
 
@@ -25,6 +26,7 @@ export class AuthService {
     @InjectRepository(Role) private readonly roles: Repository<Role>,
     @InjectRepository(UserRole) private readonly userRoles: Repository<UserRole>,
     @InjectRepository(Shop) private readonly shops: Repository<Shop>,
+    @InjectRepository(KycProfile) private readonly kycs: Repository<KycProfile>,
     private readonly passwordService: PasswordService,
     private readonly jwt: JwtService,
     private readonly email: EmailService,
@@ -343,13 +345,28 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('Invalid token');
     const links = await this.userRoles.find({ where: { user: { id } } });
     const roles = links.map((l) => l.role.code);
+    // Build verification flags
+    const kyc = await this.kycs.findOne({ where: { user: { id } }, relations: { user: true } });
+    let addressVerified = false;
+    try {
+      const rows: any[] = await this.users.query('SELECT COUNT(1) AS cnt FROM address WHERE user_id = $1', [id]);
+      addressVerified = Number(rows?.[0]?.cnt || 0) > 0;
+    } catch {
+      addressVerified = false;
+    }
     return {
       id: user.id,
       firstName: user.firstName ?? null,
       lastName: user.lastName ?? null,
       email: user.email,
+      postcode: user.postcode ?? null,
       status: user.status,
       roles,
+      verifications: {
+        email_verified: user.status === UserStatus.ACTIVE,
+        identity_verified: kyc?.status === KycStatus.APPROVED,
+        address_verified: addressVerified,
+      },
     };
   }
 

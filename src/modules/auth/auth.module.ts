@@ -7,6 +7,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { Role } from '../users/role.entity';
 import { UserRole } from '../users/user-role.entity';
 import { User } from '../users/user.entity';
+import { KycProfile } from '../users/kyc-profile.entity';
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -15,7 +16,7 @@ import { Shop } from '../shops/shop.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Role, UserRole, Shop]),
+    TypeOrmModule.forFeature([User, Role, UserRole, Shop, KycProfile]),
     forwardRef(() => NotificationsModule),
   ],
   controllers: [AuthController],
