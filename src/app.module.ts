@@ -37,6 +37,7 @@ import { MessageRoom } from './modules/messages/message-room.entity';
 import { Message } from './modules/messages/message.entity';
 import { Shop } from './modules/shops/shop.entity';
 import { CreateShopTable1700000000015 } from './database/migrations/1700000000015-CreateShopTable';
+import { CreateNotificationTable1700000000020 } from './database/migrations/1700000000020-CreateNotificationTable';
 
 // Enable DB explicitly via ENABLE_DB=true; default is disabled to allow quick boot
 const enableDb = process.env.ENABLE_DB === 'true';
@@ -86,6 +87,7 @@ const dbModules: any[] = enableDb
             CreateMessagesTables1700000000013,
             AllowMultipleClaimsPerItem1700000000014,
             CreateShopTable1700000000015,
+            CreateNotificationTable1700000000020,
           ],
           migrationsRun: true,
           migrationsTransactionMode: 'each',
