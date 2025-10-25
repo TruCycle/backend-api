@@ -1,6 +1,6 @@
 # Notifications WebSocket Integration
 
-This document explains how a frontend can integrate the realtime in‑app notifications features using Socket.IO, plus the complementary HTTP endpoints for listing notifications and filtering unread items.
+This document explains how a frontend can integrate realtime in-app notifications using Socket.IO, plus the complementary HTTP endpoints for listing notifications, unread-count badges, and filtering unread items.
 
 - Namespace: `/notifications` (Socket.IO 4.x)
 - Delivery: Server emits `notification:new` to all active sockets for a user
@@ -60,7 +60,7 @@ Common `type` values implemented:
 - `pickup.created`
 - `general`
 
-## Server → Client Events
+## Server -> Client Events
 
 - `notification:new` — delivered whenever a notification is created for the user.
 
@@ -70,7 +70,7 @@ socket.on('notification:new', (n: NotificationViewModel) => {
 });
 ```
 
-## Client → Server Events
+## Client -> Server Events
 
 - `notification:read` — marks one or more notifications as read.
 
@@ -111,13 +111,28 @@ Response:
     "id": "...",
     "type": "item.claim.request",
     "title": "New claim request",
-    "body": "Your item “Bike” has a new claim request.",
+    "body": "Your item \"Bike\" has a new claim request.",
     "data": { "itemId": "..." },
     "read": false,
     "readAt": null,
     "createdAt": "2025-10-07T12:34:56.000Z"
   }
 ]
+```
+
+- `GET /notifications/unread-count` — returns the unread badge count for the current user.
+
+Example:
+
+```http
+GET /notifications/unread-count
+Authorization: Bearer <JWT>
+```
+
+Response:
+
+```json
+{ "count": 3 }
 ```
 
 ## Client Setup (Example)
@@ -156,11 +171,22 @@ function markRead(ids: string[]) {
 1. Client connects to `/notifications` with JWT.
 2. When server-side events occur, backend creates a notification, persists it, and emits `notification:new`.
 3. Client updates UI state and may immediately call `notification:read` to mark items as read.
-4. On app start or reconnect, client should call `GET /notifications?unread=true` to load any missed notifications.
+4. On app start or reconnect, client should call `GET /notifications?unread=true` to load any missed notifications and `GET /notifications/unread-count` to initialize badge count.
+
+Tip: Maintain a local unread count; decrement when you mark messages read via `notification:read`, and periodically reconcile with `GET /notifications/unread-count`.
 
 ## Notes
 
-- Delivery is best‑effort realtime via WebSocket; persistence means notifications are not lost when offline.
+- Delivery is best-effort realtime via WebSocket; persistence means notifications are not lost when offline.
 - The same JWT as the REST API is used for the WS handshake.
-- CORS origins follow the server’s global CORS env configuration.
+- CORS origins follow the server's global CORS env configuration.
 
+## Domain Triggers (Server)
+
+The backend emits and stores notifications for these events:
+- `item.claim.request`: when a collector creates a claim request (donor and collector are notified).
+- `item.claim.approved`: when a donor/admin approves a claim (collector is notified).
+- `item.collection`: when a claim is completed/collection recorded (donor and collector are notified).
+- `dropoff.created`: when a drop-off is recorded as part of completion (donor is notified).
+- `dropin.created`: when an item is created with a donation drop-off location (shop owner and donor are notified), or when a completion happens at a shop (shop owner notified).
+- `pickup.created`: reserved for future pickup orders.
