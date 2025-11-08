@@ -38,6 +38,8 @@ import { Message } from './modules/messages/message.entity';
 import { Shop } from './modules/shops/shop.entity';
 import { CreateShopTable1700000000015 } from './database/migrations/1700000000015-CreateShopTable';
 import { CreateNotificationTable1700000000020 } from './database/migrations/1700000000020-CreateNotificationTable';
+import { CreateWalletAndLedger1700000000021 } from './database/migrations/1700000000021-CreateWalletAndLedger';
+import { RewardsModule } from './modules/rewards/rewards.module';
 
 // Enable DB explicitly via ENABLE_DB=true; default is disabled to allow quick boot
 const enableDb = process.env.ENABLE_DB === 'true';
@@ -88,6 +90,7 @@ const dbModules: any[] = enableDb
             AllowMultipleClaimsPerItem1700000000014,
             CreateShopTable1700000000015,
             CreateNotificationTable1700000000020,
+            CreateWalletAndLedger1700000000021,
           ],
           migrationsRun: true,
           migrationsTransactionMode: 'each',
@@ -95,6 +98,7 @@ const dbModules: any[] = enableDb
       }),
       UsersModule,
       MessagesModule,
+      RewardsModule,
     ]
   : [];
 

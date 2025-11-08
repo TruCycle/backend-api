@@ -19,6 +19,7 @@ import { User, UserStatus } from '../users/user.entity';
 import { Claim, ClaimStatus } from './claim.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Shop } from '../shops/shop.entity';
+import { RewardsService } from '../rewards/rewards.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 const CLAIMABLE_STATUSES: readonly ItemStatus[] = [ItemStatus.ACTIVE, ItemStatus.AWAITING_COLLECTION];
 // Allow multiple pending requests: only an already-approved claim should block
@@ -32,6 +33,7 @@ export class ClaimsService {
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(Shop) private readonly shops: Repository<Shop>,
     private readonly notifications: NotificationsService,
+    private readonly rewards: RewardsService,
   ) {}
 
   private ensureCollectorRole(payload: any) {
@@ -289,6 +291,11 @@ export class ClaimsService {
       await itemRepo.update(claim.item.id, { status: ItemStatus.COMPLETE });
       await recordScanEvent(manager, claim.item.id, ScanType.CLAIM_OUT, shopId, completionDate);
 
+      // Rewards: idempotent award for claim completion (QR flow)
+      try {
+        await this.rewards.awardOnClaimComplete(manager, claim);
+      } catch {}
+
       // Notifications: collection + drop-off
       try {
         const donorId = claim.item?.donor?.id;
@@ -435,6 +442,11 @@ export class ClaimsService {
       await claimRepo.save(claim);
       await itemRepo.update(claim.item.id, { status: ItemStatus.COMPLETE });
       await recordScanEvent(manager, claim.item.id, ScanType.CLAIM_OUT, providedShopId || null, completionDate);
+
+      // Rewards: idempotent award for claim completion (manual flow)
+      try {
+        await this.rewards.awardOnClaimComplete(manager, claim);
+      } catch {}
 
       // Notifications: collection + drop-off
       try {

@@ -15,6 +15,10 @@ import { AddClaimApprovedAt1700000000010 } from '../database/migrations/17000000
 import { AddClaimCompletionAndScanEvents1700000000011 } from '../database/migrations/1700000000011-AddClaimCompletionAndScanEvents';
 import { AddUserProfileImageAndItemCo2AndReviews1700000000012 } from '../database/migrations/1700000000012-AddUserProfileImageAndItemCo2AndReviews';
 import { AllowMultipleClaimsPerItem1700000000014 } from '../database/migrations/1700000000014-AllowMultipleClaimsPerItem';
+import { CreateMessagesTables1700000000013 } from '../database/migrations/1700000000013-CreateMessagesTables';
+import { CreateShopTable1700000000015 } from '../database/migrations/1700000000015-CreateShopTable';
+import { CreateNotificationTable1700000000020 } from '../database/migrations/1700000000020-CreateNotificationTable';
+import { CreateWalletAndLedger1700000000021 } from '../database/migrations/1700000000021-CreateWalletAndLedger';
 import { Role } from '../modules/users/role.entity';
 import { UserRole } from '../modules/users/user-role.entity';
 import { User } from '../modules/users/user.entity';
@@ -42,7 +46,11 @@ async function run() {
       AddClaimApprovedAt1700000000010,
       AddClaimCompletionAndScanEvents1700000000011,
       AddUserProfileImageAndItemCo2AndReviews1700000000012,
+      CreateMessagesTables1700000000013,
       AllowMultipleClaimsPerItem1700000000014,
+      CreateShopTable1700000000015,
+      CreateNotificationTable1700000000020,
+      CreateWalletAndLedger1700000000021,
     ],
     logging: cfg.db.logging,
     migrationsTransactionMode: 'each',

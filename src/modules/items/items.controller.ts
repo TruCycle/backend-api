@@ -152,6 +152,8 @@ export class ItemsController {
                 updated_at: '2024-05-20T08:00:00.000Z',
               },
               created_at: '2024-06-01T10:00:00.000Z',
+              reward: 5,
+              reward_currency: 'PTS',
               claim: null,
             },
           ],
@@ -185,6 +187,8 @@ export class ItemsController {
               claim_created_at: '2024-06-01T10:00:00.000Z',
               claim_approved_at: '2024-06-01T10:30:00.000Z',
               claim_completed_at: '2024-06-01T12:00:00.000Z',
+              reward: 10,
+              reward_currency: 'PTS',
               item: {
                 id: 'item-id',
                 title: 'Aluminum can',

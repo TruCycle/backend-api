@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
-import { Claim } from '../claims/claim.entity';
+import { Claim, ClaimStatus } from '../claims/claim.entity';
 import { QrImageService } from '../qr/qr-image.service';
 import { UserReview } from '../reviews/user-review.entity';
 import { KycProfile, KycStatus } from '../users/kyc-profile.entity';
@@ -156,6 +156,24 @@ export class ItemsService {
     const precision = Math.max(0, Math.min(4, Math.trunc(decimals)));
     const factor = Math.pow(10, precision);
     return Math.round(value * factor) / factor;
+  }
+
+  // Rewards config helpers
+  private getRewardCurrency(): string {
+    const v = (process.env.REWARDS_CURRENCY || 'PTS').toUpperCase();
+    return v.slice(0, 3);
+  }
+
+  private getDonorRewardAmount(): number {
+    const raw = Number(process.env.REWARD_CLAIM_DONOR);
+    const val = Number.isFinite(raw) ? raw : 5;
+    return Math.max(0, Math.round(val * 100) / 100);
+  }
+
+  private getCollectorRewardAmount(): number {
+    const raw = Number(process.env.REWARD_CLAIM_COLLECTOR);
+    const val = Number.isFinite(raw) ? raw : 10;
+    return Math.max(0, Math.round(val * 100) / 100);
   }
 
   private buildQrCodeUrl(id: string): string {
@@ -400,6 +418,10 @@ export class ItemsService {
       const longitude =
         typeof item.longitude === 'number' && Number.isFinite(item.longitude) ? Number(item.longitude) : null;
 
+      const rewardCurrency = this.getRewardCurrency();
+      const donorReward = this.getDonorRewardAmount();
+      const rewardAmount = claim && claim.status === ClaimStatus.COMPLETE ? donorReward : 0;
+
       return {
         id: item.id,
         title: typeof item.title === 'string' ? item.title.trim() : '',
@@ -440,6 +462,8 @@ export class ItemsService {
               collector: collectorDetails,
             }
           : null,
+        reward: rewardAmount,
+        reward_currency: rewardCurrency,
       };
     });
 
@@ -516,12 +540,18 @@ export class ItemsService {
           ? Number(item.longitude)
           : null;
 
+      const rewardCurrency = this.getRewardCurrency();
+      const collectorReward = this.getCollectorRewardAmount();
+      const rewardAmount = claim.status === ClaimStatus.COMPLETE ? collectorReward : 0;
+
       return {
         claim_id: claim.id,
         claim_status: claim.status,
         claim_created_at: this.formatDate(claim.createdAt),
         claim_approved_at: this.formatDate(claim.approvedAt),
         claim_completed_at: this.formatDate(claim.completedAt),
+        reward: rewardAmount,
+        reward_currency: rewardCurrency,
         item: item
           ? {
               id: item.id,
