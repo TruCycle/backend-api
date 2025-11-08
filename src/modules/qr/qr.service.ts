@@ -17,6 +17,7 @@ import { User, UserStatus } from '../users/user.entity';
 
 import { sanitizeShopId } from './qr.utils';
 import { ScanType, fetchScanEvents, recordScanEvent } from './scan-events.util';
+import { NearbyItemsAlertService } from '../notifications/nearby-items-alert.service';
 interface ActiveActorContext {
   user: User;
   isAdmin: boolean;
@@ -30,6 +31,7 @@ export class QrService {
     @InjectRepository(Item) private readonly items: Repository<Item>,
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(Claim) private readonly claims: Repository<Claim>,
+    private readonly nearbyAlerts: NearbyItemsAlertService,
   ) {}
 
   private resolveQrCode(item: Item): string {
@@ -164,7 +166,7 @@ export class QrService {
 
     const scanDate = new Date();
 
-    return this.items.manager.transaction(async (manager) => {
+    const result = await this.items.manager.transaction(async (manager) => {
       const itemRepo = manager.getRepository(Item);
 
       const item = await itemRepo
@@ -223,8 +225,18 @@ export class QrService {
         response.rejection_reason = rejectionReason;
       }
 
-      return response;
+      return { response, itemId: item.id, finalStatus: item.status, action } as any;
     });
+
+    // Fire-and-forget email alerts if drop-off was accepted and item is available to collect.
+    try {
+      if (result?.action === 'accept' && (result?.finalStatus === ItemStatus.AWAITING_COLLECTION || result?.finalStatus === ItemStatus.ACTIVE)) {
+        // Do not block response on email sending
+        void this.nearbyAlerts.sendNearbyItemDropoffEmails(result.itemId);
+      }
+    } catch {}
+
+    return result?.response ?? result;
   }
 
   async registerRecycleIn(authPayload: any, rawItemId: string, rawShopId: string) {

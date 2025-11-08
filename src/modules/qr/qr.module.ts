@@ -10,8 +10,9 @@ import { User } from '../users/user.entity';
 import { QrImageService } from './qr-image.service';
 import { QrController } from './qr.controller';
 import { QrService } from './qr.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 @Module({
-  imports: [ClaimsModule, TypeOrmModule.forFeature([Claim, Item, User])],
+  imports: [ClaimsModule, NotificationsModule, TypeOrmModule.forFeature([Claim, Item, User])],
   controllers: [QrController],
   providers: [JwtAuthGuard, QrService, QrImageService],
   exports: [QrImageService],
