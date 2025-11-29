@@ -39,6 +39,10 @@ export class NotificationsService {
     const where: any = { user: { id: userId } };
     if (opts?.unread === true) where.read = false;
     const rows = await this.notifications.find({ where, order: { createdAt: 'DESC' }, take });
+    this.logger.log(`Notification listing for userId=${userId}, count=${rows.length}`);
+    rows.forEach((n) => {
+      this.logger.log(`Notification for userId=${n.user?.id || '[unknown]'}: id=${n.id}, type=${n.type}, title=${n.title}`);
+    });
     return rows.map((n) => this.view(n));
   }
 
@@ -195,6 +199,7 @@ export class NotificationsService {
   view(n: Notification): NotificationViewModel {
     return {
       id: n.id,
+      userId: n.user?.id ?? null,
       type: n.type,
       title: n.title,
       body: n.body ?? null,

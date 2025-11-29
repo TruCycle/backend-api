@@ -49,6 +49,7 @@ export class Notification {
 
 export interface NotificationViewModel {
   id: string;
+  userId: string;
   type: string;
   title: string;
   body: string | null;
