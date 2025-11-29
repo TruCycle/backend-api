@@ -38,7 +38,7 @@ export class NotificationsService {
     const take = Math.min(Math.max(opts?.limit ?? 50, 1), 100);
     const where: any = { user: { id: userId } };
     if (opts?.unread === true) where.read = false;
-    const rows = await this.notifications.find({ where, order: { createdAt: 'DESC' }, take });
+    const rows = await this.notifications.find({ where, order: { createdAt: 'DESC' }, take, relations: ['user'] });
     this.logger.log(`Notification listing for userId=${userId}, count=${rows.length}`);
     rows.forEach((n) => {
       this.logger.log(`Notification for userId=${n.user?.id || '[unknown]'}: id=${n.id}, type=${n.type}, title=${n.title}`);
