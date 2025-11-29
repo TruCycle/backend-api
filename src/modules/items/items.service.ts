@@ -89,7 +89,7 @@ export class ItemsService {
     private readonly qrImage: QrImageService,
     private readonly co2: Co2EstimationService,
     private readonly notifications: NotificationsService,
-  ) {}
+  ) { }
 
   private readonly qrBaseUrl = (process.env.ITEM_QR_BASE_URL || 'https://cdn.trucycle.com/qrs').replace(/\/$/, '');
   private readonly monthlyCo2GoalKg = this.resolveMonthlyCo2Goal();
@@ -407,10 +407,10 @@ export class ItemsService {
       const collector = claim?.collector;
       const collectorDetails = collector
         ? {
-            id: collector.id,
-            name: this.displayName(collector),
-            profile_image: collector.profileImageUrl ?? null,
-          }
+          id: collector.id,
+          name: this.displayName(collector),
+          profile_image: collector.profileImageUrl ?? null,
+        }
         : null;
 
       const latitude =
@@ -455,12 +455,12 @@ export class ItemsService {
         created_at: this.formatDate(item.createdAt),
         claim: claim
           ? {
-              id: claim.id,
-              status: claim.status,
-              approved_at: this.formatDate(claim.approvedAt),
-              completed_at: this.formatDate(claim.completedAt),
-              collector: collectorDetails,
-            }
+            id: claim.id,
+            status: claim.status,
+            approved_at: this.formatDate(claim.approvedAt),
+            completed_at: this.formatDate(claim.completedAt),
+            collector: collectorDetails,
+          }
           : null,
         reward: rewardAmount,
         reward_currency: rewardCurrency,
@@ -554,38 +554,38 @@ export class ItemsService {
         reward_currency: rewardCurrency,
         item: item
           ? {
-              id: item.id,
-              title: typeof item.title === 'string' ? item.title.trim() : '',
-              status: item.status,
-              condition: item.condition,
-              category: item.category,
-              pickup_option: item.pickupOption,
-              qr_code:
-                typeof item.qrCodeUrl === 'string' && item.qrCodeUrl.trim()
-                  ? item.qrCodeUrl.trim()
-                  : this.buildQrCodeUrl(item.id),
-              images,
-              metadata,
-              estimated_co2_saved_kg:
-                typeof item.estimatedCo2SavedKg === 'number' && Number.isFinite(item.estimatedCo2SavedKg)
-                  ? Number(item.estimatedCo2SavedKg)
+            id: item.id,
+            title: typeof item.title === 'string' ? item.title.trim() : '',
+            status: item.status,
+            condition: item.condition,
+            category: item.category,
+            pickup_option: item.pickupOption,
+            qr_code:
+              typeof item.qrCodeUrl === 'string' && item.qrCodeUrl.trim()
+                ? item.qrCodeUrl.trim()
+                : this.buildQrCodeUrl(item.id),
+            images,
+            metadata,
+            estimated_co2_saved_kg:
+              typeof item.estimatedCo2SavedKg === 'number' && Number.isFinite(item.estimatedCo2SavedKg)
+                ? Number(item.estimatedCo2SavedKg)
+                : null,
+            location: {
+              address_line:
+                typeof item.addressLine === 'string' && item.addressLine.trim()
+                  ? item.addressLine.trim()
                   : null,
-              location: {
-                address_line:
-                  typeof item.addressLine === 'string' && item.addressLine.trim()
-                    ? item.addressLine.trim()
-                    : null,
-                postcode:
-                  typeof item.postcode === 'string' && item.postcode.trim()
-                    ? item.postcode.trim().toUpperCase()
-                    : null,
-                latitude,
-                longitude,
-              },
-              dropoff_location: dropoffMap.get(this.sanitizeShopId(item.dropoffLocationId)) ?? null,
-              created_at: this.formatDate(item.createdAt),
-              owner,
-            }
+              postcode:
+                typeof item.postcode === 'string' && item.postcode.trim()
+                  ? item.postcode.trim().toUpperCase()
+                  : null,
+              latitude,
+              longitude,
+            },
+            dropoff_location: dropoffMap.get(this.sanitizeShopId(item.dropoffLocationId)) ?? null,
+            created_at: this.formatDate(item.createdAt),
+            owner,
+          }
           : null,
       };
     });
@@ -686,7 +686,7 @@ export class ItemsService {
       throw new ServiceUnavailableException('Failed to geocode address');
     }
 
-    
+
 
     const status = this.determineInitialStatus(dto.pickupOption);
     const metadata = this.sanitizeMetadata(dto.metadata);
@@ -875,6 +875,23 @@ export class ItemsService {
       }
     }
 
+    // Fetch all claims for this item (for donor view)
+    const allClaims = await this.claims.find({ where: { item: { id } }, relations: ['collector'] });
+    const claims = allClaims.map((claim) => ({
+      id: claim.id,
+      status: claim.status,
+      requested_at: this.formatDate(claim.createdAt),
+      approved_at: this.formatDate(claim.approvedAt),
+      completed_at: this.formatDate(claim.completedAt),
+      collector: claim.collector
+        ? {
+          id: claim.collector.id,
+          name: this.displayName(claim.collector),
+          profile_image: claim.collector.profileImageUrl ?? null,
+        }
+        : null,
+    }));
+
     return {
       id: item.id,
       title: typeof item.title === 'string' ? item.title.trim() : item.title,
@@ -910,11 +927,12 @@ export class ItemsService {
       dropoff_location: dropoffLocation,
       claim: userClaim
         ? {
-            status: userClaim.status,
-            requested_at: this.formatDate(userClaim.createdAt),
-            claimed_at: this.formatDate(userClaim.completedAt),
-          }
+          status: userClaim.status,
+          requested_at: this.formatDate(userClaim.createdAt),
+          claimed_at: this.formatDate(userClaim.completedAt),
+        }
         : null,
+      claims,
     };
   }
 
@@ -1008,7 +1026,7 @@ export class ItemsService {
         throw new ServiceUnavailableException('Failed to geocode updated address');
       }
 
-      
+
 
       item.addressLine = addressLine;
       item.postcode = postcode;
@@ -1166,19 +1184,19 @@ export class ItemsService {
     const donorIds = Array.from(new Set(rows.map((r: any) => r.donor_id).filter(Boolean)));
     const donors = donorIds.length
       ? await this.users
-          .createQueryBuilder('u')
-          .select(['u.id', 'u.firstName', 'u.lastName', 'u.email', 'u.status', 'u.profileImageUrl'])
-          .where('u.id IN (:...ids)', { ids: donorIds })
-          .getMany()
+        .createQueryBuilder('u')
+        .select(['u.id', 'u.firstName', 'u.lastName', 'u.email', 'u.status', 'u.profileImageUrl'])
+        .where('u.id IN (:...ids)', { ids: donorIds })
+        .getMany()
       : [];
     const donorMap = new Map(donors.map((u) => [u.id, u]));
 
     const kycRows = donorIds.length
       ? await this.kycs
-          .createQueryBuilder('k')
-          .select(['k.user_id AS user_id', 'k.status AS status'])
-          .where('k.user_id IN (:...ids)', { ids: donorIds })
-          .getRawMany<{ user_id: string; status: KycStatus }>()
+        .createQueryBuilder('k')
+        .select(['k.user_id AS user_id', 'k.status AS status'])
+        .where('k.user_id IN (:...ids)', { ids: donorIds })
+        .getRawMany<{ user_id: string; status: KycStatus }>()
       : [];
     const kycMap = new Map<string, KycStatus>(kycRows.map((r) => [r.user_id, r.status]));
 
@@ -1198,13 +1216,13 @@ export class ItemsService {
 
     const ratingAgg = donorIds.length
       ? await this.reviews
-          .createQueryBuilder('r')
-          .select('r.target_user_id', 'user_id')
-          .addSelect('AVG(r.rating)::float', 'avg_rating')
-          .addSelect('COUNT(1)', 'reviews_count')
-          .where('r.target_user_id IN (:...ids)', { ids: donorIds })
-          .groupBy('r.target_user_id')
-          .getRawMany<{ user_id: string; avg_rating: number; reviews_count: string }>()
+        .createQueryBuilder('r')
+        .select('r.target_user_id', 'user_id')
+        .addSelect('AVG(r.rating)::float', 'avg_rating')
+        .addSelect('COUNT(1)', 'reviews_count')
+        .where('r.target_user_id IN (:...ids)', { ids: donorIds })
+        .groupBy('r.target_user_id')
+        .getRawMany<{ user_id: string; avg_rating: number; reviews_count: string }>()
       : [];
     const ratingMap = new Map<string, { rating: number; count: number }>(
       ratingAgg.map((r) => [r.user_id, { rating: Math.round(Number(r.avg_rating) * 10) / 10, count: Number(r.reviews_count) }]),
@@ -1263,17 +1281,17 @@ export class ItemsService {
       const donor = donorMap.get(row.donor_id);
       const owner = donor
         ? {
-            id: donor.id,
-            name: this.displayName(donor),
-            profile_image: donor.profileImageUrl ?? null,
-            verification: {
-              email_verified: donor.status === UserStatus.ACTIVE,
-              identity_verified: kycMap.get(donor.id) === KycStatus.APPROVED,
-              address_verified: (addrMap.get(donor.id) ?? 0) > 0,
-            },
-            rating: ratingMap.get(donor.id)?.rating ?? 0,
-            reviews_count: ratingMap.get(donor.id)?.count ?? 0,
-          }
+          id: donor.id,
+          name: this.displayName(donor),
+          profile_image: donor.profileImageUrl ?? null,
+          verification: {
+            email_verified: donor.status === UserStatus.ACTIVE,
+            identity_verified: kycMap.get(donor.id) === KycStatus.APPROVED,
+            address_verified: (addrMap.get(donor.id) ?? 0) > 0,
+          },
+          rating: ratingMap.get(donor.id)?.rating ?? 0,
+          reviews_count: ratingMap.get(donor.id)?.count ?? 0,
+        }
         : null;
 
       const dropoffLocation = dropoffMap.get(this.sanitizeShopId(row.dropoff_location_id)) ?? null;
@@ -1294,17 +1312,17 @@ export class ItemsService {
           typeof row.estimated_co2_saved_kg === 'number' && Number.isFinite(row.estimated_co2_saved_kg)
             ? Number(row.estimated_co2_saved_kg)
             : row.estimated_co2_saved_kg === null
-            ? null
-            : Number(row.estimated_co2_saved_kg || 0) || null,
+              ? null
+              : Number(row.estimated_co2_saved_kg || 0) || null,
         owner,
         dropoff_location: dropoffLocation,
         created_at: createdAtIso,
         claim: claim
           ? {
-              status: claim.status,
-              requested_at: this.formatDate(claim.createdAt),
-              claimed_at: this.formatDate(claim.completedAt),
-            }
+            status: claim.status,
+            requested_at: this.formatDate(claim.createdAt),
+            claimed_at: this.formatDate(claim.completedAt),
+          }
           : null,
       };
     });
