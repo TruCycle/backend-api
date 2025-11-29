@@ -32,7 +32,7 @@ export class NotificationsService {
     @Optional()
     @Inject(forwardRef(() => NotificationsGateway))
     private readonly gateway?: NotificationsGateway,
-  ) {}
+  ) { }
 
   async listForUser(userId: string, opts?: { unread?: boolean; limit?: number }): Promise<NotificationViewModel[]> {
     const take = Math.min(Math.max(opts?.limit ?? 50, 1), 100);
@@ -79,20 +79,31 @@ export class NotificationsService {
 
   // Domain helpers — call from Items/Claims flows
   async notifyItemClaimRequested(donorUserId: string, collectorUserId: string, itemId: string, itemTitle?: string) {
-    await this.createAndEmit(
-      donorUserId,
-      'item.claim.request',
-      'New claim request',
-      itemTitle ? `Your item “${itemTitle}” has a new claim request.` : 'Your item has a new claim request.',
-      { itemId },
-    );
-    await this.createAndEmit(
-      collectorUserId,
-      'item.claim.request',
-      'Claim request sent',
-      itemTitle ? `You requested to claim “${itemTitle}”.` : 'You submitted a new claim request.',
-      { itemId },
-    );
+    if (donorUserId !== collectorUserId) {
+      await this.createAndEmit(
+        donorUserId,
+        'item.claim.request',
+        'New claim request',
+        itemTitle ? `Your item “${itemTitle}” has a new claim request.` : 'Your item has a new claim request.',
+        { itemId },
+      );
+      await this.createAndEmit(
+        collectorUserId,
+        'item.claim.request',
+        'Claim request sent',
+        itemTitle ? `You requested to claim “${itemTitle}”.` : 'You submitted a new claim request.',
+        { itemId },
+      );
+    } else {
+      // Only send one notification if donor and collector are the same
+      await this.createAndEmit(
+        donorUserId,
+        'item.claim.request',
+        'Claim request sent',
+        itemTitle ? `You requested to claim “${itemTitle}”.` : 'You submitted a new claim request.',
+        { itemId },
+      );
+    }
   }
 
   async notifyItemClaimApproved(collectorUserId: string, itemId: string, itemTitle?: string) {
@@ -106,37 +117,59 @@ export class NotificationsService {
   }
 
   async notifyItemCollected(donorUserId: string, collectorUserId: string, itemId: string, itemTitle?: string) {
-    await this.createAndEmit(
-      donorUserId,
-      'item.collection',
-      'Item collected',
-      itemTitle ? `“${itemTitle}” was collected.` : 'Your item was collected.',
-      { itemId },
-    );
-    await this.createAndEmit(
-      collectorUserId,
-      'item.collection',
-      'Collection recorded',
-      itemTitle ? `You collected “${itemTitle}”.` : 'Collection recorded.',
-      { itemId },
-    );
+    if (donorUserId !== collectorUserId) {
+      await this.createAndEmit(
+        donorUserId,
+        'item.collection',
+        'Item collected',
+        itemTitle ? `“${itemTitle}” was collected.` : 'Your item was collected.',
+        { itemId },
+      );
+      await this.createAndEmit(
+        collectorUserId,
+        'item.collection',
+        'Collection recorded',
+        itemTitle ? `You collected “${itemTitle}”.` : 'Collection recorded.',
+        { itemId },
+      );
+    } else {
+      // Only send one notification if donor and collector are the same
+      await this.createAndEmit(
+        donorUserId,
+        'item.collection',
+        'Collection recorded',
+        itemTitle ? `You collected “${itemTitle}”.` : 'Collection recorded.',
+        { itemId },
+      );
+    }
   }
 
   async notifyDropIn(shopOwnerUserId: string, donorUserId: string, itemId: string, itemTitle?: string) {
-    await this.createAndEmit(
-      shopOwnerUserId,
-      'dropin.created',
-      'New drop-in registered',
-      itemTitle ? `Drop-in created for “${itemTitle}”.` : 'A new drop-in was created.',
-      { itemId },
-    );
-    await this.createAndEmit(
-      donorUserId,
-      'dropin.created',
-      'Drop-in created',
-      itemTitle ? `You created a drop-in for “${itemTitle}”.` : 'You created a drop-in.',
-      { itemId },
-    );
+    if (shopOwnerUserId !== donorUserId) {
+      await this.createAndEmit(
+        shopOwnerUserId,
+        'dropin.created',
+        'New drop-in registered',
+        itemTitle ? `Drop-in created for “${itemTitle}”.` : 'A new drop-in was created.',
+        { itemId },
+      );
+      await this.createAndEmit(
+        donorUserId,
+        'dropin.created',
+        'Drop-in created',
+        itemTitle ? `You created a drop-in for “${itemTitle}”.` : 'You created a drop-in.',
+        { itemId },
+      );
+    } else {
+      // Only send one notification if shop owner and donor are the same
+      await this.createAndEmit(
+        donorUserId,
+        'dropin.created',
+        'Drop-in created',
+        itemTitle ? `You created a drop-in for “${itemTitle}”.` : 'You created a drop-in.',
+        { itemId },
+      );
+    }
   }
 
   async notifyDropOff(userId: string, itemId: string, itemTitle?: string) {
