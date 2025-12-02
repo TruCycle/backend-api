@@ -171,6 +171,10 @@ export class ShopsService {
     if (!shop.active) {
       return; // already archived
     }
+    const activeCount = await this.shops.count({ where: { active: true } });
+    if (activeCount <= 1) {
+      throw new BadRequestException('At least one shop must remain active');
+    }
     shop.active = false;
     await this.shops.save(shop);
   }
