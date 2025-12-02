@@ -36,9 +36,14 @@ export class NotificationsService {
 
   async listForUser(userId: string, opts?: { unread?: boolean; limit?: number }): Promise<NotificationViewModel[]> {
     const take = Math.min(Math.max(opts?.limit ?? 50, 1), 100);
-    const where: any = { user: { id: userId } };
-    if (opts?.unread === true) where.read = false;
-    const rows = await this.notifications.find({ where, order: { createdAt: 'DESC' }, take, relations: ['user'] });
+    const qb = this.notifications.createQueryBuilder('notification')
+      .leftJoinAndSelect('notification.user', 'user')
+      .where('user.id = :userId', { userId });
+    if (opts?.unread === true) {
+      qb.andWhere('notification.read = false');
+    }
+    qb.orderBy('notification.createdAt', 'DESC').take(take);
+    const rows = await qb.getMany();
     this.logger.log(`Notification listing for userId=${userId}, count=${rows.length}`);
     rows.forEach((n) => {
       this.logger.log(`Notification for userId=${n.user?.id || '[unknown]'}: id=${n.id}, type=${n.type}, title=${n.title}`);
