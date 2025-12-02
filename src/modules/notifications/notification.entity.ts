@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 
 import { User } from '../users/user.entity';
+import { RelationId } from 'typeorm';
 
 @Entity('notification')
 @Index(['user', 'read', 'createdAt'])
@@ -17,9 +18,13 @@ export class Notification {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user!: User;
+
+  @RelationId((notification: Notification) => notification.user)
+  userId!: string;
 
   // String code for routing on client (e.g. 'item.claim.request')
   @Column({ type: 'text' })
