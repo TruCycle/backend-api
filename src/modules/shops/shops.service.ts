@@ -159,9 +159,18 @@ export class ShopsService {
   async deleteShop(authPayload: any, id: string): Promise<void> {
     const { user, isAdmin } = await this.resolveActor(authPayload);
     await this.ensurePartnerActor(authPayload);
-    const shop = await this.shops.findOne({ where: { id }, relations: { owner: true } });
-    if (!shop) return; // idempotent
-    if (!isAdmin && shop.owner.id !== user.id) throw new ForbiddenException('Not the owner');
+    const shopId = typeof id === 'string' ? id.trim() : '';
+    if (!shopId) {
+      throw new BadRequestException('Shop id is required');
+    }
+    const where = isAdmin ? { id: shopId } : { id: shopId, owner: { id: user.id } };
+    const shop = await this.shops.findOne({ where, relations: { owner: true } });
+    if (!shop) {
+      throw new NotFoundException('Shop not found or not owned by you');
+    }
+    if (!shop.active) {
+      return; // already archived
+    }
     shop.active = false;
     await this.shops.save(shop);
   }
