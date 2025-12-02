@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -9,6 +9,15 @@ import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notifications: NotificationsService) {}
+
+  private getUserId(req: any): string {
+    const candidate = req?.user?.sub ?? req?.user?.id ?? req?.user?.userId;
+    const userId = typeof candidate === 'string' ? candidate.trim() : '';
+    if (!userId) {
+      throw new UnauthorizedException('Authenticated user context not found');
+    }
+    return userId;
+  }
 
   @Get()
   @ApiBearerAuth()
@@ -34,7 +43,7 @@ export class NotificationsController {
     },
   })
   async list(@Req() req: any, @Query() query: ListNotificationsQueryDto) {
-    const userId = req.user.id as string;
+    const userId = this.getUserId(req);
     const unread = typeof query.unread === 'string' ? query.unread === 'true' : undefined;
     const limit = query.limit ? Number(query.limit) : undefined;
     const rows = await this.notifications.listForUser(userId, { unread, limit });
@@ -47,7 +56,7 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Get unread notifications count for the current user' })
   @ApiOkResponse({ description: 'Unread count payload', schema: { example: { count: 3 } } })
   async unreadCount(@Req() req: any) {
-    const userId = req.user.id as string;
+    const userId = this.getUserId(req);
     const count = await this.notifications.countUnread(userId);
     return { count };
   }

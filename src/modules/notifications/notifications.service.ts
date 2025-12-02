@@ -34,17 +34,26 @@ export class NotificationsService {
     private readonly gateway?: NotificationsGateway,
   ) { }
 
+  private normalizeUserId(userId: string): string {
+    const trimmed = typeof userId === 'string' ? userId.trim() : '';
+    if (!trimmed) {
+      throw new BadRequestException('User id is required');
+    }
+    return trimmed;
+  }
+
   async listForUser(userId: string, opts?: { unread?: boolean; limit?: number }): Promise<NotificationViewModel[]> {
+    const normalizedUserId = this.normalizeUserId(userId);
     const take = Math.min(Math.max(opts?.limit ?? 50, 1), 100);
     const qb = this.notifications.createQueryBuilder('notification')
       .leftJoinAndSelect('notification.user', 'user')
-      .where('user.id = :userId', { userId });
+      .where('user.id = :userId', { userId: normalizedUserId });
     if (opts?.unread === true) {
       qb.andWhere('notification.read = false');
     }
     qb.orderBy('notification.createdAt', 'DESC').take(take);
     const rows = await qb.getMany();
-    this.logger.log(`Notification listing for userId=${userId}, count=${rows.length}`);
+    this.logger.log(`Notification listing for userId=${normalizedUserId}, count=${rows.length}`);
     rows.forEach((n) => {
       this.logger.log(`Notification for userId=${n.user?.id || '[unknown]'}: id=${n.id}, type=${n.type}, title=${n.title}`);
     });
@@ -52,7 +61,8 @@ export class NotificationsService {
   }
 
   async countUnread(userId: string): Promise<number> {
-    return this.notifications.count({ where: { user: { id: userId }, read: false } });
+    const normalizedUserId = this.normalizeUserId(userId);
+    return this.notifications.count({ where: { user: { id: normalizedUserId }, read: false } });
   }
 
   async createAndEmit(
@@ -62,24 +72,26 @@ export class NotificationsService {
     body?: string | null,
     data?: Record<string, any> | null,
   ): Promise<NotificationViewModel> {
-    const user = await this.users.findOne({ where: { id: userId } });
+    const normalizedUserId = this.normalizeUserId(userId);
+    const user = await this.users.findOne({ where: { id: normalizedUserId } });
     if (!user) throw new BadRequestException('User not found');
     let n = this.notifications.create({ user, type, title, body: body ?? null, data: data ?? null, read: false });
     n = await this.notifications.save(n);
     const view = this.view(n);
     try {
-      this.gateway?.emitToUser(userId, view);
+      this.gateway?.emitToUser(normalizedUserId, view);
     } catch (err) {
-      this.logger.warn(`Failed to emit notification to user ${userId}: ${err}`);
+      this.logger.warn(`Failed to emit notification to user ${normalizedUserId}: ${err}`);
     }
     return view;
   }
 
   async markRead(userId: string, ids: string[]): Promise<number> {
+    const normalizedUserId = this.normalizeUserId(userId);
     const unique = Array.from(new Set((ids || []).filter((v) => typeof v === 'string' && v.trim())));
     if (unique.length === 0) return 0;
     const now = new Date();
-    const res = await this.notifications.update({ id: In(unique), user: { id: userId }, read: false }, {
+    const res = await this.notifications.update({ id: In(unique), user: { id: normalizedUserId }, read: false }, {
       read: true,
       readAt: now,
     } as any);

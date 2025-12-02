@@ -29,7 +29,11 @@ export class JwtAuthGuard implements CanActivate {
     }
     try {
       const payload = await this.jwt.verifyAsync(token);
-      req.user = payload;
+      const userId = typeof payload?.sub === 'string' ? payload.sub.trim() : '';
+      if (!userId) {
+        throw new UnauthorizedException('Invalid token payload');
+      }
+      req.user = { ...payload, id: userId, userId };
       return true;
     } catch (_err) {
       throw new UnauthorizedException('Invalid token');
