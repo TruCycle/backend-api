@@ -2419,8 +2419,9 @@ CMD ["node", "dist/main.js"]
 ## Additional Resources
 
 - **Swagger Documentation**: http://localhost:3000/docs (when running)
-- **System Architecture**: `system_design_architecture.md`
-- **Messaging Details**: `messaging_websocket.md`
+- **System Architecture**: `doc/system_design_architecture.md`
+- **Messaging Websocket Details**: `doc/messaging_websocket.md`
+- **Notification Websocket Details**: `doc/notification_websocket.md`
 - **NestJS Docs**: https://docs.nestjs.com
 - **TypeORM Docs**: https://typeorm.io
 - **PostGIS Docs**: https://postgis.net/docs/
