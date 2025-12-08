@@ -57,6 +57,10 @@ export class Item {
   @JoinColumn({ name: 'donor_id' })
   donor!: User;
 
+  // Collector who has been approved to collect this item
+  @Column({ name: 'approved_collector_id', type: 'uuid', nullable: true })
+  approvedCollectorId?: string | null;
+
   @Column({ type: 'text' })
   title!: string;
 
