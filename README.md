@@ -435,9 +435,6 @@ All authentication endpoints return standardized response envelopes:
 **`POST /auth/register`**
 
 Create a new user account. Sends verification email.
-
-**Request Body**:
-
 **Request Body**:
 ```json
 {
@@ -2435,9 +2432,8 @@ CMD ["node", "dist/main.js"]
 
 For questions or issues with this project:
 1. Check existing documentation (README, architecture docs)
-2. Review Swagger API documentation
-3. Check logs for error messages
-4. Review GitHub issues (if applicable)
+2. Review Swagger API documentation at http://localhost:3000/docs
+3. Check application logs for error messages and stack traces
 
 ---
 
@@ -2447,6 +2443,6 @@ See LICENSE file for details.
 
 ---
 
-**Last Updated**: December 2025  
+**Last Updated**: December 8, 2025  
 **Version**: 0.1.0  
 **Maintainer**: TruCycle Development Team
