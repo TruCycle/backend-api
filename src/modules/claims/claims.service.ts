@@ -34,7 +34,7 @@ export class ClaimsService {
     @InjectRepository(Shop) private readonly shops: Repository<Shop>,
     private readonly notifications: NotificationsService,
     private readonly rewards: RewardsService,
-  ) {}
+  ) { }
 
   private ensureCollectorRole(payload: any) {
     if (userHasRole(payload, RoleCode.ADMIN)) {
@@ -110,7 +110,7 @@ export class ClaimsService {
       if (donorId) {
         await this.notifications.notifyItemClaimRequested(donorId, collector.id, item.id, item.title ?? undefined);
       }
-    } catch {}
+    } catch { }
 
     const createdAt =
       saved.createdAt instanceof Date && !Number.isNaN(saved.createdAt.getTime())
@@ -158,6 +158,11 @@ export class ClaimsService {
     claim.status = ClaimStatus.APPROVED;
     claim.approvedAt = new Date();
 
+    // Lock the item for this collector
+    if (claim.item) {
+      await this.items.update(claim.item.id, { approvedCollectorId: claim.collector.id });
+    }
+
     const saved = await this.claims.save(claim);
 
     // Notify collector of approval
@@ -165,7 +170,7 @@ export class ClaimsService {
       if (claim.collector?.id) {
         await this.notifications.notifyItemClaimApproved(claim.collector.id, claim.item.id, claim.item.title ?? undefined);
       }
-    } catch {}
+    } catch { }
 
     return {
       id: saved.id,
@@ -294,7 +299,7 @@ export class ClaimsService {
       // Rewards: idempotent award for claim completion (QR flow)
       try {
         await this.rewards.awardOnClaimComplete(manager, claim);
-      } catch {}
+      } catch { }
 
       // Notifications: collection + drop-off
       try {
@@ -312,7 +317,7 @@ export class ClaimsService {
             await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
           }
         }
-      } catch {}
+      } catch { }
 
       const events = await fetchScanEvents(manager, claim.item.id);
 
@@ -386,6 +391,11 @@ export class ClaimsService {
 
       const donorId = claim.item?.donor?.id;
 
+      // Prevent collection if item is locked for another collector
+      if (claim.item?.approvedCollectorId && claim.item.approvedCollectorId !== actor.id && !isAdmin && !isFacility && !isPartner) {
+        throw new ForbiddenException('This item is locked for another collector');
+      }
+
       if (!isAdmin && !isFacility && !isPartner) {
         const asCollector = !!(claim.collector && claim.collector.id === actor.id);
         const asDonor = !!(donorId && donorId === actor.id);
@@ -446,7 +456,7 @@ export class ClaimsService {
       // Rewards: idempotent award for claim completion (manual flow)
       try {
         await this.rewards.awardOnClaimComplete(manager, claim);
-      } catch {}
+      } catch { }
 
       // Notifications: collection + drop-off
       try {
@@ -462,7 +472,7 @@ export class ClaimsService {
             await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
           }
         }
-      } catch {}
+      } catch { }
 
       const events = await fetchScanEvents(manager, claim.item.id);
       return {

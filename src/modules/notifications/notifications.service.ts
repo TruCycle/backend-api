@@ -24,6 +24,21 @@ export type NotificationType =
 
 @Injectable()
 export class NotificationsService {
+
+  /**
+   * Notify a user about a new item listed for exchange or donation within 10km
+   */
+  async notifyNearbyItem(userId: string, itemId: string, itemTitle?: string, itemPostcode?: string) {
+    await this.createAndEmit(
+      userId,
+      'general',
+      'New item available nearby',
+      itemTitle
+        ? `A new item “${itemTitle}” has been listed for exchange or donation within 10km of your area${itemPostcode ? ' (' + itemPostcode + ')' : ''}.`
+        : 'A new item has been listed for exchange or donation near you.',
+      { itemId, itemTitle, itemPostcode },
+    );
+  }
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(

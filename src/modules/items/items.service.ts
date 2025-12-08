@@ -763,6 +763,61 @@ export class ItemsService {
       this.logger.debug(`CO2 estimate failed for item ${saved.id}: ${err instanceof Error ? err.message : err}`);
     }
 
+    // Notify users within 10km of new item (exchange/donation)
+    try {
+      // Only notify for exchange or donation
+      if ([ItemPickupOption.DONATE, ItemPickupOption.EXCHANGE].includes(saved.pickupOption)) {
+        // Get all active users with postcode, excluding donor
+        const users = await this.users
+          .createQueryBuilder('user')
+          .where('user.status = :status', { status: UserStatus.ACTIVE })
+          .andWhere('user.id != :donorId', { donorId: saved.donor.id })
+          .andWhere('user.postcode IS NOT NULL')
+          .getMany();
+        // Geocode all user postcodes (cache results to avoid duplicate lookups)
+        const postcodeCache = new Map();
+        const itemLat = saved.latitude;
+        const itemLng = saved.longitude;
+        const interestedUsers = [];
+        for (const user of users) {
+          let coords = postcodeCache.get(user.postcode);
+          if (!coords) {
+            try {
+              if (typeof user.postcode === 'string' && user.postcode.trim()) {
+                coords = await this.geocoding.forwardGeocode(user.postcode.trim());
+                postcodeCache.set(user.postcode, coords);
+              } else {
+                continue; // skip users with invalid postcode
+              }
+            } catch {
+              continue; // skip users with un-geocodable postcodes
+            }
+          }
+          // Haversine formula for distance (in km)
+          const toRad = (v: number) => (v * Math.PI) / 180;
+          const R = 6371; // Earth radius in km
+          const dLat = toRad(itemLat - coords.latitude);
+          const dLon = toRad(itemLng - coords.longitude);
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(toRad(coords.latitude)) *
+            Math.cos(toRad(itemLat)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          const distance = R * c;
+          if (distance <= 10) {
+            interestedUsers.push(user);
+          }
+        }
+        // Send notification to interested users
+        for (const user of interestedUsers) {
+          await this.notifications.notifyNearbyItem(user.id, saved.id, saved.title ?? undefined, saved.postcode);
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Nearby user notification failed for item ${saved.id}: ${err instanceof Error ? err.message : err}`);
+    }
+
     return {
       id: saved.id,
       title: saved.title,
@@ -1163,6 +1218,7 @@ export class ItemsService {
       .where('item.status IN (:...statuses)', { statuses: statusFilters })
       .andWhere(`ST_DWithin(item.location::geography, ${geographyPoint}, :radiusMeters)`)
       .orderBy('distance_meters', 'ASC')
+      .addOrderBy('item.created_at', 'DESC')
       .offset(offset)
       .limit(limit)
       .setParameters({
