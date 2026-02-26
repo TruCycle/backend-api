@@ -8,6 +8,7 @@ import { Role, RoleCode } from '../users/role.entity';
 import { UserRole } from '../users/user-role.entity';
 import { User, UserStatus } from '../users/user.entity';
 import { Shop } from '../shops/shop.entity';
+import { KycProfile } from '../users/kyc-profile.entity';
 
 import { AuthService } from './auth.service';
 
@@ -26,14 +27,18 @@ describe('AuthService', () => {
   const roleRepo = repoMock();
   const userRoleRepo = repoMock();
   const shopRepo = repoMock();
+  const kycRepo = repoMock();
   const password = new PasswordService();
   const jwt = {
     signAsync: jest.fn().mockResolvedValue('jwt-token'),
+    verifyAsync: jest.fn(),
     decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
   } as unknown as JwtService;
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    (jwt.signAsync as jest.Mock).mockResolvedValue('jwt-token');
+    (jwt.decode as jest.Mock).mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 });
     const module = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -44,6 +49,7 @@ describe('AuthService', () => {
         { provide: getRepositoryToken(Role), useValue: roleRepo },
         { provide: getRepositoryToken(UserRole), useValue: userRoleRepo },
         { provide: getRepositoryToken(Shop), useValue: shopRepo },
+        { provide: getRepositoryToken(KycProfile), useValue: kycRepo },
       ],
     }).compile();
     service = module.get(AuthService);
@@ -91,5 +97,22 @@ describe('AuthService', () => {
   it('rejects invalid credentials', async () => {
     userRepo.findOne.mockResolvedValue({ id: 'u1', email: 'a@b.com', passwordHash: 'nope', status: UserStatus.ACTIVE });
     await expect(service.login('a@b.com', 'wrong')).rejects.toThrow('Invalid credentials');
+  });
+
+  it('refreshes tokens for a valid refresh token', async () => {
+    (jwt.verifyAsync as jest.Mock).mockResolvedValue({ sub: 'u1', email: 'a@b.com', type: 'refresh' });
+    userRepo.findOne.mockImplementation(async ({ where }: any) => {
+      if (where?.id) return { id: 'u1', email: 'a@b.com', status: UserStatus.ACTIVE, createdAt: new Date() };
+      return undefined;
+    });
+    userRoleRepo.find = jest.fn().mockResolvedValue([{ role: { code: RoleCode.CUSTOMER } }]);
+    jest.spyOn<any, any>(service as any, 'issueToken').mockResolvedValue('new-access-token');
+    jest.spyOn<any, any>(service as any, 'issueRefreshToken').mockResolvedValue('new-refresh-token');
+
+    const res = await service.refreshTokens('refresh-token');
+
+    expect(jwt.verifyAsync).toHaveBeenCalledWith('refresh-token');
+    expect(res.tokens.accessToken).toBe('new-access-token');
+    expect(res.tokens.refreshToken).toBe('new-refresh-token');
   });
 });

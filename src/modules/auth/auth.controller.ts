@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
 import { ForgetPasswordDto } from './dto/forget-password.dto';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
 import { CreateShopDto } from '../shops/dto/create-shop.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
@@ -123,6 +124,43 @@ export class AuthController {
     return {
       status: 'success',
       message: 'Login successful.',
+      data: { user, tokens },
+    };
+  }
+
+  @Post('refresh')
+  @ApiOperation({ summary: 'Refresh access and refresh tokens' })
+  @ApiBody({ description: 'Refresh token payload', type: RefreshTokenDto })
+  @HttpCode(200)
+  @ApiOkResponse({
+    description: 'Token refresh success with a new access and refresh token',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'Tokens refreshed successfully.',
+        data: {
+          user: {
+            id: '3f2f8c2e-6b1a-4c8e-9a61-22f924e0f6f1',
+            email: 'jane@example.com',
+            firstName: 'Jane',
+            lastName: 'Doe',
+            status: 'active',
+          },
+          tokens: {
+            accessToken: 'eyJhbGciOi...new-access',
+            refreshToken: 'eyJhbGciOi...new-refresh',
+            accessTokenExpiry: '2025-10-31T12:00:00.000Z',
+            refreshTokenExpiry: '2025-11-30T12:00:00.000Z',
+          },
+        },
+      },
+    },
+  })
+  async refresh(@Body() dto: RefreshTokenDto) {
+    const { user, tokens } = await this.auth.refreshTokens(dto.refresh_token);
+    return {
+      status: 'success',
+      message: 'Tokens refreshed successfully.',
       data: { user, tokens },
     };
   }

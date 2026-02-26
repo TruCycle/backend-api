@@ -235,6 +235,46 @@ export class AuthService {
     return { user: await this.findUserWithRoles(user.id), tokens };
   }
 
+  async refreshTokens(refreshToken: string) {
+    const token = refreshToken?.trim();
+    if (!token) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    let payload: any;
+    try {
+      payload = await this.jwt.verifyAsync(token);
+    } catch (_err) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    if (!payload || payload.type !== 'refresh' || !payload.sub) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    const user = await this.users.findOne({ where: { id: payload.sub as string } });
+    if (!user) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+    if (payload.email && payload.email !== user.email) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('User is not active');
+    }
+
+    const accessToken = await this.issueToken(user);
+    const nextRefreshToken = await this.issueRefreshToken(user);
+    const tokens = {
+      accessToken,
+      refreshToken: nextRefreshToken,
+      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
+      refreshTokenExpiry: this.getExpiryFromJwt(nextRefreshToken),
+    };
+
+    return { user: await this.findUserWithRoles(user.id), tokens };
+  }
+
   async verifyUser(token: string) {
     let payload: any;
     try {
