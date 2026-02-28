@@ -58,16 +58,21 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
   return `
     <div style="margin:0;padding:0;background:#e5e7eb;font-family:Arial,sans-serif;color:#232528">
       <div style="max-width:600px;margin:0 auto;padding:28px 20px 40px">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 24px">
-          <div style="display:flex;align-items:center">
-            <img src="${logoUrl}" alt="TruCycle" style="display:block;width:150px;max-width:100%;height:auto" />
-          </div>
-          <div style="font-size:0;line-height:0;white-space:nowrap">
-            <img src="${linkedinIconUrl}" alt="LinkedIn" style="display:inline-block;width:24px;height:24px;margin-left:12px" />
-            <img src="${instagramIconUrl}" alt="Instagram" style="display:inline-block;width:24px;height:24px;margin-left:12px" />
-          </div>
+        <div style="background:#f3f4f6;padding:24px 28px 32px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.05)">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:0 0 24px">
+            <tr>
+              <td valign="middle" align="left" style="padding:0">
+                <img src="${logoUrl}" alt="TruCycle" style="display:block;width:150px;max-width:100%;height:auto" />
+              </td>
+              <td valign="middle" align="right" style="padding:0;white-space:nowrap;font-size:0;line-height:0">
+                <img src="${linkedinIconUrl}" alt="LinkedIn" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
+                <img src="${instagramIconUrl}" alt="Instagram" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
+              </td>
+            </tr>
+          </table>
+          <div style="height:1px;background:#d7dbe0;margin:0 0 28px"></div>
+          <div style="background:#ffffff;padding:32px 40px;border-radius:10px;color:#1f2328">${bodyHtml}</div>
         </div>
-        <div style="background:#ffffff;padding:32px 40px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.05)">${bodyHtml}</div>
       </div>
     </div>
   `;
