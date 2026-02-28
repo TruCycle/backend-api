@@ -46,6 +46,7 @@ function escapeHtml(value: string): string {
 const INLINE_ASSET_CID = {
   logo: 'trucycle-logo',
   linkedin: 'trucycle-linkedin',
+  twitter: 'trucycle-twitter',
   instagram: 'trucycle-instagram',
   passwordLock: 'trucycle-password-lock',
 } as const;
@@ -53,6 +54,7 @@ const INLINE_ASSET_CID = {
 export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams): string {
   const logoUrl = escapeHtml(`cid:${INLINE_ASSET_CID.logo}`);
   const linkedinIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.linkedin}`);
+  const twitterIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.twitter}`);
   const instagramIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.instagram}`);
 
   return `
@@ -66,6 +68,7 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
               </td>
               <td valign="middle" align="right" style="padding:0;white-space:nowrap;font-size:0;line-height:0">
                 <img src="${linkedinIconUrl}" alt="LinkedIn" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
+                <img src="${twitterIconUrl}" alt="Twitter" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
                 <img src="${instagramIconUrl}" alt="Instagram" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
               </td>
             </tr>
