@@ -43,22 +43,17 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function getEmailAssetsBaseUrl(): string {
-  const base = process.env.EMAIL_ASSETS_BASE_URL || 
-    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null) || 
-    process.env.APP_BASE_URL || 
-    'http://localhost:3000';
-  return base.replace(/\/+$/, '');
-}
-
-function buildAssetUrl(path: string): string {
-  return `${getEmailAssetsBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
-}
+const INLINE_ASSET_CID = {
+  logo: 'trucycle-logo',
+  linkedin: 'trucycle-linkedin',
+  instagram: 'trucycle-instagram',
+  passwordLock: 'trucycle-password-lock',
+} as const;
 
 export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams): string {
-  const logoUrl = escapeHtml(buildAssetUrl('/email-assets/logo.png'));
-  const linkedinIconUrl = escapeHtml(buildAssetUrl('/email-assets/linkedin.png'));
-  const instagramIconUrl = escapeHtml(buildAssetUrl('/email-assets/instagram.png'));
+  const logoUrl = escapeHtml(`cid:${INLINE_ASSET_CID.logo}`);
+  const linkedinIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.linkedin}`);
+  const instagramIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.instagram}`);
 
   return `
     <div style="margin:0;padding:0;background:#e5e7eb;font-family:Arial,sans-serif;color:#232528">
@@ -84,7 +79,7 @@ export function buildPasswordResetOtpEmailTemplate({
   expiresInMinutes,
   supportEmail,
 }: PasswordResetOtpTemplateParams): string {
-  const passwordLockIconUrl = escapeHtml(buildAssetUrl('/email-assets/password-lock.png'));
+  const passwordLockIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.passwordLock}`);
   const safeName = firstName ? escapeHtml(firstName) : '';
   const safeSupportEmail = escapeHtml(supportEmail || 'support@proposalai.com');
   const otpBoxes = otp
@@ -112,7 +107,7 @@ export function buildPasswordResetOtpEmailTemplate({
 }
 
 export function buildVerifyEmailTemplate({ firstName, verifyUrl }: VerifyEmailTemplateParams): string {
-  const passwordLockIconUrl = escapeHtml(buildAssetUrl('/email-assets/password-lock.png'));
+  const passwordLockIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.passwordLock}`);
   const safeName = firstName ? escapeHtml(firstName) : '';
   const safeVerifyUrl = escapeHtml(verifyUrl);
 
