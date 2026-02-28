@@ -56,10 +56,9 @@ function buildAssetUrl(path: string): string {
 }
 
 export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams): string {
-  const logoUrl = escapeHtml(buildAssetUrl('/email-assets/logo.svg'));
-  const linkedinIconUrl = escapeHtml(buildAssetUrl('/email-assets/linkedin-icon.svg'));
-  const xIconUrl = escapeHtml(buildAssetUrl('/email-assets/x-icon.svg'));
-  const instagramIconUrl = escapeHtml(buildAssetUrl('/email-assets/instagram-icon.svg'));
+  const logoUrl = escapeHtml(buildAssetUrl('/email-assets/logo.png'));
+  const linkedinIconUrl = escapeHtml(buildAssetUrl('/email-assets/linkedin.png'));
+  const instagramIconUrl = escapeHtml(buildAssetUrl('/email-assets/instagram.png'));
 
   return `
     <div style="margin:0;padding:0;background:#e5e7eb;font-family:Arial,sans-serif;color:#232528">
@@ -70,7 +69,6 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
           </div>
           <div style="font-size:0;line-height:0;white-space:nowrap">
             <img src="${linkedinIconUrl}" alt="LinkedIn" style="display:inline-block;width:24px;height:24px;margin-left:12px" />
-            <img src="${xIconUrl}" alt="X" style="display:inline-block;width:24px;height:24px;margin-left:12px" />
             <img src="${instagramIconUrl}" alt="Instagram" style="display:inline-block;width:24px;height:24px;margin-left:12px" />
           </div>
         </div>
@@ -86,7 +84,7 @@ export function buildPasswordResetOtpEmailTemplate({
   expiresInMinutes,
   supportEmail,
 }: PasswordResetOtpTemplateParams): string {
-  const passwordLockIconUrl = escapeHtml(buildAssetUrl('/email-assets/password-lock.svg'));
+  const passwordLockIconUrl = escapeHtml(buildAssetUrl('/email-assets/password-lock.png'));
   const safeName = firstName ? escapeHtml(firstName) : '';
   const safeSupportEmail = escapeHtml(supportEmail || 'support@proposalai.com');
   const otpBoxes = otp
@@ -114,7 +112,7 @@ export function buildPasswordResetOtpEmailTemplate({
 }
 
 export function buildVerifyEmailTemplate({ firstName, verifyUrl }: VerifyEmailTemplateParams): string {
-  const passwordLockIconUrl = escapeHtml(buildAssetUrl('/email-assets/password-lock.svg'));
+  const passwordLockIconUrl = escapeHtml(buildAssetUrl('/email-assets/password-lock.png'));
   const safeName = firstName ? escapeHtml(firstName) : '';
   const safeVerifyUrl = escapeHtml(verifyUrl);
 
