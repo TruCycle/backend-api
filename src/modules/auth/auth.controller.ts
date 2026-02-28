@@ -176,13 +176,13 @@ export class AuthController {
   }
 
   @Post('forget-password')
-  @ApiOperation({ summary: 'Request a password reset email' })
-  @ApiBody({ description: 'Email to send reset link to', type: ForgetPasswordDto })
-  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Reset password email sent successfully.', data: null } } })
+  @ApiOperation({ summary: 'Request a password reset OTP' })
+  @ApiBody({ description: 'Email to send reset OTP to', type: ForgetPasswordDto })
+  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Reset OTP sent successfully.', data: null } } })
   async forgetPassword(@Body() dto: ForgetPasswordDto) {
     await this.auth.requestPasswordReset(dto.email);
     // Always return success to avoid email enumeration
-    return { status: 'success', message: 'Reset password email sent successfully.', data: null };
+    return { status: 'success', message: 'Reset OTP sent successfully.', data: null };
   }
 
   @Post('verify')
@@ -230,11 +230,11 @@ export class AuthController {
   }
 
   @Post('reset-password')
-  @ApiOperation({ summary: 'Reset password using a token' })
-  @ApiBody({ description: 'New password and reset token', type: ResetPasswordDto })
+  @ApiOperation({ summary: 'Reset password using email + OTP' })
+  @ApiBody({ description: 'Email, OTP, and new password', type: ResetPasswordDto })
   @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Password changed successfully.', data: null } } })
   async resetPassword(@Body() dto: ResetPasswordDto) {
-    await this.auth.resetPassword(dto.token, dto.new_password);
+    await this.auth.resetPassword(dto.email, dto.otp, dto.new_password);
     return { status: 'success', message: 'Password changed successfully.', data: null };
   }
 

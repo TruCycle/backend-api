@@ -40,6 +40,12 @@ export class User {
   @Column({ type: 'text', nullable: true })
   passwordHash?: string | null;
 
+  @Column({ name: 'reset_otp_hash', type: 'text', nullable: true })
+  resetOtpHash?: string | null;
+
+  @Column({ name: 'reset_otp_expires_at', type: 'timestamptz', nullable: true })
+  resetOtpExpiresAt?: Date | null;
+
   @Column({ name: 'profile_image_url', type: 'text', nullable: true })
   profileImageUrl?: string | null;
 

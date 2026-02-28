@@ -19,6 +19,7 @@ import { CreateMessagesTables1700000000013 } from '../database/migrations/170000
 import { CreateShopTable1700000000015 } from '../database/migrations/1700000000015-CreateShopTable';
 import { CreateNotificationTable1700000000020 } from '../database/migrations/1700000000020-CreateNotificationTable';
 import { CreateWalletAndLedger1700000000021 } from '../database/migrations/1700000000021-CreateWalletAndLedger';
+import { AddPasswordResetOtpToUser1700000000023 } from '../database/migrations/1700000000023-AddPasswordResetOtpToUser';
 import { Role } from '../modules/users/role.entity';
 import { UserRole } from '../modules/users/user-role.entity';
 import { User } from '../modules/users/user.entity';
@@ -51,6 +52,7 @@ async function run() {
       CreateShopTable1700000000015,
       CreateNotificationTable1700000000020,
       CreateWalletAndLedger1700000000021,
+      AddPasswordResetOtpToUser1700000000023,
     ],
     logging: cfg.db.logging,
     migrationsTransactionMode: 'each',

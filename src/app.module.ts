@@ -40,6 +40,12 @@ import { CreateShopTable1700000000015 } from './database/migrations/170000000001
 import { CreateNotificationTable1700000000020 } from './database/migrations/1700000000020-CreateNotificationTable';
 import { CreateWalletAndLedger1700000000021 } from './database/migrations/1700000000021-CreateWalletAndLedger';
 import { RewardsModule } from './modules/rewards/rewards.module';
+import { ExtendShopContactHoursCategories1700000000016 } from './database/migrations/1700000000016-ExtendShopContactHoursCategories';
+import { AddUserPostcode1700000000017 } from './database/migrations/1700000000017-AddUserPostcode';
+import { AddShopOperationalNotes1700000000018 } from './database/migrations/1700000000018-AddShopOperationalNotes';
+import { UniqueClaimPerCollectorPerItem1700000000019 } from './database/migrations/1700000000019-UniqueClaimPerCollectorPerItem';
+import { AddApprovedCollectorIdToItemTable1700000000022 } from './database/migrations/1700000000022-AddApprovedCollectorIdToItemTable';
+import { AddPasswordResetOtpToUser1700000000023 } from './database/migrations/1700000000023-AddPasswordResetOtpToUser';
 
 // Enable DB explicitly via ENABLE_DB=true; default is disabled to allow quick boot
 const enableDb = process.env.ENABLE_DB === 'true';
@@ -59,53 +65,58 @@ const baseModules: any[] = [
 
 const dbModules: any[] = enableDb
   ? [
-      TypeOrmModule.forRootAsync({
-        inject: [ConfigService],
-        useFactory: (config: ConfigService) => ({
-          type: 'postgres',
-          host: config.get<string>('db.host'),
-          port: config.get<number>('db.port'),
-          username: config.get<string>('db.user'),
-          password: config.get<string>('db.password'),
-          database: config.get<string>('db.name'),
-          ssl: config.get<boolean>('db.ssl') || false,
-          autoLoadEntities: true,
-          synchronize: config.get<boolean>('db.synchronize') || false,
-          logging: config.get<boolean>('db.logging') || false,
-          entities: [User, Item, Claim, MessageRoom, Message, Shop],
-          migrations: [
-            PostgisExtensionMigration1700000000001,
-            CreateUuidExtension1700000000002,
-            CreateUserKycAddress1700000000003,
-            CreateServiceZoneAndSeedLondon1700000000004,
-            CreatePickupOrderAndItem1700000000005,
-            AddPendingStatusAndUserNames1700000000006,
-            SetUserStatusDefaultPending1700000000007,
-            CreateItemListing1700000000008,
-            CreateClaimsTable1700000000009,
-            AddClaimApprovedAt1700000000010,
-            AddClaimCompletionAndScanEvents1700000000011,
-            AddUserProfileImageAndItemCo2AndReviews1700000000012,
-            CreateMessagesTables1700000000013,
-            AllowMultipleClaimsPerItem1700000000014,
-            CreateShopTable1700000000015,
-            CreateNotificationTable1700000000020,
-            CreateWalletAndLedger1700000000021,
-          ],
-          migrationsRun: true,
-          migrationsTransactionMode: 'each',
-        }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        host: config.get<string>('db.host'),
+        port: config.get<number>('db.port'),
+        username: config.get<string>('db.user'),
+        password: config.get<string>('db.password'),
+        database: config.get<string>('db.name'),
+        ssl: config.get<boolean>('db.ssl') || false,
+        autoLoadEntities: true,
+        synchronize: config.get<boolean>('db.synchronize') || false,
+        logging: config.get<boolean>('db.logging') || false,
+        entities: [User, Item, Claim, MessageRoom, Message, Shop],
+        migrations: [
+          PostgisExtensionMigration1700000000001,
+          CreateUuidExtension1700000000002,
+          CreateUserKycAddress1700000000003,
+          CreateServiceZoneAndSeedLondon1700000000004,
+          CreatePickupOrderAndItem1700000000005,
+          AddPendingStatusAndUserNames1700000000006,
+          SetUserStatusDefaultPending1700000000007,
+          CreateItemListing1700000000008,
+          CreateClaimsTable1700000000009,
+          AddClaimApprovedAt1700000000010,
+          AddClaimCompletionAndScanEvents1700000000011,
+          AddUserProfileImageAndItemCo2AndReviews1700000000012,
+          CreateMessagesTables1700000000013,
+          AllowMultipleClaimsPerItem1700000000014,
+          CreateShopTable1700000000015,
+          ExtendShopContactHoursCategories1700000000016,
+          AddUserPostcode1700000000017,
+          AddShopOperationalNotes1700000000018,
+          UniqueClaimPerCollectorPerItem1700000000019,
+          CreateNotificationTable1700000000020,
+          CreateWalletAndLedger1700000000021,
+          AddApprovedCollectorIdToItemTable1700000000022,
+          AddPasswordResetOtpToUser1700000000023,
+        ],
+        migrationsRun: true,
+        migrationsTransactionMode: 'each',
       }),
-      UsersModule,
-      MessagesModule,
-      RewardsModule,
-    ]
+    }),
+    UsersModule,
+    MessagesModule,
+    RewardsModule,
+  ]
   : [];
 
 @Module({
   imports: [...baseModules, ...dbModules],
 })
-export class AppModule {}
-
+export class AppModule { }
 
 

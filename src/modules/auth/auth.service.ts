@@ -2,9 +2,16 @@ import { BadRequestException, ConflictException, Injectable, UnauthorizedExcepti
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { randomInt } from 'crypto';
 
 import { PasswordService } from '../../common/security/password.service';
 import { EmailService } from '../notifications/email.service';
+import {
+  buildPasswordResetOtpEmailTemplate,
+  buildPasswordResetSuccessEmailTemplate,
+  buildVerifyEmailTemplate,
+  buildWelcomeEmailTemplate,
+} from '../notifications/email-templates';
 import { Role, RoleCode } from '../users/role.entity';
 import { normalizeIncomingRole } from '../users/role.utils';
 import { UserRole } from '../users/user-role.entity';
@@ -151,6 +158,7 @@ export class AuthService {
 
     // Generate a time-limited email verification token and send email
     await this.sendVerificationEmail(saved);
+    await this.sendWelcomeEmail(saved);
 
     return { user: await this.findUserWithRoles(saved.id), token, shop: createdShop };
   }
@@ -366,18 +374,13 @@ export class AuthService {
       { expiresIn: '24h' },
     );
     const verifyUrl = `${appBase.replace(/\/$/, '')}/auth/verify-email?token=${encodeURIComponent(verifyToken)}`;
-    const html = `
-      <div style="font-family:Arial,sans-serif;font-size:14px;color:#111">
-        <p>Hello${user.firstName ? ' ' + user.firstName : ''},</p>
-        <p>Welcome! Please verify your email address to activate your account.</p>
-        <p><a href="${verifyUrl}" target="_blank" style="background:#0f766e;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none">Verify Email</a></p>
-        <p>Or copy this link into your browser:<br/>
-          <code>${verifyUrl}</code>
-        </p>
-        <p>This link expires in 24 hours. If you did not request this, you can ignore this email.</p>
-      </div>
-    `;
+    const html = buildVerifyEmailTemplate({ firstName: user.firstName, verifyUrl });
     await this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
+  }
+
+  private async sendWelcomeEmail(user: User) {
+    const html = buildWelcomeEmailTemplate({ firstName: user.firstName });
+    await this.email.sendEmail({ to: user.email, subject: 'Welcome to TruCycle', html });
   }
 
   async getBasicProfileById(id: string) {
@@ -425,67 +428,84 @@ export class AuthService {
     const user = await this.users.findOne({ where: { email: normalizedEmail } });
     // Do not reveal whether the user exists; send only for eligible accounts
     if (user && user.status !== UserStatus.DELETED) {
-      await this.sendResetPasswordEmail(user);
+      await this.sendResetPasswordOtpEmail(user);
     }
     // Controller always returns success
   }
 
-  private async sendResetPasswordEmail(user: User) {
-    const appBase = process.env.APP_BASE_URL || 'http://localhost:3000';
-    const expiresIn = process.env.JWT_RESET_EXPIRES_IN || '1h';
-    const resetToken = await this.jwt.signAsync(
-      { sub: user.id, email: user.email, type: 'reset' },
-      { expiresIn },
-    );
-    const resetUrl = `${appBase.replace(/\/$/, '')}/auth/reset-password?token=${encodeURIComponent(resetToken)}`;
-    const html = `
-      <div style="font-family:Arial,sans-serif;font-size:14px;color:#111">
-        <p>Hello${user.firstName ? ' ' + user.firstName : ''},</p>
-        <p>We received a request to reset your password. If this was you, click the button below to set a new password.</p>
-        <p><a href="${resetUrl}" target="_blank" style="background:#0f766e;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none">Reset Password</a></p>
-        <p>Or copy this link into your browser:<br/>
-          <code>${resetUrl}</code>
-        </p>
-        <p>This link expires in ${expiresIn}. If you did not request a password reset, you can safely ignore this email.</p>
-      </div>
-    `;
-    await this.email.sendEmail({ to: user.email, subject: 'Reset your password', html });
+  private getPasswordResetOtpExpiryMinutes(): number {
+    const parsed = Number(process.env.PASSWORD_RESET_OTP_EXPIRES_MINUTES || '10');
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return 10;
+    }
+    return Math.min(Math.trunc(parsed), 60);
   }
 
-  async resetPassword(token: string, newPassword: string): Promise<void> {
-    let payload: any;
-    try {
-      payload = await this.jwt.verifyAsync(token);
-    } catch (_err) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
+  private generatePasswordResetOtp(): string {
+    return String(randomInt(0, 1000000)).padStart(6, '0');
+  }
 
-    if (!payload || payload.type !== 'reset' || !payload.sub) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-    const uid: string = payload.sub;
+  private async sendResetPasswordOtpEmail(user: User) {
+    const expiresInMinutes = this.getPasswordResetOtpExpiryMinutes();
+    const otp = this.generatePasswordResetOtp();
+    const otpHash = await this.passwordService.hash(otp);
+    const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
 
-    const user = await this.users.findOne({ where: { id: uid } });
+    user.resetOtpHash = otpHash;
+    user.resetOtpExpiresAt = expiresAt;
+    await this.users.save(user);
+
+    const html = buildPasswordResetOtpEmailTemplate({
+      firstName: user.firstName,
+      otp,
+      expiresInMinutes,
+      supportEmail: process.env.SUPPORT_EMAIL,
+    });
+    await this.email.sendEmail({ to: user.email, subject: 'Your password reset OTP', html });
+  }
+
+  async resetPassword(email: string, otp: string, newPassword: string): Promise<void> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedOtp = otp.trim();
+    const user = await this.users.findOne({ where: { email: normalizedEmail } });
     if (!user) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-    if (payload.email && payload.email !== user.email) {
-      throw new UnauthorizedException('Invalid or expired token');
+      throw new UnauthorizedException('Invalid or expired OTP');
     }
     if (user.status === UserStatus.DELETED || user.status === UserStatus.SUSPENDED) {
       throw new BadRequestException('Account not eligible for password reset');
     }
+    if (!user.resetOtpHash || !user.resetOtpExpiresAt) {
+      throw new UnauthorizedException('Invalid or expired OTP');
+    }
+    if (new Date(user.resetOtpExpiresAt).getTime() <= Date.now()) {
+      user.resetOtpHash = null;
+      user.resetOtpExpiresAt = null;
+      await this.users.save(user);
+      throw new UnauthorizedException('Invalid or expired OTP');
+    }
+    const otpValid = await this.passwordService.compare(normalizedOtp, user.resetOtpHash);
+    if (!otpValid) {
+      throw new UnauthorizedException('Invalid or expired OTP');
+    }
 
     const hash = await this.passwordService.hash(newPassword);
     user.passwordHash = hash;
+    user.resetOtpHash = null;
+    user.resetOtpExpiresAt = null;
     await this.users.save(user);
 
     // Optional: notify user about password change
     try {
+      const appBase = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+      const loginUrl = process.env.LOGIN_URL || `${appBase}/login`;
       await this.email.sendEmail({
         to: user.email,
-        subject: 'Your password was changed',
-        html: `<p>Hello${user.firstName ? ' ' + user.firstName : ''},</p><p>Your account password was just changed. If this wasn't you, please contact support immediately.</p>`,
+        subject: 'Your password has been reset',
+        html: buildPasswordResetSuccessEmailTemplate({
+          firstName: user.firstName,
+          supportEmail: process.env.SUPPORT_EMAIL,
+          loginUrl,
+        }),
       });
     } catch {
       // Non-fatal if email fails
