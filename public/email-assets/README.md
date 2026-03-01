@@ -1,8 +1,9 @@
 Place email header assets in this folder using these exact file names:
 
 - `logo.png` (combined logo mark + TruCycle wordmark, transparent background recommended)
-- `linkedin.png` (48x48 circular icon)
-- `instagram.png` (48x48 circular icon)
+- `linkedin.png` (48x48 circular icon, dark background with white logo)
+- `twitter.png` (48x48 circular icon, dark background with white X/Twitter logo)
+- `instagram.png` (48x48 circular icon, dark background with white logo)
 - `password-lock.png` (lock icon for reset OTP email body)
 
 How URLs are resolved in email templates:
