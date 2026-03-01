@@ -57,28 +57,44 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
   const twitterIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.twitter}`);
   const instagramIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.instagram}`);
 
-  return `
-    <div style="margin:0;padding:0;background:#e5e7eb;font-family:Arial,sans-serif;color:#232528">
-      <div style="max-width:600px;margin:0 auto;padding:28px 20px 40px">
-        <div style="background:#f3f4f6;padding:24px 28px 32px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.05)">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:0 0 24px">
-            <tr>
-              <td valign="middle" align="left" style="padding:0">
-                <img src="${logoUrl}" alt="TruCycle" style="display:block;width:150px;max-width:100%;height:auto" />
-              </td>
-              <td valign="middle" align="right" style="padding:0;white-space:nowrap;font-size:0;line-height:0">
-                <img src="${linkedinIconUrl}" alt="LinkedIn" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
-                <img src="${twitterIconUrl}" alt="Twitter" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
-                <img src="${instagramIconUrl}" alt="Instagram" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
-              </td>
-            </tr>
-          </table>
-          <div style="height:1px;background:#d7dbe0;margin:0 0 28px"></div>
-          <div style="background:#ffffff;padding:32px 40px;border-radius:10px;color:#1f2328">${bodyHtml}</div>
-        </div>
-      </div>
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    @media only screen and (max-width: 480px) {
+      .email-outer   { padding: 16px 8px 24px !important; }
+      .email-card    { padding: 16px 12px 24px !important; }
+      .email-body    { padding: 20px 16px !important; }
+      .header-logo   { width: 110px !important; }
+      .header-icons  { display: block !important; margin-top: 10px !important; text-align: left !important; }
+      .header-td-logo, .header-td-icons { display: block !important; width: 100% !important; }
+      .otp-digit     { width: 36px !important; height: 44px !important; line-height: 44px !important; font-size: 22px !important; margin: 0 4px 8px 0 !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:#e5e7eb;font-family:Arial,sans-serif;color:#232528">
+  <div style="max-width:600px;margin:0 auto;padding:28px 20px 40px" class="email-outer">
+    <div style="background:#f3f4f6;padding:24px 28px 32px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.05)" class="email-card">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:0 0 24px">
+        <tr>
+          <td valign="middle" align="left" style="padding:0" class="header-td-logo">
+            <img src="${logoUrl}" alt="TruCycle" style="display:block;width:150px;max-width:100%;height:auto" class="header-logo" />
+          </td>
+          <td valign="middle" align="right" style="padding:0;white-space:nowrap;font-size:0;line-height:0" class="header-td-icons">
+            <img src="${linkedinIconUrl}" alt="LinkedIn" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
+            <img src="${twitterIconUrl}" alt="Twitter" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
+            <img src="${instagramIconUrl}" alt="Instagram" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
+          </td>
+        </tr>
+      </table>
+      <div style="height:1px;background:#d7dbe0;margin:0 0 28px"></div>
+      <div style="background:#ffffff;padding:32px 40px;border-radius:10px;color:#1f2328" class="email-body">${bodyHtml}</div>
     </div>
-  `;
+  </div>
+</body>
+</html>`;
 }
 
 export function buildPasswordResetOtpEmailTemplate({
@@ -94,7 +110,7 @@ export function buildPasswordResetOtpEmailTemplate({
     .split('')
     .map(
       (digit) =>
-        `<span style="display:inline-block;width:48px;height:56px;line-height:56px;margin:0 8px 10px 0;border:1px solid #d1d5db;border-radius:8px;font-size:32px;font-weight:700;text-align:center;color:#222;box-sizing:border-box">${escapeHtml(digit)}</span>`,
+        `<span class="otp-digit" style="display:inline-block;width:48px;height:56px;line-height:56px;margin:0 8px 10px 0;border:1px solid #d1d5db;border-radius:8px;font-size:32px;font-weight:700;text-align:center;color:#222;box-sizing:border-box">${escapeHtml(digit)}</span>`,
     )
     .join('');
 
