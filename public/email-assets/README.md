@@ -13,5 +13,6 @@ How URLs are resolved in email templates:
 - Final URLs used:
   - `/email-assets/logo.png`
   - `/email-assets/linkedin.png`
+  - `/email-assets/twitter.png` 
   - `/email-assets/instagram.png`
   - `/email-assets/password-lock.png`
