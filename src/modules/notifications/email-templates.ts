@@ -46,7 +46,7 @@ function escapeHtml(value: string): string {
 const INLINE_ASSET_CID = {
   logo: 'trucycle-logo',
   linkedin: 'trucycle-linkedin',
-  twitter: 'trucycle-twitter-v2',
+  twitter: 'trucycle-twitter',
   instagram: 'trucycle-instagram',
   passwordLock: 'trucycle-password-lock',
 } as const;
@@ -64,13 +64,12 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     @media only screen and (max-width: 480px) {
-      .email-outer   { padding: 16px 8px 24px !important; }
-      .email-card    { padding: 16px 12px 24px !important; }
-      .email-body    { padding: 20px 16px !important; }
-      .header-logo   { width: 110px !important; }
-      .header-icons  { display: block !important; margin-top: 10px !important; text-align: left !important; }
+      .email-outer  { padding: 16px 8px 24px !important; }
+      .email-card   { padding: 16px 12px 24px !important; }
+      .email-body   { padding: 20px 16px !important; }
+      .header-logo  { width: 110px !important; }
       .header-td-logo, .header-td-icons { display: block !important; width: 100% !important; }
-      .otp-digit     { width: 36px !important; height: 44px !important; line-height: 44px !important; font-size: 22px !important; margin: 0 4px 8px 0 !important; }
+      .otp-digit    { width: 36px !important; height: 44px !important; line-height: 44px !important; font-size: 22px !important; margin: 0 4px 8px 0 !important; }
     }
   </style>
 </head>
