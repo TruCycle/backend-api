@@ -25,7 +25,7 @@ export class EmailService {
     contentId: string;
     mimeType: string;
   }> = [
-    { filename: 'logo.png', contentId: 'trucycle-logo', mimeType: 'image/png' },
+    { filename: 'logo.svg', contentId: 'trucycle-logo', mimeType: 'image/svg+xml' },
     { filename: 'linkedin.png', contentId: 'trucycle-linkedin', mimeType: 'image/png' },
     { filename: 'twitter.png', contentId: 'trucycle-twitter-icon', mimeType: 'image/png' },
     { filename: 'instagram.png', contentId: 'trucycle-instagram', mimeType: 'image/png' },
