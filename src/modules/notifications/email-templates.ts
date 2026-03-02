@@ -77,9 +77,9 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
     }
   </style>
 </head>
-<body style="margin:0;padding:0;background:#e5e7eb;font-family:Arial,sans-serif;color:#232528">
+<body style="margin:0;padding:0;background:#F8FAFC;font-family:Arial,sans-serif;color:#232528">
   <div style="max-width:600px;margin:0 auto;padding:28px 20px 40px" class="email-outer">
-    <div style="background:#f3f4f6;padding:24px 28px 32px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.05)" class="email-card">
+    <div style="background:#F8FAFC;padding:24px 28px 32px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.05)" class="email-card">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:0 0 24px">
         <tr>
           <td valign="middle" align="left" style="padding:0" class="header-td-logo">
