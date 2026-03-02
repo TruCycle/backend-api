@@ -56,6 +56,9 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
   const linkedinIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.linkedin}`);
   const twitterIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.twitter}`);
   const instagramIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.instagram}`);
+  const socialIconSize = 24;
+  const socialIconStyle =
+    'display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -82,9 +85,9 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
             <img src="${logoUrl}" alt="TruCycle" style="display:block;width:150px;max-width:100%;height:auto" class="header-logo" />
           </td>
           <td valign="middle" align="right" style="padding:0;white-space:nowrap;font-size:0;line-height:0" class="header-td-icons">
-            <img src="${linkedinIconUrl}"  alt="LinkedIn"  width="24" height="24" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
-            <img src="${twitterIconUrl}"   alt="Twitter"   width="24" height="24" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
-            <img src="${instagramIconUrl}" alt="Instagram" width="24" height="24" style="display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle" />
+            <img src="${linkedinIconUrl}" alt="LinkedIn" width="${socialIconSize}" height="${socialIconSize}" style="${socialIconStyle}" />
+            <img src="${twitterIconUrl}" alt="Twitter" width="${socialIconSize}" height="${socialIconSize}" style="${socialIconStyle}" />
+            <img src="${instagramIconUrl}" alt="Instagram" width="${socialIconSize}" height="${socialIconSize}" style="${socialIconStyle}" />
           </td>
         </tr>
       </table>
