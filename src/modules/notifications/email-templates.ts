@@ -50,7 +50,7 @@ const INLINE_ASSET_CID = {
   instagram: 'trucycle-instagram',
   passwordLock: 'trucycle-password-lock',
 } as const;
-const PASSWORD_LOCK_ICON_STYLE = 'display:block;width:52px;height:52px';
+const PASSWORD_LOCK_ICON_STYLE = 'display:block;max-width:52px;height:auto';
 
 export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams): string {
   const logoUrl = escapeHtml(`cid:${INLINE_ASSET_CID.logo}`);
