@@ -92,7 +92,6 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
           </td>
         </tr>
       </table>
-      <div style="height:1px;background:#d7dbe0;margin:0 0 28px"></div>
       <div style="background:#ffffff;padding:32px 40px;border-radius:10px;color:#1f2328" class="email-body">${bodyHtml}</div>
     </div>
   </div>
