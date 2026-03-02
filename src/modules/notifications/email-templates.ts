@@ -46,7 +46,7 @@ function escapeHtml(value: string): string {
 const INLINE_ASSET_CID = {
   logo: 'trucycle-logo',
   linkedin: 'trucycle-linkedin',
-  twitter: 'trucycle-twitter',
+  twitter: 'trucycle-twitter-icon',
   instagram: 'trucycle-instagram',
   passwordLock: 'trucycle-password-lock',
 } as const;
