@@ -50,6 +50,7 @@ const INLINE_ASSET_CID = {
   instagram: 'trucycle-instagram',
   passwordLock: 'trucycle-password-lock',
 } as const;
+const PASSWORD_LOCK_ICON_STYLE = 'display:block;width:52px;height:52px';
 
 export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams): string {
   const logoUrl = escapeHtml(`cid:${INLINE_ASSET_CID.logo}`);
@@ -118,7 +119,7 @@ export function buildPasswordResetOtpEmailTemplate({
 
   return buildBrandedEmailLayout({
     bodyHtml: `
-      <p style="margin:0 0 24px"><img src="${passwordLockIconUrl}" alt="Password reset" style="display:block" /></p>
+      <p style="margin:0 0 24px"><img src="${passwordLockIconUrl}" alt="Password reset" style="${PASSWORD_LOCK_ICON_STYLE}" /></p>
       <p style="margin:0 0 16px;font-size:16px;line-height:1.5">Hi${safeName ? ` ${safeName}` : ''},</p>
       <p style="margin:0 0 16px;font-size:16px;line-height:1.5">Here's your one-time reset code:</p>
       <div style="margin:0 0 24px">${otpBoxes}</div>
@@ -139,7 +140,7 @@ export function buildVerifyEmailTemplate({ firstName, verifyUrl }: VerifyEmailTe
 
   return buildBrandedEmailLayout({
     bodyHtml: `
-      <p style="margin:0 0 24px"><img src="${passwordLockIconUrl}" alt="Verify email" style="display:block" /></p>
+      <p style="margin:0 0 24px"><img src="${passwordLockIconUrl}" alt="Verify email" style="${PASSWORD_LOCK_ICON_STYLE}" /></p>
       <p style="margin:0 0 16px;font-size:16px;line-height:1.5">Hi${safeName ? ` ${safeName}` : ''},</p>
       <p style="margin:0 0 16px;font-size:16px;line-height:1.5">Please verify your email by clicking the button below:</p>
       <p style="margin:0 0 32px">
