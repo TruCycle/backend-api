@@ -107,7 +107,7 @@ export function buildPasswordResetOtpEmailTemplate({
 }: PasswordResetOtpTemplateParams): string {
   const passwordLockIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.passwordLock}`);
   const safeName = firstName ? escapeHtml(firstName) : '';
-  const safeSupportEmail = escapeHtml(supportEmail || 'support@proposalai.com');
+  const safeSupportEmail = escapeHtml(supportEmail || 'support@trucycle.co.uk');
   const otpBoxes = otp
     .split('')
     .map(
@@ -177,7 +177,7 @@ export function buildPasswordResetSuccessEmailTemplate({
   loginUrl,
 }: PasswordResetSuccessTemplateParams): string {
   const safeName = firstName ? escapeHtml(firstName) : '';
-  const safeSupportEmail = escapeHtml(supportEmail || 'support@proposalai.com');
+  const safeSupportEmail = escapeHtml(supportEmail || 'support@trucycle.co.uk');
   const safeLoginUrl = escapeHtml(loginUrl);
 
   return buildBrandedEmailLayout({
