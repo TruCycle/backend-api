@@ -86,10 +86,11 @@ This section details all environment variables needed to run TruCycle. Copy `.en
 ```bash
 NODE_ENV=development        # Environment: development | production | test
 PORT=3000                   # Port the API listens on
-APP_BASE_URL=http://localhost:3000  # Base URL for email links and QR codes
+APP_BASE_URL=http://localhost:5173   # Frontend base URL for user-facing links in emails
+BACKEND_BASE_URL=http://localhost:3000  # Backend public base URL for email assets and QR endpoints
 ```
 
-**Purpose**: Controls basic application behavior, logging, and URL generation for verification emails and QR code content.
+**Purpose**: Controls basic application behavior and public URL generation. Use `APP_BASE_URL` for frontend-facing links users click in emails. Use `BACKEND_BASE_URL` for backend-hosted assets and endpoints such as `/email-assets/*` and `/qr/item/:id/view`.
 
 ### Database Configuration
 

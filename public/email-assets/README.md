@@ -8,7 +8,7 @@ Place email header assets in this folder using these exact file names:
 
 How URLs are resolved in email templates:
 
-- Base URL = `EMAIL_ASSETS_BASE_URL` if set
+- Base URL = `BACKEND_BASE_URL` if set
 - Fallback base URL = `APP_BASE_URL`
 - Final URLs used:
   - `/email-assets/logo.png`

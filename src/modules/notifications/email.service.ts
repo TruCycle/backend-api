@@ -68,11 +68,15 @@ export class EmailService implements OnModuleInit {
     return { activeProvider: 'none', fallbackProvider: null };
   }
 
+  private getBackendBaseUrl(): string {
+    return (process.env.BACKEND_BASE_URL || process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+  }
+
   private rewriteHtmlForBrevo(html: string): string {
-    const appBase = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const backendBase = this.getBackendBaseUrl();
 
     return EmailService.INLINE_ASSETS.reduce((updatedHtml, asset) => {
-      const publicAssetUrl = `${appBase}/email-assets/${asset.filename}`;
+      const publicAssetUrl = `${backendBase}/email-assets/${asset.filename}`;
       return updatedHtml.split(`cid:${asset.contentId}`).join(publicAssetUrl);
     }, html);
   }

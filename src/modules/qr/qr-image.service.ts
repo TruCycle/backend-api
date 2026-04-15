@@ -45,7 +45,8 @@ export class QrImageService {
 
   private buildItemQrContent(itemId: string): string {
     // Encode a URL that can be handled by the backend (authenticated staff paths)
-    const base = process.env.APP_BASE_URL ? trimTrailingSlash(process.env.APP_BASE_URL) : '';
+    const baseSource = process.env.BACKEND_BASE_URL || process.env.APP_BASE_URL || '';
+    const base = baseSource ? trimTrailingSlash(baseSource) : '';
     if (base) {
       return `${base}/qr/item/${itemId}/view`;
     }
