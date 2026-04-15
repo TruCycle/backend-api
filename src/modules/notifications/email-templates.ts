@@ -50,6 +50,13 @@ const INLINE_ASSET_CID = {
   instagram: 'trucycle-instagram',
   passwordLock: 'trucycle-password-lock',
 } as const;
+
+const SOCIAL_LINKS = {
+  linkedin: 'https://www.linkedin.com/company/tru-cycle',
+  twitter: 'https://x.com/realTruCycle',
+  instagram: 'https://www.instagram.com/realtrucycle/',
+} as const;
+
 const PASSWORD_LOCK_ICON_STYLE = 'display:block;max-width:52px;height:auto';
 
 export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams): string {
@@ -57,6 +64,9 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
   const linkedinIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.linkedin}`);
   const twitterIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.twitter}`);
   const instagramIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.instagram}`);
+  const linkedinUrl = escapeHtml(SOCIAL_LINKS.linkedin);
+  const twitterUrl = escapeHtml(SOCIAL_LINKS.twitter);
+  const instagramUrl = escapeHtml(SOCIAL_LINKS.instagram);
   const socialIconSize = 24;
   const socialIconStyle =
     'display:inline-block;width:24px;height:24px;margin-left:10px;vertical-align:middle';
@@ -86,9 +96,15 @@ export function buildBrandedEmailLayout({ bodyHtml }: BrandedEmailLayoutParams):
             <img src="${logoUrl}" alt="TruCycle" style="display:block;width:150px;max-width:100%;height:auto" class="header-logo" />
           </td>
           <td valign="middle" align="right" style="padding:0;white-space:nowrap;font-size:0;line-height:0" class="header-td-icons">
-            <img src="${linkedinIconUrl}" alt="LinkedIn" width="${socialIconSize}" height="${socialIconSize}" style="${socialIconStyle}" />
-            <img src="${twitterIconUrl}" alt="Twitter" width="${socialIconSize}" height="${socialIconSize}" style="${socialIconStyle}" />
-            <img src="${instagramIconUrl}" alt="Instagram" width="${socialIconSize}" height="${socialIconSize}" style="${socialIconStyle}" />
+            <a href="${linkedinUrl}" target="_blank" rel="noreferrer" style="text-decoration:none">
+              <img src="${linkedinIconUrl}" alt="LinkedIn" width="${socialIconSize}" height="${socialIconSize}" style="${socialIconStyle}" />
+            </a>
+            <a href="${twitterUrl}" target="_blank" rel="noreferrer" style="text-decoration:none">
+              <img src="${twitterIconUrl}" alt="Twitter" width="${socialIconSize}" height="${socialIconSize}" style="${socialIconStyle}" />
+            </a>
+            <a href="${instagramUrl}" target="_blank" rel="noreferrer" style="text-decoration:none">
+              <img src="${instagramIconUrl}" alt="Instagram" width="${socialIconSize}" height="${socialIconSize}" style="${socialIconStyle}" />
+            </a>
           </td>
         </tr>
       </table>
