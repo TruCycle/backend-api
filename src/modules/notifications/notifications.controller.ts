@@ -4,11 +4,15 @@ import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiQuery, ApiTags 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { NotificationsService } from './notifications.service';
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
+import { EmailService } from './email.service';
 
 @ApiTags('notifications')
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notifications: NotificationsService) {}
+  constructor(
+    private readonly notifications: NotificationsService,
+    private readonly emailService: EmailService,
+  ) { }
 
   private getUserId(req: any): string {
     const candidate = req?.user?.sub ?? req?.user?.id ?? req?.user?.userId;
@@ -17,6 +21,21 @@ export class NotificationsController {
       throw new UnauthorizedException('Authenticated user context not found');
     }
     return userId;
+  }
+
+  @Get('email-provider')
+  @ApiOperation({ summary: 'Get the active transactional email provider' })
+  @ApiOkResponse({
+    description: 'Active email provider and fallback information',
+    schema: {
+      example: {
+        activeProvider: 'brevo',
+        fallbackProvider: 'resend',
+      },
+    },
+  })
+  emailProviderStatus() {
+    return this.emailService.getProviderStatus();
   }
 
   @Get()

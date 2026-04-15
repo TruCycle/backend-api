@@ -127,9 +127,10 @@ JWT_RESET_EXPIRES_IN=1h                         # Password reset token expiratio
 - Never commit secrets to version control
 - Use short-lived access tokens (1h-24h) in production
 
-### Email Service (Resend)
+### Email Service (Brevo Primary, Resend Fallback)
 
 ```bash
+BREVO_API_KEY=xkeysib-xxxxxxxxxxxx  # Primary API key from Brevo dashboard
 RESEND_API_KEY=re_xxxxxxxxxxxx    # API key from Resend dashboard
 MAIL_FROM="TruCycle <no-reply@trucycle.app>"  # Sender email address
 ```
@@ -137,10 +138,10 @@ MAIL_FROM="TruCycle <no-reply@trucycle.app>"  # Sender email address
 **Purpose**: Sends transactional emails (account verification, password reset, nearby item alerts).
 
 **Account Setup**:
-1. Sign up at https://resend.com
-2. Verify your domain (or use their test domain for development)
-3. Generate an API key from the dashboard
-4. Set `RESEND_API_KEY` in your `.env`
+1. Sign up at https://www.brevo.com or https://resend.com
+2. Verify the sender domain/address you use in `MAIL_FROM`
+3. Generate a Brevo API key and set `BREVO_API_KEY` in your `.env`
+4. Optionally set `RESEND_API_KEY` as a fallback provider
 
 **Emails Sent**:
 - **Account Verification**: Sent on registration with a time-limited token link
@@ -1974,11 +1975,12 @@ Update authenticated user's profile.
 
 ## Notifications & Email System
 
-### Email Delivery (Resend)
+### Email Delivery
 
-The system uses **Resend** (https://resend.com) for transactional emails.
+The system uses **Brevo** (https://www.brevo.com) as the primary transactional email provider and falls back to **Resend** (https://resend.com) when `BREVO_API_KEY` is not configured.
 
 **Configuration**:
+- `BREVO_API_KEY`: Primary API key from Brevo dashboard
 - `RESEND_API_KEY`: API key from Resend dashboard
 - `MAIL_FROM`: Sender email address (must be verified domain)
 
