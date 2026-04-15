@@ -16,6 +16,11 @@ interface EmailAttachment {
   content_id?: string;
 }
 
+interface ProviderStatus {
+  activeProvider: 'brevo' | 'resend' | 'none';
+  fallbackProvider: 'resend' | null;
+}
+
 @Injectable()
 export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
@@ -48,7 +53,7 @@ export class EmailService implements OnModuleInit {
     );
   }
 
-  getProviderStatus(): { activeProvider: 'brevo' | 'resend' | 'none'; fallbackProvider: 'resend' | null } {
+  getProviderStatus(): ProviderStatus {
     const hasBrevo = Boolean(process.env.BREVO_API_KEY);
     const hasResend = Boolean(process.env.RESEND_API_KEY);
 
@@ -61,6 +66,15 @@ export class EmailService implements OnModuleInit {
     }
 
     return { activeProvider: 'none', fallbackProvider: null };
+  }
+
+  private rewriteHtmlForBrevo(html: string): string {
+    const appBase = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+
+    return EmailService.INLINE_ASSETS.reduce((updatedHtml, asset) => {
+      const publicAssetUrl = `${appBase}/email-assets/${asset.filename}`;
+      return updatedHtml.split(`cid:${asset.contentId}`).join(publicAssetUrl);
+    }, html);
   }
 
   private async loadInlineAttachments(html: string): Promise<EmailAttachment[]> {
@@ -117,27 +131,18 @@ export class EmailService implements OnModuleInit {
     { to, subject, html }: SendEmailParams,
     attachments: EmailAttachment[],
   ): Promise<void> {
-    const inlineImages = attachments.filter((attachment) => attachment.content_id);
     const regularAttachments = attachments.filter((attachment) => !attachment.content_id);
     const payload: Record<string, unknown> = {
       sender: this.parseFromAddress(from),
       to: [{ email: to }],
       subject,
-      htmlContent: html,
+      htmlContent: this.rewriteHtmlForBrevo(html),
     };
 
     if (regularAttachments.length > 0) {
       payload.attachment = regularAttachments.map((attachment) => ({
         name: attachment.filename,
         content: attachment.content,
-      }));
-    }
-
-    if (inlineImages.length > 0) {
-      payload.inlineImage = inlineImages.map((attachment) => ({
-        name: attachment.filename,
-        content: attachment.content,
-        contentId: attachment.content_id,
       }));
     }
 
