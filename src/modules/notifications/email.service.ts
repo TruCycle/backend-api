@@ -16,7 +16,7 @@ interface EmailAttachment {
   content_id?: string;
 }
 
-interface ProviderStatus {
+export interface ProviderStatus {
   activeProvider: 'brevo' | 'resend' | 'none';
   fallbackProvider: 'resend' | null;
 }
