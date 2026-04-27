@@ -364,6 +364,17 @@ export class FoundItemsService {
   }
 
   private async resolveCoordinates(dto: CreateFoundItemDto, postcode: string): Promise<{ latitude: number | null; longitude: number | null }> {
+    const latitude = typeof dto.location.latitude === 'number' && Number.isFinite(dto.location.latitude)
+      ? dto.location.latitude
+      : null;
+    const longitude = typeof dto.location.longitude === 'number' && Number.isFinite(dto.location.longitude)
+      ? dto.location.longitude
+      : null;
+
+    if (latitude !== null && longitude !== null) {
+      return { latitude, longitude };
+    }
+
     const addressHint = dto.location.address?.trim();
     const query = [addressHint, postcode].filter(Boolean).join(', ');
     if (query) {
@@ -374,13 +385,6 @@ export class FoundItemsService {
         this.logger.debug(`Found-item geocoding fallback for query="${query}": ${String(error)}`);
       }
     }
-
-    const latitude = typeof dto.location.latitude === 'number' && Number.isFinite(dto.location.latitude)
-      ? dto.location.latitude
-      : null;
-    const longitude = typeof dto.location.longitude === 'number' && Number.isFinite(dto.location.longitude)
-      ? dto.location.longitude
-      : null;
 
     return { latitude, longitude };
   }
