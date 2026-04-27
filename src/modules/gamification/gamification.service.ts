@@ -248,8 +248,38 @@ export class GamificationService {
   }
 
   private async backfillAndSync(userId: string): Promise<void> {
+    await this.dedupeTrackedPointTransactions(this.pointTransactions.manager, userId);
     await this.backfillHistoricalActivity(this.pointTransactions.manager, userId);
     await this.syncUserState(this.pointTransactions.manager, userId);
+  }
+
+  private async dedupeTrackedPointTransactions(manager: EntityManager, userId: string): Promise<void> {
+    const repo = this.getPointTransactionRepository(manager);
+    const transactions = await repo.find({
+      where: { userId },
+      order: { occurredAt: 'ASC', createdAt: 'ASC' },
+    });
+
+    const seenKeys = new Set<string>();
+    const duplicateIds: string[] = [];
+
+    for (const transaction of transactions) {
+      if (!transaction.actionId) {
+        continue;
+      }
+
+      const dedupeKey = `${transaction.actionType}:${transaction.actionId}`;
+      if (seenKeys.has(dedupeKey)) {
+        duplicateIds.push(transaction.id);
+        continue;
+      }
+
+      seenKeys.add(dedupeKey);
+    }
+
+    if (duplicateIds.length > 0) {
+      await repo.delete(duplicateIds);
+    }
   }
 
   private async backfillHistoricalActivity(manager: EntityManager, userId: string): Promise<void> {
@@ -336,6 +366,17 @@ export class GamificationService {
 
   private async createPointTransaction(manager: EntityManager, input: PointActivityInput): Promise<void> {
     const repo = this.getPointTransactionRepository(manager);
+
+    const existing = await repo.findOne({
+      where: {
+        userId: input.userId,
+        actionType: input.actionType,
+        actionId: input.actionId,
+      },
+    });
+    if (existing) {
+      return;
+    }
 
     try {
       await repo.save(
