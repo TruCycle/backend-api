@@ -180,7 +180,7 @@ export function buildWelcomeEmailTemplate({ firstName }: WelcomeEmailTemplatePar
       <p style="margin:0 0 16px;font-size:16px;line-height:1.5;color:#232528">Here are the next steps:</p>
       <p style="margin:0 0 12px;font-size:16px;line-height:1.5;color:#232528">&#9989; <strong>List your first item</strong> - Share items you no longer need</p>
       <p style="margin:0 0 12px;font-size:16px;line-height:1.5;color:#232528">&#9989; <strong>Browse nearby items</strong> - Discover nearby items</p>
-      <p style="margin:0 0 24px;font-size:16px;line-height:1.5;color:#232528">&#9989; <strong>Earn your first reward</strong> - Complete a verified exchange for $10</p>
+      <p style="margin:0 0 24px;font-size:16px;line-height:1.5;color:#232528">&#9989; <strong>Complete your first exchange</strong> - Finish a verified exchange to start building your impact</p>
       <p style="margin:0 0 40px;font-size:16px;line-height:1.5;color:#475569">Need help? Reach out to our support team.</p>
       <p style="margin:0;font-size:16px;line-height:1.5;color:#64748b">Best,<br />TruCycle Team</p>
     `,

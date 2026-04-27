@@ -11,9 +11,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { Shop } from '../shops/shop.entity';
 import { ClaimsService } from './claims.service';
 import { RewardsModule } from '../rewards/rewards.module';
+import { GamificationModule } from '../gamification/gamification.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Claim, Item, User, Shop]), forwardRef(() => NotificationsModule), RewardsModule],
+  imports: [TypeOrmModule.forFeature([Claim, Item, User, Shop]), forwardRef(() => NotificationsModule), RewardsModule, GamificationModule],
   controllers: [ClaimsController],
   providers: [ClaimsService, JwtAuthGuard],
   exports: [ClaimsService],

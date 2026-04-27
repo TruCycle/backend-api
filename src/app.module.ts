@@ -46,6 +46,10 @@ import { AddShopOperationalNotes1700000000018 } from './database/migrations/1700
 import { UniqueClaimPerCollectorPerItem1700000000019 } from './database/migrations/1700000000019-UniqueClaimPerCollectorPerItem';
 import { AddApprovedCollectorIdToItemTable1700000000022 } from './database/migrations/1700000000022-AddApprovedCollectorIdToItemTable';
 import { AddPasswordResetOtpToUser1700000000023 } from './database/migrations/1700000000023-AddPasswordResetOtpToUser';
+import { CreateGamificationTables1700000000024 } from './database/migrations/1700000000024-CreateGamificationTables';
+import { CreateFoundItemsTables1700000000025 } from './database/migrations/1700000000025-CreateFoundItemsTables';
+import { FoundItemsModule } from './modules/found-items/found-items.module';
+import { GamificationModule } from './modules/gamification/gamification.module';
 
 // Enable DB explicitly via ENABLE_DB=true; default is disabled to allow quick boot
 const enableDb = process.env.ENABLE_DB === 'true';
@@ -103,6 +107,8 @@ const dbModules: any[] = enableDb
           CreateWalletAndLedger1700000000021,
           AddApprovedCollectorIdToItemTable1700000000022,
           AddPasswordResetOtpToUser1700000000023,
+          CreateGamificationTables1700000000024,
+          CreateFoundItemsTables1700000000025,
         ],
         migrationsRun: true,
         migrationsTransactionMode: 'each',
@@ -111,6 +117,8 @@ const dbModules: any[] = enableDb
     UsersModule,
     MessagesModule,
     RewardsModule,
+    GamificationModule,
+    FoundItemsModule,
   ]
   : [];
 

@@ -20,6 +20,7 @@ import { Claim, ClaimStatus } from './claim.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Shop } from '../shops/shop.entity';
 import { RewardsService } from '../rewards/rewards.service';
+import { GamificationService } from '../gamification/gamification.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 const CLAIMABLE_STATUSES: readonly ItemStatus[] = [ItemStatus.ACTIVE, ItemStatus.AWAITING_COLLECTION];
 // Allow multiple pending requests: only an already-approved claim should block
@@ -34,6 +35,7 @@ export class ClaimsService {
     @InjectRepository(Shop) private readonly shops: Repository<Shop>,
     private readonly notifications: NotificationsService,
     private readonly rewards: RewardsService,
+    private readonly gamification: GamificationService,
   ) { }
 
   private ensureCollectorRole(payload: any) {
@@ -220,6 +222,7 @@ export class ClaimsService {
         // Lock only the base table to avoid Postgres outer-join FOR UPDATE error
         .setLock('pessimistic_write', undefined, ['claim'])
         .leftJoinAndSelect('claim.item', 'item')
+        .leftJoinAndSelect('item.donor', 'donor')
         .leftJoinAndSelect('claim.collector', 'collector')
         .where('item.id = :itemId', { itemId });
 
@@ -299,6 +302,28 @@ export class ClaimsService {
       // Rewards: idempotent award for claim completion (QR flow)
       try {
         await this.rewards.awardOnClaimComplete(manager, claim);
+      } catch { }
+
+      try {
+        const donorId = claim.item?.donor?.id || null;
+        if (claim.collector?.id) {
+          await this.gamification.recordExchangeCompleted(
+            manager,
+            claim.collector.id,
+            claim.id,
+            'collector',
+            completionDate,
+          );
+        }
+        if (donorId) {
+          await this.gamification.recordExchangeCompleted(
+            manager,
+            donorId,
+            claim.id,
+            'donor',
+            completionDate,
+          );
+        }
       } catch { }
 
       // Notifications: collection + drop-off
@@ -456,6 +481,28 @@ export class ClaimsService {
       // Rewards: idempotent award for claim completion (manual flow)
       try {
         await this.rewards.awardOnClaimComplete(manager, claim);
+      } catch { }
+
+      try {
+        const resolvedDonorId = donorId || null;
+        if (claim.collector?.id) {
+          await this.gamification.recordExchangeCompleted(
+            manager,
+            claim.collector.id,
+            claim.id,
+            'collector',
+            completionDate,
+          );
+        }
+        if (resolvedDonorId) {
+          await this.gamification.recordExchangeCompleted(
+            manager,
+            resolvedDonorId,
+            claim.id,
+            'donor',
+            completionDate,
+          );
+        }
       } catch { }
 
       // Notifications: collection + drop-off
