@@ -2,12 +2,14 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 
+import { resolveOutwardPostcode } from '../../common/utils/postcode';
 import { Claim, ClaimStatus } from '../claims/claim.entity';
 import { FoundItem, FoundItemStatus } from '../found-items/found-item.entity';
 import { FoundItemClaim, FoundItemClaimStatus } from '../found-items/found-item-claim.entity';
 import { Item } from '../items/item.entity';
 import { User } from '../users/user.entity';
 import { GamificationBadge, GamificationBadgeCategory } from './badge.entity';
+import { type CommunityBoardWindow } from './dto/community-board-query.dto';
 import { GamificationBadgeFilter, GamificationBadgesQueryDto } from './dto/gamification-badges-query.dto';
 import { PointHistoryQueryDto } from './dto/point-history-query.dto';
 import { PointTransaction } from './point-transaction.entity';
@@ -41,6 +43,25 @@ const FOUND_ITEM_POST_POINTS = 50;
 const FOUND_ITEM_CLAIM_POINTS = 25;
 const FOUND_ITEM_PICKED_UP_POINTS = 30;
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+interface CommunityBoardPostcodeEntry {
+  readonly postcode: string;
+  readonly spots: number;
+  readonly rescues: number;
+  readonly activeSpots: number;
+  readonly totalCo2eKg: number;
+  readonly impactPoints: number;
+}
+
+interface CommunityBoardSpotterEntry {
+  readonly userId: string;
+  readonly name: string;
+  readonly postcode: string | null;
+  readonly spotsPosted: number;
+  readonly rescues: number;
+  readonly totalCo2eKg: number;
+  readonly impactPoints: number;
+}
 
 @Injectable()
 export class GamificationService {
@@ -210,6 +231,89 @@ export class GamificationService {
     });
   }
 
+  async getCommunityBoard(userId: string, window: CommunityBoardWindow) {
+    const user = await this.users.findOne({ where: { id: userId } });
+    const board = await this.buildCommunityBoard(window);
+    const userArea = resolveOutwardPostcode(user?.postcode ?? null);
+    const activeArea =
+      userArea && board.postcodes.some((entry) => entry.postcode === userArea)
+        ? userArea
+        : board.postcodes[0]?.postcode ?? null;
+    const localSpotters =
+      activeArea !== null
+        ? board.spotters.filter((entry) => entry.postcode === activeArea)
+        : board.spotters;
+    const currentUserAreaRank = userArea
+      ? board.postcodes.findIndex((entry) => entry.postcode === userArea) + 1 || null
+      : null;
+    const currentUserSpotterRank =
+      localSpotters.findIndex((entry) => entry.userId === userId) >= 0
+        ? localSpotters.findIndex((entry) => entry.userId === userId) + 1
+        : null;
+    const currentUserSpotter = board.spotters.find((entry) => entry.userId === userId);
+
+    return {
+      window,
+      userArea,
+      activeArea,
+      postcodes: board.postcodes,
+      localSpotters: localSpotters.slice(0, 8),
+      currentUser: {
+        areaRank: currentUserAreaRank,
+        localSpotterRank: currentUserSpotterRank,
+        impactPoints: currentUserSpotter?.impactPoints ?? 0,
+        spotsPosted: currentUserSpotter?.spotsPosted ?? 0,
+        totalCo2eKg: currentUserSpotter?.totalCo2eKg ?? 0,
+      },
+    };
+  }
+
+  async getFoundItemImpact(userId: string) {
+    const items = await this.getFoundItemRepository()
+      .createQueryBuilder('item')
+      .where('item.poster_id = :userId', { userId })
+      .orderBy('item.posted_at', 'DESC')
+      .getMany();
+    const user = await this.users.findOne({ where: { id: userId } });
+    const board = await this.buildCommunityBoard('month');
+    const userArea = resolveOutwardPostcode(user?.postcode ?? null);
+    const areaRank = userArea
+      ? board.postcodes.findIndex((entry) => entry.postcode === userArea) + 1 || null
+      : null;
+
+    const areaTally = new Map<string, number>();
+    for (const item of items) {
+      const area = resolveOutwardPostcode(item.postcode);
+      if (!area) {
+        continue;
+      }
+      areaTally.set(area, (areaTally.get(area) ?? 0) + 1);
+    }
+
+    const topArea = [...areaTally.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+
+    return {
+      spotsPosted: items.length,
+      liveSpots: items.filter((item) => item.status === FoundItemStatus.AVAILABLE || item.status === FoundItemStatus.CLAIMED).length,
+      rescuedSpots: items.filter((item) => item.status === FoundItemStatus.PICKED_UP).length,
+      reportedSpots: items.filter((item) => item.status === FoundItemStatus.REPORTED).length,
+      totalCo2eKg: items.reduce((total, item) => total + (item.estimatedCo2eKg ?? 0), 0),
+      totalImpactPoints: items.reduce((total, item) => total + (item.impactPoints ?? 0), 0),
+      topArea,
+      userArea,
+      currentMonthAreaRank: areaRank,
+      recentPosts: items.slice(0, 4).map((item) => ({
+        id: item.id,
+        title: item.title,
+        postcode: item.postcode,
+        status: item.status,
+        estimatedCo2eKg: item.estimatedCo2eKg ?? 0,
+        impactPoints: item.impactPoints ?? 0,
+        postedAt: item.postedAt.toISOString(),
+      })),
+    };
+  }
+
   private getUserProgressRepository(manager?: EntityManager): Repository<UserProgress> {
     return manager ? manager.getRepository(UserProgress) : this.progress;
   }
@@ -240,6 +344,123 @@ export class GamificationService {
 
   private getBadgeRepository(manager?: EntityManager): Repository<GamificationBadge> {
     return manager ? manager.getRepository(GamificationBadge) : this.badges;
+  }
+
+  private async buildCommunityBoard(window: CommunityBoardWindow): Promise<{
+    postcodes: CommunityBoardPostcodeEntry[];
+    spotters: CommunityBoardSpotterEntry[];
+  }> {
+    const startAt = this.getWindowStart(window);
+    const queryBuilder = this.getFoundItemRepository()
+      .createQueryBuilder('item')
+      .leftJoinAndSelect('item.poster', 'poster')
+      .orderBy('item.posted_at', 'DESC');
+
+    if (startAt) {
+      queryBuilder.where('item.posted_at >= :startAt', { startAt });
+    }
+
+    const items = await queryBuilder.getMany();
+    const postcodeMap = new Map<string, {
+      postcode: string;
+      spots: number;
+      rescues: number;
+      activeSpots: number;
+      totalCo2eKg: number;
+      impactPoints: number;
+    }>();
+    const spotterMap = new Map<string, {
+      userId: string;
+      name: string;
+      postcode: string | null;
+      spotsPosted: number;
+      rescues: number;
+      totalCo2eKg: number;
+      impactPoints: number;
+    }>();
+
+    for (const item of items) {
+      const outwardPostcode = resolveOutwardPostcode(item.postcode);
+      if (outwardPostcode) {
+        const existingPostcode = postcodeMap.get(outwardPostcode) ?? {
+          postcode: outwardPostcode,
+          spots: 0,
+          rescues: 0,
+          activeSpots: 0,
+          totalCo2eKg: 0,
+          impactPoints: 0,
+        };
+        existingPostcode.spots += 1;
+        existingPostcode.rescues += item.status === FoundItemStatus.PICKED_UP ? 1 : 0;
+        existingPostcode.activeSpots +=
+          item.status === FoundItemStatus.AVAILABLE || item.status === FoundItemStatus.CLAIMED ? 1 : 0;
+        existingPostcode.totalCo2eKg += item.estimatedCo2eKg ?? 0;
+        existingPostcode.impactPoints += item.impactPoints ?? 0;
+        postcodeMap.set(outwardPostcode, existingPostcode);
+      }
+
+      const posterId = item.posterId;
+      const spotter = spotterMap.get(posterId) ?? {
+        userId: posterId,
+        name: this.resolveSpotterName(item.poster),
+        postcode: outwardPostcode,
+        spotsPosted: 0,
+        rescues: 0,
+        totalCo2eKg: 0,
+        impactPoints: 0,
+      };
+      spotter.spotsPosted += 1;
+      spotter.rescues += item.status === FoundItemStatus.PICKED_UP ? 1 : 0;
+      spotter.totalCo2eKg += item.estimatedCo2eKg ?? 0;
+      spotter.impactPoints += item.impactPoints ?? 0;
+      if (!spotter.postcode && outwardPostcode) {
+        spotter.postcode = outwardPostcode;
+      }
+      spotterMap.set(posterId, spotter);
+    }
+
+    const postcodes = [...postcodeMap.values()].sort((left, right) => {
+      return (
+        right.impactPoints - left.impactPoints ||
+        right.rescues - left.rescues ||
+        right.spots - left.spots ||
+        left.postcode.localeCompare(right.postcode)
+      );
+    });
+    const spotters = [...spotterMap.values()].sort((left, right) => {
+      return (
+        right.impactPoints - left.impactPoints ||
+        right.spotsPosted - left.spotsPosted ||
+        left.name.localeCompare(right.name)
+      );
+    });
+
+    return {
+      postcodes,
+      spotters,
+    };
+  }
+
+  private getWindowStart(window: CommunityBoardWindow): Date | null {
+    if (window === 'all') {
+      return null;
+    }
+
+    const days = window === 'week' ? 7 : 30;
+    return new Date(Date.now() - days * DAY_IN_MS);
+  }
+
+  private resolveSpotterName(user: User | null | undefined): string {
+    if (!user) {
+      return 'Community member';
+    }
+
+    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+    if (fullName) {
+      return fullName;
+    }
+
+    return user.email.split('@')[0] || 'Community member';
   }
 
   private async recordActivity(manager: EntityManager, input: PointActivityInput): Promise<void> {

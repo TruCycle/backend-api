@@ -48,6 +48,7 @@ import { AddApprovedCollectorIdToItemTable1700000000022 } from './database/migra
 import { AddPasswordResetOtpToUser1700000000023 } from './database/migrations/1700000000023-AddPasswordResetOtpToUser';
 import { CreateGamificationTables1700000000024 } from './database/migrations/1700000000024-CreateGamificationTables';
 import { CreateFoundItemsTables1700000000025 } from './database/migrations/1700000000025-CreateFoundItemsTables';
+import { EnhanceFoundItemsLocationAndImpact1700000000026 } from './database/migrations/1700000000026-EnhanceFoundItemsLocationAndImpact';
 import { FoundItemsModule } from './modules/found-items/found-items.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
 
@@ -109,6 +110,7 @@ const dbModules: any[] = enableDb
           AddPasswordResetOtpToUser1700000000023,
           CreateGamificationTables1700000000024,
           CreateFoundItemsTables1700000000025,
+          EnhanceFoundItemsLocationAndImpact1700000000026,
         ],
         migrationsRun: true,
         migrationsTransactionMode: 'each',

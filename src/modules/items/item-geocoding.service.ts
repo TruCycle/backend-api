@@ -6,6 +6,7 @@ import { ItemLocation } from './item-location.interface';
 export class ItemGeocodingService {
   private readonly logger = new Logger(ItemGeocodingService.name);
   private readonly endpoint = process.env.OSM_SEARCH_URL || 'https://nominatim.openstreetmap.org/search';
+  private readonly reverseEndpoint = process.env.OSM_REVERSE_URL || 'https://nominatim.openstreetmap.org/reverse';
   private readonly userAgent =
     process.env.OSM_USER_AGENT || 'TruCycleBackend/0.1 (+https://trucycle.com/contact)';
   private readonly requestTimeoutMs = Number(process.env.OSM_TIMEOUT_MS || 5000);
@@ -106,6 +107,102 @@ export class ItemGeocodingService {
         throw err;
       }
       this.logger.error('Failed to call geocoder', err instanceof Error ? err.stack : err);
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async reverseGeocode(
+    latitude: number,
+    longitude: number,
+  ): Promise<{
+    latitude: number;
+    longitude: number;
+    postcode: string | null;
+    addressLine: string | null;
+    neighborhood: string | null;
+  }> {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      throw new BadRequestException('Valid latitude and longitude are required');
+    }
+
+    const fetchFn: any = (globalThis as any).fetch;
+    if (typeof fetchFn !== 'function') {
+      this.logger.error('Global fetch is not available in this runtime');
+      throw new Error('Geocoder unavailable');
+    }
+
+    const AbortCtor: any = (globalThis as any).AbortController;
+    const controller = typeof AbortCtor === 'function' ? new AbortCtor() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), this.requestTimeoutMs) : null;
+
+    try {
+      const params = new URLSearchParams({
+        lat: latitude.toString(),
+        lon: longitude.toString(),
+        format: 'jsonv2',
+        addressdetails: '1',
+        zoom: '18',
+      });
+      const url = `${this.reverseEndpoint}?${params.toString()}`;
+      const res = await fetchFn(url, {
+        method: 'GET',
+        headers: {
+          'User-Agent': this.userAgent,
+          Accept: 'application/json',
+          'Accept-Language': 'en',
+        },
+        signal: controller ? controller.signal : undefined,
+      });
+
+      if (!res || typeof res.status !== 'number') {
+        throw new Error('Unexpected geocoder response');
+      }
+      if (!res.ok) {
+        this.logger.warn(`Reverse geocoder responded with status ${res.status}`);
+        throw new Error(`Reverse geocoder responded with status ${res.status}`);
+      }
+
+      const payload: any = await res.json();
+      const address = typeof payload?.address === 'object' && payload.address !== null ? payload.address : {};
+      const postcode =
+        typeof address.postcode === 'string' && address.postcode.trim().length > 0
+          ? address.postcode.trim().toUpperCase().replace(/\s+/g, ' ')
+          : null;
+      const road = typeof address.road === 'string' && address.road.trim().length > 0 ? address.road.trim() : null;
+      const houseNumber =
+        typeof address.house_number === 'string' && address.house_number.trim().length > 0
+          ? address.house_number.trim()
+          : null;
+      const neighborhoodCandidates = [
+        address.neighbourhood,
+        address.suburb,
+        address.quarter,
+        address.hamlet,
+        address.village,
+        address.city_district,
+      ];
+      const neighborhood = neighborhoodCandidates.find(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0,
+      )?.trim() ?? null;
+
+      return {
+        latitude,
+        longitude,
+        postcode,
+        addressLine: road ? [houseNumber, road].filter(Boolean).join(' ') : null,
+        neighborhood,
+      };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        this.logger.warn('Reverse geocoding request timed out');
+        throw new Error('Reverse geocoding request timed out');
+      }
+      if (err instanceof BadRequestException) {
+        throw err;
+      }
+      this.logger.error('Failed to call reverse geocoder', err instanceof Error ? err.stack : err);
       throw err;
     } finally {
       if (timer) clearTimeout(timer);

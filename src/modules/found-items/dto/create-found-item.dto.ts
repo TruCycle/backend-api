@@ -3,13 +3,16 @@ import { Expose, Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsLatitude,
   IsLongitude,
+  IsNumber,
   IsOptional,
   IsString,
   IsUrl,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 
@@ -96,6 +99,30 @@ export class CreateFoundItemDto {
   @MaxLength(120)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   condition?: string;
+
+  @ApiPropertyOptional({ minimum: 0, description: 'Estimated item weight in kilograms' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ allowInfinity: false, allowNaN: false })
+  @Min(0)
+  weightKg?: number;
+
+  @ApiPropertyOptional({ description: 'Whether the item was fly-tipped' })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true') {
+        return true;
+      }
+      if (normalized === 'false') {
+        return false;
+      }
+    }
+    return value;
+  })
+  @IsBoolean()
+  isFlyTipped?: boolean;
 
   @ApiPropertyOptional({ type: [CreateFoundItemImageDto] })
   @IsOptional()

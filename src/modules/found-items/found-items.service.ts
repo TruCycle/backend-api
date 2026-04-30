@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { normalizePostcode } from '../../common/utils/postcode';
 import { GamificationService } from '../gamification/gamification.service';
 import { ItemGeocodingService } from '../items/item-geocoding.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -27,6 +28,24 @@ const MAX_LIMIT = 50;
 const DEFAULT_PAGE = 1;
 const DEFAULT_MAX_DISTANCE_KM = 5;
 const ACTIVE_CLAIM_STATUSES: readonly FoundItemClaimStatus[] = [FoundItemClaimStatus.PENDING, FoundItemClaimStatus.ACKNOWLEDGED];
+const FOUND_ITEM_IMPACT_FACTORS: Record<string, { defaultWeightKg: number; impactFactor: number }> = {
+  furniture: { defaultWeightKg: 25, impactFactor: 3.44 },
+  electronics: { defaultWeightKg: 12, impactFactor: 5.1 },
+  clothing: { defaultWeightKg: 6, impactFactor: 2.2 },
+  books: { defaultWeightKg: 14, impactFactor: 1.8 },
+  appliances: { defaultWeightKg: 35, impactFactor: 4.2 },
+  outdoor: { defaultWeightKg: 18, impactFactor: 3 },
+  toys: { defaultWeightKg: 8, impactFactor: 2.6 },
+  other: { defaultWeightKg: 15, impactFactor: 2.8 },
+};
+
+interface ResolvedFoundItemLocation {
+  readonly postcode: string;
+  readonly latitude: number | null;
+  readonly longitude: number | null;
+  readonly address: string | null;
+  readonly neighborhood: string | null;
+}
 
 @Injectable()
 export class FoundItemsService {
@@ -153,8 +172,8 @@ export class FoundItemsService {
 
   async create(userId: string, dto: CreateFoundItemDto) {
     const poster = await this.ensureActiveUser(userId);
-    const postcode = this.resolvePostcode(dto, poster);
-    const coordinates = await this.resolveCoordinates(dto, postcode);
+    const location = await this.resolveLocation(dto, poster);
+    const impact = this.resolveImpact(dto.category, dto.weightKg);
     const item = this.foundItems.create({
       posterId: poster.id,
       poster,
@@ -162,12 +181,16 @@ export class FoundItemsService {
       description: dto.description.trim(),
       category: dto.category,
       condition: dto.condition?.trim() || null,
+      weightKg: impact.weightKg,
+      estimatedCo2eKg: impact.estimatedCo2eKg,
+      impactPoints: impact.impactPoints,
+      isFlyTipped: dto.isFlyTipped === true,
       status: FoundItemStatus.AVAILABLE,
-      address: dto.location.address?.trim() || null,
-      neighborhood: null,
-      postcode,
-      latitude: coordinates.latitude,
-      longitude: coordinates.longitude,
+      address: location.address,
+      neighborhood: location.neighborhood,
+      postcode: location.postcode,
+      latitude: location.latitude,
+      longitude: location.longitude,
       images: this.normalizeImages(dto.images),
       expiresAt: null,
     });
@@ -356,11 +379,63 @@ export class FoundItemsService {
   }
 
   private resolvePostcode(dto: CreateFoundItemDto, user: User): string {
-    const postcode = dto.location.postcode?.trim().toUpperCase() || user.postcode?.trim().toUpperCase();
+    const postcode =
+      (typeof dto.location.postcode === 'string' && dto.location.postcode.trim()
+        ? normalizePostcode(dto.location.postcode)
+        : null) ||
+      (typeof user.postcode === 'string' && user.postcode.trim()
+        ? normalizePostcode(user.postcode)
+        : null);
     if (!postcode) {
       throw new BadRequestException('A postcode is required to post a found item');
     }
     return postcode;
+  }
+
+  private async resolveLocation(dto: CreateFoundItemDto, user: User): Promise<ResolvedFoundItemLocation> {
+    const address = dto.location.address?.trim() || null;
+    const latitude =
+      typeof dto.location.latitude === 'number' && Number.isFinite(dto.location.latitude)
+        ? dto.location.latitude
+        : null;
+    const longitude =
+      typeof dto.location.longitude === 'number' && Number.isFinite(dto.location.longitude)
+        ? dto.location.longitude
+        : null;
+
+    if (latitude !== null && longitude !== null) {
+      try {
+        const reverse = await this.geocoding.reverseGeocode(latitude, longitude);
+        return {
+          postcode: reverse.postcode ?? this.resolvePostcode(dto, user),
+          latitude,
+          longitude,
+          address: address ?? reverse.addressLine ?? null,
+          neighborhood: reverse.neighborhood,
+        };
+      } catch (error) {
+        this.logger.debug(
+          `Found-item reverse geocoding fallback for ${latitude},${longitude}: ${String(error)}`,
+        );
+        return {
+          postcode: this.resolvePostcode(dto, user),
+          latitude,
+          longitude,
+          address,
+          neighborhood: null,
+        };
+      }
+    }
+
+    const postcode = this.resolvePostcode(dto, user);
+    const coordinates = await this.resolveCoordinates(dto, postcode);
+    return {
+      postcode,
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      address,
+      neighborhood: null,
+    };
   }
 
   private async resolveCoordinates(dto: CreateFoundItemDto, postcode: string): Promise<{ latitude: number | null; longitude: number | null }> {
@@ -387,6 +462,25 @@ export class FoundItemsService {
     }
 
     return { latitude, longitude };
+  }
+
+  private resolveImpact(category: string, weightKg?: number | null): {
+    weightKg: number;
+    estimatedCo2eKg: number;
+    impactPoints: number;
+  } {
+    const profile = FOUND_ITEM_IMPACT_FACTORS[category] ?? FOUND_ITEM_IMPACT_FACTORS.other;
+    const safeWeightKg =
+      typeof weightKg === 'number' && Number.isFinite(weightKg) && weightKg > 0
+        ? Math.round(weightKg)
+        : profile.defaultWeightKg;
+    const estimatedCo2eKg = Math.max(12, Math.round(safeWeightKg * profile.impactFactor));
+
+    return {
+      weightKg: safeWeightKg,
+      estimatedCo2eKg,
+      impactPoints: estimatedCo2eKg,
+    };
   }
 
   private normalizeImages(images?: CreateFoundItemImageDto[]): FoundItemImage[] {
@@ -492,6 +586,10 @@ export class FoundItemsService {
         approximateDistance,
       },
       condition: item.condition ?? null,
+      weightKg: item.weightKg ?? null,
+      estimatedCo2eKg: item.estimatedCo2eKg ?? 0,
+      impactPoints: item.impactPoints ?? 0,
+      isFlyTipped: item.isFlyTipped === true,
       poster: {
         id: item.poster.id,
         name: this.getUserDisplayName(item.poster),

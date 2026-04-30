@@ -2,6 +2,7 @@ import { Controller, Get, HttpCode, Param, Post, Query, Req, UseGuards } from '@
 import { ApiBearerAuth, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CommunityBoardQueryDto } from './dto/community-board-query.dto';
 import { GamificationBadgesQueryDto } from './dto/gamification-badges-query.dto';
 import { PointHistoryQueryDto } from './dto/point-history-query.dto';
 import { GamificationService } from './gamification.service';
@@ -39,6 +40,20 @@ export class GamificationController {
   @ApiOkResponse({ description: 'Point history and pagination' })
   async getPointHistory(@Req() req: any, @Query() query: PointHistoryQueryDto): Promise<unknown> {
     return this.gamification.getUserPointHistory(req.user.id as string, query);
+  }
+
+  @Get('community-board')
+  @ApiOperation({ summary: 'Get community board rankings derived from found-item activity' })
+  @ApiOkResponse({ description: 'Community board postcode and spotter rankings' })
+  async getCommunityBoard(@Req() req: any, @Query() query: CommunityBoardQueryDto): Promise<unknown> {
+    return this.gamification.getCommunityBoard(req.user.id as string, query.window ?? 'month');
+  }
+
+  @Get('impact/found-items')
+  @ApiOperation({ summary: 'Get found-item impact summary for the authenticated user' })
+  @ApiOkResponse({ description: 'Found-item impact snapshot' })
+  async getFoundItemImpact(@Req() req: any): Promise<unknown> {
+    return this.gamification.getFoundItemImpact(req.user.id as string);
   }
 
   @Post('badges/:badgeId/seen')

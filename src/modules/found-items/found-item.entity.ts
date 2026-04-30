@@ -40,6 +40,18 @@ export class FoundItem {
   @Column({ type: 'text', nullable: true })
   condition?: string | null;
 
+  @Column({ name: 'weight_kg', type: 'double precision', nullable: true })
+  weightKg?: number | null;
+
+  @Column({ name: 'estimated_co2e_kg', type: 'integer', default: 0 })
+  estimatedCo2eKg!: number;
+
+  @Column({ name: 'impact_points', type: 'integer', default: 0 })
+  impactPoints!: number;
+
+  @Column({ name: 'is_fly_tipped', type: 'boolean', default: false })
+  isFlyTipped!: boolean;
+
   @Column({ type: 'enum', enum: FoundItemStatus, default: FoundItemStatus.AVAILABLE })
   status!: FoundItemStatus;
 
