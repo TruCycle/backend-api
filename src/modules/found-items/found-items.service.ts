@@ -17,9 +17,16 @@ import { CreateFoundItemClaimDto } from './dto/create-found-item-claim.dto';
 import { CreateFoundItemDto, CreateFoundItemImageDto } from './dto/create-found-item.dto';
 import { MyFoundItemsQueryDto } from './dto/my-found-items-query.dto';
 import { ReportFoundItemDto } from './dto/report-found-item.dto';
+import { SearchFoundItemCatalogDto } from './dto/search-found-item-catalog.dto';
 import { FoundItemSortBy, SearchFoundItemsDto } from './dto/search-found-items.dto';
 import { UpdateFoundItemStatusDto } from './dto/update-found-item-status.dto';
-import { findFoundItemCarbonCatalogEntry } from './found-item-carbon-catalog';
+import {
+  findFoundItemCarbonCatalogEntry,
+  findFoundItemCarbonCatalogEntryBySelection,
+  getFoundItemCarbonCatalogSupportedCategories,
+  searchFoundItemCarbonCatalog,
+  type FoundItemCarbonCatalogEntry,
+} from './found-item-carbon-catalog';
 import { FoundItem, FoundItemImage, FoundItemStatus } from './found-item.entity';
 import { FoundItemClaim, FoundItemClaimStatus } from './found-item-claim.entity';
 import { FoundItemReport } from './found-item-report.entity';
@@ -107,6 +114,19 @@ export class FoundItemsService {
     };
   }
 
+  async searchCatalog(query: SearchFoundItemCatalogDto) {
+    const entries = searchFoundItemCarbonCatalog({
+      category: query.category,
+      search: query.search,
+      limit: query.limit,
+    });
+
+    return {
+      supportedCategories: getFoundItemCarbonCatalogSupportedCategories(),
+      entries: entries.map((entry) => this.mapCatalogEntry(entry)),
+    };
+  }
+
   async getById(userId: string, foundItemId: string) {
     const item = await this.foundItems.findOne({
       where: { id: foundItemId.trim() },
@@ -191,7 +211,7 @@ export class FoundItemsService {
   async create(userId: string, dto: CreateFoundItemDto) {
     const poster = await this.ensureActiveUser(userId);
     const location = await this.resolveLocation(dto, poster);
-    const impact = this.resolveImpact(dto.category, dto.title, dto.weightKg);
+    const impact = this.resolveImpact(dto.category, dto.title, dto.weightKg, dto.carbonCatalogSelection);
     const item = this.foundItems.create({
       posterId: poster.id,
       poster,
@@ -482,27 +502,27 @@ export class FoundItemsService {
     return { latitude, longitude };
   }
 
-  private resolveImpact(category: string, title: string, weightKg?: number | null): {
+  private resolveImpact(
+    category: string,
+    title: string,
+    weightKg?: number | null,
+    carbonCatalogSelection?: CreateFoundItemDto['carbonCatalogSelection'],
+  ): {
     weightKg: number;
     estimatedCo2eKg: number;
     impactPoints: number;
   } {
-    const catalogEntry = findFoundItemCarbonCatalogEntry(category, title, weightKg);
+    const exactCatalogEntry = carbonCatalogSelection
+      ? findFoundItemCarbonCatalogEntryBySelection({
+          sourceCategory: carbonCatalogSelection.sourceCategory,
+          subcategory: carbonCatalogSelection.subcategory,
+          item: carbonCatalogSelection.item,
+        })
+      : null;
+
+    const catalogEntry = exactCatalogEntry ?? findFoundItemCarbonCatalogEntry(category, title, weightKg);
     if (catalogEntry) {
-      const resolvedWeightKg = this.resolveWeightKg(weightKg, catalogEntry.typicalWeightKg);
-      return {
-        weightKg: resolvedWeightKg,
-        estimatedCo2eKg: this.scaleCatalogMetric(
-          catalogEntry.netCo2eSavedKg,
-          catalogEntry.typicalWeightKg,
-          resolvedWeightKg,
-        ),
-        impactPoints: this.scaleCatalogMetric(
-          catalogEntry.carbonPointsAwarded,
-          catalogEntry.typicalWeightKg,
-          resolvedWeightKg,
-        ),
-      };
+      return this.resolveImpactFromCatalogEntry(catalogEntry, weightKg);
     }
 
     const profile = FOUND_ITEM_FALLBACK_IMPACT_FACTORS[category] ?? FOUND_ITEM_FALLBACK_IMPACT_FACTORS.other;
@@ -513,6 +533,31 @@ export class FoundItemsService {
       weightKg: safeWeightKg,
       estimatedCo2eKg,
       impactPoints: estimatedCo2eKg,
+    };
+  }
+
+  private resolveImpactFromCatalogEntry(
+    catalogEntry: FoundItemCarbonCatalogEntry,
+    weightKg?: number | null,
+  ): {
+    weightKg: number;
+    estimatedCo2eKg: number;
+    impactPoints: number;
+  } {
+    const resolvedWeightKg = this.resolveWeightKg(weightKg, catalogEntry.typicalWeightKg);
+
+    return {
+      weightKg: resolvedWeightKg,
+      estimatedCo2eKg: this.scaleCatalogMetric(
+        catalogEntry.netCo2eSavedKg,
+        catalogEntry.typicalWeightKg,
+        resolvedWeightKg,
+      ),
+      impactPoints: this.scaleCatalogMetric(
+        catalogEntry.carbonPointsAwarded,
+        catalogEntry.typicalWeightKg,
+        resolvedWeightKg,
+      ),
     };
   }
 
@@ -532,6 +577,17 @@ export class FoundItemsService {
 
     const scaledMetric = (metric / typicalWeightKg) * resolvedWeightKg;
     return Math.max(0, Math.round(scaledMetric));
+  }
+
+  private mapCatalogEntry(entry: FoundItemCarbonCatalogEntry) {
+    return {
+      sourceCategory: entry.category,
+      subcategory: entry.subcategory,
+      item: entry.item,
+      typicalWeightKg: entry.typicalWeightKg,
+      estimatedCo2eKg: Math.max(0, Math.round(entry.netCo2eSavedKg)),
+      impactPoints: Math.max(0, Math.round(entry.carbonPointsAwarded)),
+    };
   }
 
   private normalizeImages(images?: CreateFoundItemImageDto[]): FoundItemImage[] {

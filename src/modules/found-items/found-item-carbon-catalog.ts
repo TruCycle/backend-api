@@ -14,6 +14,12 @@ export interface FoundItemCarbonCatalogEntry {
   readonly searchTokens: readonly string[];
 }
 
+export interface FoundItemCarbonCatalogSelection {
+  readonly sourceCategory?: string | null;
+  readonly subcategory?: string | null;
+  readonly item: string;
+}
+
 const catalogFilePath = resolve(process.cwd(), 'data', 'found-item-carbon-catalog.csv');
 
 const categoryCatalogMap: Record<string, readonly string[]> = {
@@ -25,6 +31,13 @@ const categoryCatalogMap: Record<string, readonly string[]> = {
 };
 
 let cachedCatalog: readonly FoundItemCarbonCatalogEntry[] | null = null;
+
+export function getFoundItemCarbonCatalogSupportedCategories(): readonly string[] {
+  return Object.entries(categoryCatalogMap)
+    .filter(([, sourceCategories]) => sourceCategories.length > 0)
+    .map(([category]) => category)
+    .sort((left, right) => left.localeCompare(right));
+}
 
 export function getFoundItemCarbonCatalog(): readonly FoundItemCarbonCatalogEntry[] {
   if (cachedCatalog) {
@@ -78,6 +91,89 @@ export function findFoundItemCarbonCatalogEntry(
   }
 
   return bestScore >= 25 ? bestEntry : null;
+}
+
+export function findFoundItemCarbonCatalogEntryBySelection(
+  selection: FoundItemCarbonCatalogSelection,
+): FoundItemCarbonCatalogEntry | null {
+  const normalizedItem = normalizeSearchText(selection.item);
+  if (!normalizedItem) {
+    return null;
+  }
+
+  const normalizedSourceCategory = normalizeSearchText(selection.sourceCategory ?? '');
+  const normalizedSubcategory = normalizeSearchText(selection.subcategory ?? '');
+
+  for (const entry of getFoundItemCarbonCatalog()) {
+    if (entry.normalizedItem !== normalizedItem) {
+      continue;
+    }
+
+    if (normalizedSourceCategory && entry.normalizedCategory !== normalizedSourceCategory) {
+      continue;
+    }
+
+    if (normalizedSubcategory && entry.normalizedSubcategory !== normalizedSubcategory) {
+      continue;
+    }
+
+    return entry;
+  }
+
+  return null;
+}
+
+export function searchFoundItemCarbonCatalog(options: {
+  readonly category?: string;
+  readonly search?: string;
+  readonly limit?: number;
+}): readonly FoundItemCarbonCatalogEntry[] {
+  const requestedCategory = normalizeSearchText(options.category ?? '');
+  const preferredCategories = new Set(
+    (categoryCatalogMap[requestedCategory] ?? []).map((value) => normalizeSearchText(value)),
+  );
+  const normalizedSearch = normalizeSearchText(options.search ?? '');
+  const searchTokens = tokenize(`${options.category ?? ''} ${options.search ?? ''}`);
+  const limit = Math.min(Math.max(options.limit ?? 8, 1), 20);
+
+  if (requestedCategory && !categoryCatalogMap[requestedCategory]) {
+    return [];
+  }
+
+  const scopedEntries = getFoundItemCarbonCatalog().filter((entry) => {
+    if (preferredCategories.size === 0) {
+      return !requestedCategory;
+    }
+
+    return preferredCategories.has(entry.normalizedCategory);
+  });
+
+  if (!normalizedSearch) {
+    return [...scopedEntries]
+      .sort((left, right) => {
+        return (
+          left.subcategory.localeCompare(right.subcategory) ||
+          left.item.localeCompare(right.item)
+        );
+      })
+      .slice(0, limit);
+  }
+
+  return scopedEntries
+    .map((entry) => ({
+      entry,
+      score: scoreCatalogEntry(entry, normalizedSearch, searchTokens, preferredCategories, undefined),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => {
+      return (
+        right.score - left.score ||
+        left.entry.subcategory.localeCompare(right.entry.subcategory) ||
+        left.entry.item.localeCompare(right.entry.item)
+      );
+    })
+    .slice(0, limit)
+    .map((entry) => entry.entry);
 }
 
 function createCatalogEntry(

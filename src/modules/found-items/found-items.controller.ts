@@ -6,6 +6,7 @@ import { CreateFoundItemClaimDto } from './dto/create-found-item-claim.dto';
 import { CreateFoundItemDto } from './dto/create-found-item.dto';
 import { MyFoundItemsQueryDto } from './dto/my-found-items-query.dto';
 import { ReportFoundItemDto } from './dto/report-found-item.dto';
+import { SearchFoundItemCatalogDto } from './dto/search-found-item-catalog.dto';
 import { SearchFoundItemsDto } from './dto/search-found-items.dto';
 import { UpdateFoundItemStatusDto } from './dto/update-found-item-status.dto';
 import { FoundItemsService } from './found-items.service';
@@ -29,6 +30,13 @@ export class FoundItemsController {
   @ApiOkResponse({ description: 'User posted found items and pagination' })
   async listMine(@Req() req: any, @Query() query: MyFoundItemsQueryDto): Promise<unknown> {
     return this.foundItems.listMine(req.user.id as string, query);
+  }
+
+  @Get('catalog')
+  @ApiOperation({ summary: 'Search the found-item carbon catalog used for impact estimates' })
+  @ApiOkResponse({ description: 'Catalog entries and supported posting categories' })
+  async searchCatalog(@Query() query: SearchFoundItemCatalogDto): Promise<unknown> {
+    return this.foundItems.searchCatalog(query);
   }
 
   @Get(':id')

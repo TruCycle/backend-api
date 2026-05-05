@@ -76,6 +76,28 @@ export class CreateFoundItemLocationDto {
   postcode?: string;
 }
 
+export class CreateFoundItemCarbonCatalogSelectionDto {
+  @ApiPropertyOptional({ maxLength: 80 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  sourceCategory?: string;
+
+  @ApiPropertyOptional({ maxLength: 120 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  subcategory?: string;
+
+  @ApiProperty({ maxLength: 160 })
+  @IsString()
+  @MaxLength(160)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  item!: string;
+}
+
 export class CreateFoundItemDto {
   @ApiProperty({ maxLength: 120 })
   @IsString()
@@ -136,4 +158,10 @@ export class CreateFoundItemDto {
   @ValidateNested()
   @Type(() => CreateFoundItemLocationDto)
   location!: CreateFoundItemLocationDto;
+
+  @ApiPropertyOptional({ type: CreateFoundItemCarbonCatalogSelectionDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateFoundItemCarbonCatalogSelectionDto)
+  carbonCatalogSelection?: CreateFoundItemCarbonCatalogSelectionDto;
 }
