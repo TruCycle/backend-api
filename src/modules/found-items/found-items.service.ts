@@ -19,6 +19,7 @@ import { MyFoundItemsQueryDto } from './dto/my-found-items-query.dto';
 import { ReportFoundItemDto } from './dto/report-found-item.dto';
 import { FoundItemSortBy, SearchFoundItemsDto } from './dto/search-found-items.dto';
 import { UpdateFoundItemStatusDto } from './dto/update-found-item-status.dto';
+import { findFoundItemCarbonCatalogEntry } from './found-item-carbon-catalog';
 import { FoundItem, FoundItemImage, FoundItemStatus } from './found-item.entity';
 import { FoundItemClaim, FoundItemClaimStatus } from './found-item-claim.entity';
 import { FoundItemReport } from './found-item-report.entity';
@@ -28,7 +29,7 @@ const MAX_LIMIT = 50;
 const DEFAULT_PAGE = 1;
 const DEFAULT_MAX_DISTANCE_KM = 5;
 const ACTIVE_CLAIM_STATUSES: readonly FoundItemClaimStatus[] = [FoundItemClaimStatus.PENDING, FoundItemClaimStatus.ACKNOWLEDGED];
-const FOUND_ITEM_IMPACT_FACTORS: Record<string, { defaultWeightKg: number; impactFactor: number }> = {
+const FOUND_ITEM_FALLBACK_IMPACT_FACTORS: Record<string, { defaultWeightKg: number; impactFactor: number }> = {
   furniture: { defaultWeightKg: 25, impactFactor: 3.44 },
   electronics: { defaultWeightKg: 12, impactFactor: 5.1 },
   clothing: { defaultWeightKg: 6, impactFactor: 2.2 },
@@ -126,6 +127,11 @@ export class FoundItemsService {
       relations: { claimer: true },
       order: { createdAt: 'DESC' },
     }) : [];
+    const viewerClaim = item.posterId !== userId ? await this.claims.findOne({
+      where: { foundItemId: item.id, claimerId: userId },
+      relations: { claimer: true },
+      order: { createdAt: 'DESC' },
+    }) : null;
 
     return {
       item: this.mapFoundItem(item, claimCounts.get(item.id) ?? 0, null),
@@ -138,6 +144,18 @@ export class FoundItemsService {
         status: claim.status,
         createdAt: claim.createdAt.toISOString(),
       })),
+      viewerClaim:
+        viewerClaim && viewerClaim.status !== FoundItemClaimStatus.CANCELLED
+          ? {
+              id: viewerClaim.id,
+              foundItemId: viewerClaim.foundItemId,
+              claimerId: viewerClaim.claimerId,
+              claimerName: this.getUserDisplayName(viewerClaim.claimer),
+              message: viewerClaim.message ?? null,
+              status: viewerClaim.status,
+              createdAt: viewerClaim.createdAt.toISOString(),
+            }
+          : null,
     };
   }
 
@@ -173,7 +191,7 @@ export class FoundItemsService {
   async create(userId: string, dto: CreateFoundItemDto) {
     const poster = await this.ensureActiveUser(userId);
     const location = await this.resolveLocation(dto, poster);
-    const impact = this.resolveImpact(dto.category, dto.weightKg);
+    const impact = this.resolveImpact(dto.category, dto.title, dto.weightKg);
     const item = this.foundItems.create({
       posterId: poster.id,
       poster,
@@ -464,16 +482,31 @@ export class FoundItemsService {
     return { latitude, longitude };
   }
 
-  private resolveImpact(category: string, weightKg?: number | null): {
+  private resolveImpact(category: string, title: string, weightKg?: number | null): {
     weightKg: number;
     estimatedCo2eKg: number;
     impactPoints: number;
   } {
-    const profile = FOUND_ITEM_IMPACT_FACTORS[category] ?? FOUND_ITEM_IMPACT_FACTORS.other;
-    const safeWeightKg =
-      typeof weightKg === 'number' && Number.isFinite(weightKg) && weightKg > 0
-        ? Math.round(weightKg)
-        : profile.defaultWeightKg;
+    const catalogEntry = findFoundItemCarbonCatalogEntry(category, title, weightKg);
+    if (catalogEntry) {
+      const resolvedWeightKg = this.resolveWeightKg(weightKg, catalogEntry.typicalWeightKg);
+      return {
+        weightKg: resolvedWeightKg,
+        estimatedCo2eKg: this.scaleCatalogMetric(
+          catalogEntry.netCo2eSavedKg,
+          catalogEntry.typicalWeightKg,
+          resolvedWeightKg,
+        ),
+        impactPoints: this.scaleCatalogMetric(
+          catalogEntry.carbonPointsAwarded,
+          catalogEntry.typicalWeightKg,
+          resolvedWeightKg,
+        ),
+      };
+    }
+
+    const profile = FOUND_ITEM_FALLBACK_IMPACT_FACTORS[category] ?? FOUND_ITEM_FALLBACK_IMPACT_FACTORS.other;
+    const safeWeightKg = this.resolveWeightKg(weightKg, profile.defaultWeightKg);
     const estimatedCo2eKg = Math.max(12, Math.round(safeWeightKg * profile.impactFactor));
 
     return {
@@ -481,6 +514,24 @@ export class FoundItemsService {
       estimatedCo2eKg,
       impactPoints: estimatedCo2eKg,
     };
+  }
+
+  private resolveWeightKg(weightKg: number | null | undefined, fallbackWeightKg: number): number {
+    const resolvedWeightKg =
+      typeof weightKg === 'number' && Number.isFinite(weightKg) && weightKg > 0
+        ? weightKg
+        : fallbackWeightKg;
+
+    return Math.round(resolvedWeightKg * 10) / 10;
+  }
+
+  private scaleCatalogMetric(metric: number, typicalWeightKg: number, resolvedWeightKg: number): number {
+    if (!(typicalWeightKg > 0)) {
+      return Math.max(0, Math.round(metric));
+    }
+
+    const scaledMetric = (metric / typicalWeightKg) * resolvedWeightKg;
+    return Math.max(0, Math.round(scaledMetric));
   }
 
   private normalizeImages(images?: CreateFoundItemImageDto[]): FoundItemImage[] {
