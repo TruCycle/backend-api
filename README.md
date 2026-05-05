@@ -229,7 +229,7 @@ REWARD_CLAIM_DONOR=5                # Points awarded to donor on claim completio
 **Caveats**:
 - Rewards are currently symbolic (no redemption system yet)
 - Currency code is stored and displayed in the wallet
-- Future iterations may add redemption, leaderboards, etc.
+- Future iterations may add redemption and richer reward mechanics beyond the current badge and community-board flows.
 
 ### Nearby Item Alerts
 
@@ -2412,7 +2412,7 @@ CMD ["node", "dist/main.js"]
    - Currency localization
 
 7. **Enhanced Rewards**
-   - Leaderboards
+  - Community board refinements
    - Badges/achievements
    - Reward redemption marketplace
    - Partner reward programs
