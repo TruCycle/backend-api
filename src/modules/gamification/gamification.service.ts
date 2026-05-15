@@ -32,7 +32,42 @@ interface ProgressView {
   currentLevel: number;
   pointsToNextLevel: number;
   levelProgressPercent: number;
+  tier: string;
+  nextTier: string | null;
+  pointsToNextTier: number;
+  tierProgressPercent: number;
 }
+
+interface LeaderboardEntryView {
+  readonly rank: number;
+  readonly userId: string;
+  readonly name: string;
+  readonly postcode: string | null;
+  readonly totalPoints: number;
+  readonly currentLevel: number;
+  readonly tier: string;
+  readonly isCurrentUser: boolean;
+}
+
+interface IndividualLeaderboardView {
+  readonly entries: LeaderboardEntryView[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+  readonly currentUser: LeaderboardEntryView | null;
+}
+
+const TIERS: ReadonlyArray<{ readonly name: string; readonly minPoints: number }> = [
+  { name: 'Seedling', minPoints: 0 },
+  { name: 'Sprout', minPoints: 250 },
+  { name: 'Sapling', minPoints: 750 },
+  { name: 'Grove', minPoints: 1500 },
+  { name: 'Forest', minPoints: 3000 },
+  { name: 'Canopy', minPoints: 6000 },
+];
+
+const WEEKLY_STREAK_BONUS_MULTIPLIER = 1.05;
+const WEEKLY_STREAK_BONUS_THRESHOLD = 2;
 
 const DEFAULT_POINT_HISTORY_LIMIT = 20;
 const MAX_POINT_HISTORY_LIMIT = 100;
@@ -103,6 +138,10 @@ export class GamificationService {
         streakType: row.streakType,
         isActive: row.expiresAt ? row.expiresAt.getTime() > Date.now() : false,
         expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
+        bonusMultiplier:
+          row.streakType === GamificationStreakType.WEEKLY && row.currentStreak >= WEEKLY_STREAK_BONUS_THRESHOLD
+            ? WEEKLY_STREAK_BONUS_MULTIPLIER
+            : 1,
       }));
   }
 
@@ -266,6 +305,68 @@ export class GamificationService {
         totalCo2eKg: currentUserSpotter?.totalCo2eKg ?? 0,
       },
     };
+  }
+
+  async getIndividualLeaderboard(
+    userId: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<IndividualLeaderboardView> {
+    await this.backfillAndSync(userId);
+
+    const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
+    const offset = Math.max(options.offset ?? 0, 0);
+
+    const total = await this.getUserProgressRepository()
+      .createQueryBuilder('progress')
+      .where('progress.total_points > 0')
+      .getCount();
+
+    const rows = await this.getUserProgressRepository()
+      .createQueryBuilder('progress')
+      .leftJoinAndSelect('progress.user', 'user')
+      .where('progress.total_points > 0')
+      .orderBy('progress.total_points', 'DESC')
+      .addOrderBy('progress.created_at', 'ASC')
+      .skip(offset)
+      .take(limit)
+      .getMany();
+
+    const entries: LeaderboardEntryView[] = rows.map((row, index) => ({
+      rank: offset + index + 1,
+      userId: row.userId,
+      name: this.resolveSpotterName(row.user),
+      postcode: resolveOutwardPostcode(row.user?.postcode ?? null),
+      totalPoints: row.totalPoints,
+      currentLevel: row.currentLevel,
+      tier: this.resolveTierInfo(row.totalPoints).tier,
+      isCurrentUser: row.userId === userId,
+    }));
+
+    let currentUser: LeaderboardEntryView | null = entries.find((entry) => entry.isCurrentUser) ?? null;
+    if (!currentUser) {
+      const currentRow = await this.getUserProgressRepository().findOne({
+        where: { userId },
+        relations: { user: true },
+      });
+      if (currentRow && currentRow.totalPoints > 0) {
+        const rankRaw = await this.getUserProgressRepository()
+          .createQueryBuilder('progress')
+          .where('progress.total_points > :pts', { pts: currentRow.totalPoints })
+          .getCount();
+        currentUser = {
+          rank: rankRaw + 1,
+          userId: currentRow.userId,
+          name: this.resolveSpotterName(currentRow.user),
+          postcode: resolveOutwardPostcode(currentRow.user?.postcode ?? null),
+          totalPoints: currentRow.totalPoints,
+          currentLevel: currentRow.currentLevel,
+          tier: this.resolveTierInfo(currentRow.totalPoints).tier,
+          isCurrentUser: true,
+        };
+      }
+    }
+
+    return { entries, total, limit, offset, currentUser };
   }
 
   async getFoundItemImpact(userId: string) {
@@ -466,6 +567,36 @@ export class GamificationService {
   private async recordActivity(manager: EntityManager, input: PointActivityInput): Promise<void> {
     await this.createPointTransaction(manager, input);
     await this.syncUserState(manager, input.userId);
+    await this.maybeApplyWeeklyStreakBonus(manager, input);
+  }
+
+  private async maybeApplyWeeklyStreakBonus(
+    manager: EntityManager,
+    input: PointActivityInput,
+  ): Promise<void> {
+    if (input.points <= 0) return;
+    if (input.actionType.endsWith('_streak_bonus')) return;
+
+    const streakRepo = this.getUserStreakRepository(manager);
+    const weekly = await streakRepo.findOne({
+      where: { userId: input.userId, streakType: GamificationStreakType.WEEKLY },
+    });
+    if (!weekly || weekly.currentStreak < WEEKLY_STREAK_BONUS_THRESHOLD) {
+      return;
+    }
+
+    const bonusPoints = Math.round(input.points * (WEEKLY_STREAK_BONUS_MULTIPLIER - 1));
+    if (bonusPoints <= 0) return;
+
+    await this.createPointTransaction(manager, {
+      userId: input.userId,
+      points: bonusPoints,
+      reason: 'Weekly streak bonus (+5%)',
+      actionType: `${input.actionType}_streak_bonus`,
+      actionId: input.actionId,
+      occurredAt: input.occurredAt,
+    });
+    await this.syncUserProgress(manager, input.userId);
   }
 
   private async backfillAndSync(userId: string): Promise<void> {
@@ -804,6 +935,7 @@ export class GamificationService {
       0,
       Math.min(100, Math.round(((totalPoints - currentFloor) / range) * 100)),
     );
+    const tierInfo = this.resolveTierInfo(totalPoints);
 
     return {
       userId,
@@ -811,6 +943,40 @@ export class GamificationService {
       currentLevel,
       pointsToNextLevel: Math.max(0, nextFloor - totalPoints),
       levelProgressPercent,
+      tier: tierInfo.tier,
+      nextTier: tierInfo.nextTier,
+      pointsToNextTier: tierInfo.pointsToNextTier,
+      tierProgressPercent: tierInfo.tierProgressPercent,
+    };
+  }
+
+  private resolveTierInfo(totalPoints: number): {
+    tier: string;
+    nextTier: string | null;
+    pointsToNextTier: number;
+    tierProgressPercent: number;
+  } {
+    let currentIndex = 0;
+    for (let i = 0; i < TIERS.length; i++) {
+      if (totalPoints >= TIERS[i].minPoints) {
+        currentIndex = i;
+      }
+    }
+    const current = TIERS[currentIndex];
+    const next = TIERS[currentIndex + 1] ?? null;
+    if (!next) {
+      return { tier: current.name, nextTier: null, pointsToNextTier: 0, tierProgressPercent: 100 };
+    }
+    const range = Math.max(1, next.minPoints - current.minPoints);
+    const tierProgressPercent = Math.max(
+      0,
+      Math.min(100, Math.round(((totalPoints - current.minPoints) / range) * 100)),
+    );
+    return {
+      tier: current.name,
+      nextTier: next.name,
+      pointsToNextTier: Math.max(0, next.minPoints - totalPoints),
+      tierProgressPercent,
     };
   }
 

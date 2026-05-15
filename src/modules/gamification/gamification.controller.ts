@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTa
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CommunityBoardQueryDto } from './dto/community-board-query.dto';
 import { GamificationBadgesQueryDto } from './dto/gamification-badges-query.dto';
+import { IndividualLeaderboardQueryDto } from './dto/individual-leaderboard-query.dto';
 import { PointHistoryQueryDto } from './dto/point-history-query.dto';
 import { GamificationService } from './gamification.service';
 
@@ -47,6 +48,19 @@ export class GamificationController {
   @ApiOkResponse({ description: 'Community board postcode and spotter rankings' })
   async getCommunityBoard(@Req() req: any, @Query() query: CommunityBoardQueryDto): Promise<unknown> {
     return this.gamification.getCommunityBoard(req.user.id as string, query.window ?? 'month');
+  }
+
+  @Get('leaderboard/individual')
+  @ApiOperation({ summary: 'Get the global individual leaderboard ranked by lifetime points' })
+  @ApiOkResponse({ description: 'Paginated list of top spotters across the platform' })
+  async getIndividualLeaderboard(
+    @Req() req: any,
+    @Query() query: IndividualLeaderboardQueryDto,
+  ): Promise<unknown> {
+    return this.gamification.getIndividualLeaderboard(req.user.id as string, {
+      limit: query.limit,
+      offset: query.offset,
+    });
   }
 
   @Get('impact/found-items')
