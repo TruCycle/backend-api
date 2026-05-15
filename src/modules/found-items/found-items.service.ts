@@ -12,6 +12,7 @@ import { normalizePostcode } from '../../common/utils/postcode';
 import { GamificationService } from '../gamification/gamification.service';
 import { ItemGeocodingService } from '../items/item-geocoding.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { User, UserStatus } from '../users/user.entity';
 import { CreateFoundItemClaimDto } from './dto/create-found-item-claim.dto';
 import { CreateFoundItemDto, CreateFoundItemImageDto } from './dto/create-found-item.dto';
@@ -66,6 +67,7 @@ export class FoundItemsService {
     @InjectRepository(User) private readonly users: Repository<User>,
     private readonly geocoding: ItemGeocodingService,
     private readonly notifications: NotificationsService,
+    private readonly notificationsGateway: NotificationsGateway,
     private readonly gamification: GamificationService,
   ) {}
 
@@ -288,6 +290,24 @@ export class FoundItemsService {
     const saved = await this.foundItems.save(item);
     const claimCount = await this.loadClaimCounts([saved.id]);
 
+    if (dto.status === FoundItemStatus.PICKED_UP) {
+      try {
+        const rescuer = await this.users.findOne({ where: { id: userId } });
+        this.notificationsGateway.broadcastRescue('rescue', {
+          id: saved.id,
+          title: saved.title,
+          category: saved.category,
+          postcode: saved.postcode,
+          co2eKg: Number(saved.estimatedCo2eKg ?? 0),
+          impactPoints: Number(saved.impactPoints ?? 0),
+          rescuerName: rescuer ? [rescuer.firstName, rescuer.lastName].filter(Boolean).join(' ').trim() || null : null,
+          imageUrl: saved.images?.[0]?.url ?? null,
+        });
+      } catch (error) {
+        this.logger.warn(`Unable to broadcast rescue event for ${saved.id}: ${String(error)}`);
+      }
+    }
+
     return { item: this.mapFoundItem(saved, claimCount.get(saved.id) ?? 0, null) };
   }
 
@@ -401,6 +421,21 @@ export class FoundItemsService {
     await this.reports.save(report);
     item.status = FoundItemStatus.REPORTED;
     await this.foundItems.save(item);
+
+    try {
+      this.notificationsGateway.broadcastRescue('flytip', {
+        id: item.id,
+        title: item.title,
+        category: item.category,
+        postcode: item.postcode,
+        co2eKg: Number(item.estimatedCo2eKg ?? 0),
+        impactPoints: Number(item.impactPoints ?? 0),
+        rescuerName: [reporter.firstName, reporter.lastName].filter(Boolean).join(' ').trim() || null,
+        imageUrl: item.images?.[0]?.url ?? null,
+      });
+    } catch (error) {
+      this.logger.warn(`Unable to broadcast fly-tip event for ${item.id}: ${String(error)}`);
+    }
 
     return { success: true };
   }

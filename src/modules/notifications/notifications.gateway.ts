@@ -72,6 +72,32 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
     this.server.to(socketIds).emit('notification:new', notification);
   }
 
+  /**
+   * Broadcast a rescue or fly-tip event to every connected client. Used by the
+   * found-items module to power the live rescue ticker on the dashboard.
+   */
+  broadcastRescue(
+    kind: 'rescue' | 'flytip',
+    payload: {
+      id: string;
+      title: string;
+      category?: string | null;
+      postcode?: string | null;
+      co2eKg?: number | null;
+      impactPoints?: number | null;
+      rescuerName?: string | null;
+      imageUrl?: string | null;
+      ts?: string;
+    },
+  ): void {
+    if (!this.server) return;
+    const event = kind === 'flytip' ? 'rescue:flytip' : 'rescue:new';
+    this.server.emit(event, {
+      ...payload,
+      ts: payload.ts ?? new Date().toISOString(),
+    });
+  }
+
   @SubscribeMessage('notification:read')
   async handleMarkRead(
     @ConnectedSocket() client: Socket,

@@ -16,6 +16,6 @@ import { Shop } from '../shops/shop.entity';
   imports: [TypeOrmModule.forFeature([Notification, User, Item, Shop]), forwardRef(() => UsersModule)],
   controllers: [NotificationsController],
   providers: [EmailService, NotificationsService, NotificationsGateway, NearbyItemsAlertService],
-  exports: [EmailService, NotificationsService, NearbyItemsAlertService],
+  exports: [EmailService, NotificationsService, NearbyItemsAlertService, NotificationsGateway],
 })
 export class NotificationsModule {}
