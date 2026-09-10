@@ -99,6 +99,70 @@ describe('AuthService', () => {
     await expect(service.login('a@b.com', 'wrong')).rejects.toThrow('Invalid credentials');
   });
 
+  it('creates a customer account on first Google sign-in', async () => {
+    process.env.GOOGLE_CLIENT_ID = 'test-client-id';
+    jest.spyOn<any, any>(service as any, 'getGoogleClient').mockReturnValue({
+      verifyIdToken: jest.fn().mockResolvedValue({
+        getPayload: () => ({
+          sub: 'google-123',
+          email: 'new@example.com',
+          email_verified: true,
+          given_name: 'New',
+          family_name: 'User',
+        }),
+      }),
+    });
+    jest.spyOn<any, any>(service as any, 'issueToken').mockResolvedValue('jwt-token');
+    userRepo.findOne.mockImplementation(async ({ where }: any) => {
+      if (where?.id) return { id: 'g1', email: 'new@example.com', status: UserStatus.ACTIVE, createdAt: new Date() };
+      return null;
+    });
+    userRepo.create.mockImplementation((x: any) => x);
+    userRepo.save.mockImplementation(async (x: any) => ({ ...x, id: 'g1', createdAt: new Date() }));
+    roleRepo.findOne.mockResolvedValue({ id: 'r1', code: RoleCode.CUSTOMER });
+    userRoleRepo.create.mockImplementation((x: any) => x);
+    userRoleRepo.save.mockResolvedValue({ id: 'ur1' });
+    userRoleRepo.find = jest.fn().mockResolvedValue([{ role: { code: RoleCode.CUSTOMER } }]);
+
+    const res = await service.loginWithGoogle('a-valid-looking-google-id-token');
+    expect(res.user.email).toBe('new@example.com');
+    expect(res.tokens.accessToken).toBe('jwt-token');
+    expect(userRepo.save).toHaveBeenCalled();
+  });
+
+  it('links Google to an existing email account', async () => {
+    process.env.GOOGLE_CLIENT_ID = 'test-client-id';
+    jest.spyOn<any, any>(service as any, 'getGoogleClient').mockReturnValue({
+      verifyIdToken: jest.fn().mockResolvedValue({
+        getPayload: () => ({ sub: 'google-999', email: 'existing@example.com', email_verified: true }),
+      }),
+    });
+    jest.spyOn<any, any>(service as any, 'issueToken').mockResolvedValue('jwt-token');
+    const existing = { id: 'e1', email: 'existing@example.com', googleId: null, status: UserStatus.ACTIVE, createdAt: new Date() };
+    userRepo.findOne.mockImplementation(async ({ where }: any) => {
+      if (where?.googleId) return null;
+      if (where?.email) return existing;
+      if (where?.id) return existing;
+      return null;
+    });
+    userRepo.save.mockImplementation(async (x: any) => x);
+    userRoleRepo.find = jest.fn().mockResolvedValue([{ role: { code: RoleCode.CUSTOMER } }]);
+
+    const res = await service.loginWithGoogle('a-valid-looking-google-id-token');
+    expect(res.user.email).toBe('existing@example.com');
+    expect(existing.googleId).toBe('google-999');
+  });
+
+  it('rejects an unverified Google email', async () => {
+    process.env.GOOGLE_CLIENT_ID = 'test-client-id';
+    jest.spyOn<any, any>(service as any, 'getGoogleClient').mockReturnValue({
+      verifyIdToken: jest.fn().mockResolvedValue({
+        getPayload: () => ({ sub: 'google-x', email: 'x@example.com', email_verified: false }),
+      }),
+    });
+    await expect(service.loginWithGoogle('token')).rejects.toThrow('not verified');
+  });
+
   it('refreshes tokens for a valid refresh token', async () => {
     (jwt.verifyAsync as jest.Mock).mockResolvedValue({ sub: 'u1', email: 'a@b.com', type: 'refresh' });
     userRepo.findOne.mockImplementation(async ({ where }: any) => {

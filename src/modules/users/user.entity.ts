@@ -40,6 +40,10 @@ export class User {
   @Column({ type: 'text', nullable: true })
   passwordHash?: string | null;
 
+  // Google account subject id ("sub" claim), set when a user signs in with Google.
+  @Column({ name: 'google_id', type: 'text', nullable: true })
+  googleId?: string | null;
+
   @Column({ name: 'reset_otp_hash', type: 'text', nullable: true })
   resetOtpHash?: string | null;
 

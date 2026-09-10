@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
 import { AuthService } from './auth.service';
 import { ForgetPasswordDto } from './dto/forget-password.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -121,6 +122,45 @@ export class AuthController {
   })
   async login(@Body() dto: LoginDto) {
     const { user, tokens } = await this.auth.login(dto.email, dto.password);
+    return {
+      status: 'success',
+      message: 'Login successful.',
+      data: { user, tokens },
+    };
+  }
+
+  @Post('google')
+  @ApiOperation({
+    summary: 'Sign in or sign up with a Google ID token',
+    description:
+      'Send the ID token from Google Identity Services. Returns the same access/refresh token pair as /auth/login. Creates a customer account on first use.',
+  })
+  @ApiBody({ description: 'Google ID token', type: GoogleLoginDto })
+  @HttpCode(200)
+  @ApiOkResponse({
+    description: 'Sign-in success with access and refresh tokens',
+    schema: {
+      example: {
+        status: 'success',
+        message: 'Login successful.',
+        data: {
+          user: {
+            id: '3f2f8c2e-6b1a-4c8e-9a61-22f924e0f6f1',
+            email: 'jane@example.com',
+            firstName: 'Jane',
+            lastName: 'Doe',
+            status: 'active',
+          },
+          tokens: {
+            accessToken: 'eyJhbGciOi...access',
+            refreshToken: 'eyJhbGciOi...refresh',
+          },
+        },
+      },
+    },
+  })
+  async googleLogin(@Body() dto: GoogleLoginDto) {
+    const { user, tokens } = await this.auth.loginWithGoogle(dto.id_token);
     return {
       status: 'success',
       message: 'Login successful.',

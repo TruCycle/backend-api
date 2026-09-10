@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomInt } from 'crypto';
+import { OAuth2Client } from 'google-auth-library';
 
 import { PasswordService } from '../../common/security/password.service';
 import { EmailService } from '../notifications/email.service';
@@ -317,6 +318,109 @@ export class AuthService {
     if (user.status === UserStatus.PENDING) {
       user.status = UserStatus.ACTIVE;
       await this.users.save(user);
+    }
+
+    const accessToken = await this.issueToken(user);
+    const refreshToken = await this.issueRefreshToken(user);
+    const tokens = {
+      accessToken,
+      refreshToken,
+      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
+      refreshTokenExpiry: this.getExpiryFromJwt(refreshToken),
+    };
+
+    return { user: await this.findUserWithRoles(user.id), tokens };
+  }
+
+  private googleClient?: OAuth2Client;
+
+  private getGoogleClient(): OAuth2Client {
+    if (!this.googleClient) {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      if (!clientId) {
+        throw new BadRequestException('Google sign-in is not configured');
+      }
+      this.googleClient = new OAuth2Client(clientId);
+    }
+    return this.googleClient;
+  }
+
+  /**
+   * Sign in (or sign up) with a Google ID token issued to our web client by
+   * Google Identity Services. Verifies the token, then finds the user by
+   * google_id or verified email, creating a customer account on first use.
+   */
+  async loginWithGoogle(idToken: string) {
+    const token = (idToken ?? '').trim();
+    if (!token) throw new UnauthorizedException('Missing Google credential');
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    let ticket;
+    try {
+      ticket = await this.getGoogleClient().verifyIdToken({
+        idToken: token,
+        audience: clientId,
+      });
+    } catch {
+      throw new UnauthorizedException('Invalid Google credential');
+    }
+
+    const payload = ticket.getPayload();
+    if (!payload || !payload.sub) {
+      throw new UnauthorizedException('Invalid Google credential');
+    }
+    if (payload.email_verified === false || !payload.email) {
+      throw new UnauthorizedException('Google account email is not verified');
+    }
+
+    const googleId = payload.sub;
+    const email = payload.email.trim().toLowerCase();
+
+    // 1. Match on google_id, 2. fall back to a matching email (link the account).
+    let user =
+      (await this.users.findOne({ where: { googleId } })) ??
+      (await this.users.findOne({ where: { email } }));
+
+    if (user) {
+      if (user.status === UserStatus.DELETED || user.status === UserStatus.SUSPENDED) {
+        throw new UnauthorizedException('Account is not eligible for sign-in');
+      }
+      let dirty = false;
+      if (!user.googleId) {
+        user.googleId = googleId;
+        dirty = true;
+      }
+      // A Google sign-in proves the email — activate a pending account.
+      if (user.status === UserStatus.PENDING) {
+        user.status = UserStatus.ACTIVE;
+        dirty = true;
+      }
+      if (!user.firstName && payload.given_name) {
+        user.firstName = payload.given_name;
+        dirty = true;
+      }
+      if (!user.lastName && payload.family_name) {
+        user.lastName = payload.family_name;
+        dirty = true;
+      }
+      if (dirty) await this.users.save(user);
+    } else {
+      const created = this.users.create({
+        email,
+        firstName: payload.given_name ?? undefined,
+        lastName: payload.family_name ?? undefined,
+        googleId,
+        status: UserStatus.ACTIVE,
+      });
+      user = await this.users.save(created);
+      const role = await this.getOrCreateRole(RoleCode.CUSTOMER);
+      await this.userRoles.save(this.userRoles.create({ user, role }));
+      // Best-effort welcome; never block sign-in on email delivery.
+      try {
+        await this.sendWelcomeEmail(user);
+      } catch {
+        /* ignore */
+      }
     }
 
     const accessToken = await this.issueToken(user);
