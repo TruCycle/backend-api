@@ -339,7 +339,7 @@ export class AuthService {
   }
 
   private async issueRefreshToken(user: User): Promise<string> {
-    const refreshExpiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '30d';
+    const refreshExpiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '90d';
     const payload = { sub: user.id, email: user.email, type: 'refresh' };
     return this.jwt.signAsync(payload, { expiresIn: refreshExpiresIn });
   }
