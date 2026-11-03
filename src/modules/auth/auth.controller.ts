@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiBody, ApiCreatedResponse, ApiOkResponse, ApiOperation
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
+import { LimitAuthOperation } from './auth-rate-limit.guard';
 import { AuthService } from './auth.service';
 import { ForgetPasswordDto } from './dto/forget-password.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
@@ -71,6 +72,7 @@ export class AuthController {
       },
     },
   })
+  @LimitAuthOperation('register')
   async register(@Body() dto: RegisterDto) {
     const { user, shop, verificationDelivery } = await this.auth.register(
       dto.email,
@@ -123,6 +125,7 @@ export class AuthController {
       },
     },
   })
+  @LimitAuthOperation('login')
   async login(@Body() dto: LoginDto) {
     const { user, tokens } = await this.auth.login(dto.email, dto.password);
     return {
@@ -162,6 +165,7 @@ export class AuthController {
       },
     },
   })
+  @LimitAuthOperation('google')
   async googleLogin(@Body() dto: GoogleLoginDto) {
     const { user, tokens } = await this.auth.loginWithGoogle(dto.id_token);
     return {
@@ -212,6 +216,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Resend email verification link' })
   @ApiBody({ description: 'Email to resend verification to', type: ResendVerificationDto })
   @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'If an account needs verification, a verification email has been requested.', data: null } } })
+  @LimitAuthOperation('resend')
   async resendVerification(@Body() dto: ResendVerificationDto) {
     await this.auth.resendVerification(dto.email);
     // Always return success to avoid email enumeration
@@ -240,6 +245,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Request a password reset OTP' })
   @ApiBody({ description: 'Email to send reset OTP to', type: ForgetPasswordDto })
   @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Reset OTP sent successfully.', data: null } } })
+  @LimitAuthOperation('reset_request')
   async forgetPassword(@Body() dto: ForgetPasswordDto) {
     await this.auth.requestPasswordReset(dto.email);
     // Always return success to avoid email enumeration
@@ -273,6 +279,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Reset password using email + OTP' })
   @ApiBody({ description: 'Email, OTP, and new password', type: ResetPasswordDto })
   @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Password changed successfully.', data: null } } })
+  @LimitAuthOperation('reset_attempt')
   async resetPassword(@Body() dto: ResetPasswordDto) {
     await this.auth.resetPassword(dto.email, dto.otp, dto.new_password);
     return { status: 'success', message: 'Password changed successfully.', data: null };

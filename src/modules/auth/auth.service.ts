@@ -359,7 +359,7 @@ export class AuthService {
     const normalizedEmail = email.trim().toLowerCase();
     const user = await this.users.findOne({ where: { email: normalizedEmail } });
     // Do not reveal whether the user exists; send only for eligible accounts
-    if (user && user.status !== UserStatus.DELETED) {
+    if (user && user.status !== UserStatus.DELETED && user.status !== UserStatus.SUSPENDED) {
       await this.sendResetPasswordOtpEmail(user);
     }
     // Controller always returns success

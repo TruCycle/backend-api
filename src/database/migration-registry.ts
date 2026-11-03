@@ -27,6 +27,7 @@ import { EnhanceFoundItemsLocationAndImpact1700000000026 } from './migrations/17
 import { AddGoogleAuthToUser1700000000027 } from './migrations/1700000000027-AddGoogleAuthToUser';
 import { FoundItemLifecycle1700000000028 } from './migrations/1700000000028-FoundItemLifecycle';
 import { CreateAuthSessions1700000000029 } from './migrations/1700000000029-CreateAuthSessions';
+import { CreateAuthRateCounters1700000000030 } from './migrations/1700000000030-CreateAuthRateCounters';
 
 // Complete ordered history. Registration never authorises automatic execution.
 export const migrationRegistry = [
@@ -59,6 +60,7 @@ export const migrationRegistry = [
   AddGoogleAuthToUser1700000000027,
   FoundItemLifecycle1700000000028,
   CreateAuthSessions1700000000029,
+  CreateAuthRateCounters1700000000030,
 ];
 
 export const registeredMigrationNames = migrationRegistry.map((migration) => migration.name);
