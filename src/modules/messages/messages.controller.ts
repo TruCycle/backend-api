@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Post,
@@ -26,6 +27,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
 import { CreateRoomDto } from './dto/create-room.dto';
+import { DirectMessageDto } from './dto/direct-message.dto';
 import { GeneralMessageDto } from './dto/general-message.dto';
 import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
 import { SearchMessagesQueryDto } from './dto/search-messages-query.dto';
@@ -219,6 +221,19 @@ export class MessagesController {
   ) {
     const userId = this.getUserId(req);
     return this.messages.sendImageMessage(roomId, userId, file, dto);
+  }
+
+  @Post('rooms/:roomId/messages/text')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Persist a direct text message; reuse its client UUID for an exact retry' })
+  @ApiBody({ type: DirectMessageDto })
+  @ApiOkResponse({ description: 'Persisted sender view; not a recipient delivery or read receipt' })
+  async sendDirectMessage(
+    @Req() req: any,
+    @Param('roomId', ParseUUIDPipe) roomId: string,
+    @Body() dto: DirectMessageDto,
+  ) {
+    return this.messages.createDirectTextMessage(roomId, this.getUserId(req), dto.text, dto.clientMessageId);
   }
 
   @Post('rooms/:roomId/messages/general')

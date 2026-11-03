@@ -58,6 +58,11 @@ describe.each(['named', 'email-only'])('Chat identity privacy: %s accounts', (pr
     rooms.save.mockResolvedValue(room); rooms.update.mockResolvedValue({ affected: 1 });
     users.findBy.mockResolvedValue(people);
     query = queryMock(); query.getOne.mockResolvedValue(message); query.getMany.mockResolvedValue([message]);
+    Object.assign(query, { insert: jest.fn().mockReturnThis(), orIgnore: jest.fn().mockReturnThis(), returning: jest.fn().mockReturnThis(),
+      values: jest.fn().mockImplementation((value: Partial<Message>) => { message.id = value.id!; message.text = value.text; return query; }),
+      execute: jest.fn().mockImplementation(async () => ({ raw: [{ id: message.id }] })) });
+    const manager = { getRepository: (entity: unknown) => entity === MessageRoom ? rooms : messages };
+    Object.assign(messages, { manager: { transaction: async (work: (tx: unknown) => Promise<unknown>) => work(manager) } });
     messages.createQueryBuilder.mockReturnValue(query);
     messages.create.mockImplementation((value: Partial<Message>) => value);
     messages.save.mockResolvedValue(message); messages.findOneOrFail.mockResolvedValue(message);
@@ -135,6 +140,11 @@ describe.each(['named', 'email-only'])('Chat identity privacy: %s accounts', (pr
     const result = await service.listMessages(room.id, 'member-b', {});
     expect(result.messages[0].sender).toBeNull();
     expect(result.messages[0].direction).toBe('general');
+  });
+  it('uses timestamp plus UUID for history cursors so equal-time messages are not skipped', async () => {
+    messages.findOne.mockResolvedValue(message);
+    await service.listMessages(room.id, 'member-a', { limit: 10, cursor: message.id });
+    expect(query.andWhere).toHaveBeenCalledWith('(message.createdAt < :cursor OR (message.createdAt = :cursor AND message.id < :cursorId))', { cursor: message.createdAt, cursorId: message.id });
   });
 
   it('denies outsiders before history, search or send activity', async () => {

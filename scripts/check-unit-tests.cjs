@@ -7,6 +7,7 @@ const path = require('node:path');
 
 const rootDirectory = path.resolve(__dirname, '..');
 const reviewedTests = [
+  'src/modules/messages/messages-delivery.spec.ts',
   'src/modules/shops/shops-validation.spec.ts',
   'src/modules/auth/auth-sessions.spec.ts',
   'src/common/security/socket-access.spec.ts',

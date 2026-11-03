@@ -1,14 +1,18 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
+import { safeFailure } from '../../common/utils/safe-log';
 
 import { MessageRoom } from './message-room.entity';
 import { Message, MessageCategory } from './message.entity';
@@ -64,6 +68,7 @@ export interface ListMessagesResult {
 
 @Injectable()
 export class MessagesService {
+  private readonly logger = new Logger(MessagesService.name);
   constructor(
     @InjectRepository(MessageRoom) private readonly rooms: Repository<MessageRoom>,
     @InjectRepository(Message) private readonly messages: Repository<Message>,
@@ -186,28 +191,42 @@ export class MessagesService {
     roomId: string,
     authorId: string,
     text: string,
+    clientMessageId?: string,
   ): Promise<MessageViewModel> {
-    const room = await this.getRoomOrFail(roomId, authorId);
-    const body = (text ?? '').trim();
-    if (!body) {
-      throw new BadRequestException('Message text is required');
+    const body = typeof text === 'string' ? text.trim() : '';
+    if (!body || body.length > 4000) throw new BadRequestException('Message text must contain 1 to 4000 characters');
+    if (clientMessageId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientMessageId)) {
+      throw new BadRequestException('Invalid message request id');
     }
-    let message = this.messages.create({
-      room,
-      sender: { id: authorId } as User,
-      category: MessageCategory.DIRECT,
-      text: body,
-      caption: null,
+    const id = (clientMessageId ?? randomUUID()).toLowerCase();
+    // The existing primary UUID is the retry key. INSERT .. DO NOTHING cannot
+    // overwrite a colliding row, unlike save() with a caller-provided identifier.
+    const result = await this.messages.manager.transaction(async manager => {
+      const rooms = manager.getRepository(MessageRoom);
+      const room = await rooms.findOne({ where: { id: roomId }, loadEagerRelations: false,
+        loadRelationIds: { relations: ['userOne', 'userTwo'], disableMixedMap: true }, lock: { mode: 'pessimistic_write' } });
+      if (!room || room.deleted) throw new NotFoundException('Room not found');
+      if (room.userOne.id !== authorId && room.userTwo.id !== authorId) throw new ForbiddenException('You do not have access to this room');
+      const messages = manager.getRepository(Message);
+      const inserted = await messages.createQueryBuilder().insert().values({ id, room: { id: roomId }, sender: { id: authorId },
+        category: MessageCategory.DIRECT, text: body, caption: null, imageUrl: null, createdAt: () => 'clock_timestamp()' })
+        .orIgnore().returning(['id']).execute();
+      const message = await messages.findOneOrFail({ where: { id }, loadEagerRelations: false,
+        loadRelationIds: { relations: ['room', 'sender'], disableMixedMap: true } });
+      if (message.room.id !== roomId || message.sender?.id !== authorId || message.text !== body ||
+          message.category !== MessageCategory.DIRECT || message.imageUrl || message.caption) {
+        throw new ConflictException('Message request conflicts with an existing message');
+      }
+      message.room = room;
+      const created = Array.isArray(inserted.raw) && inserted.raw.some((row: { id?: string }) => row.id === id);
+      if (created) await rooms.update({ id: roomId }, { updatedAt: message.createdAt });
+      return { message, created, view: this.mapMessageForUser(message, authorId) };
     });
-    message = await this.messages.save(message);
-    message = await this.messages.findOneOrFail({
-      where: { id: message.id },
-      relations: ['room', 'room.userOne', 'room.userTwo', 'sender'],
-    });
-    const view = this.mapMessageForUser(message, authorId);
-    await this.broadcastRealtimeMessage(message);
-    await this.touchRoom(room.id);
-    return view;
+    // A live-delivery failure after commit must not turn durable success into an
+    // error that invites another send. History remains the source of truth.
+    if (result.created) void this.broadcastRealtimeMessage(result.message)
+      .catch(error => this.logger.warn(safeFailure('message_realtime_delivery', error)));
+    return result.view;
   }
 
   async listMessages(
@@ -219,6 +238,7 @@ export class MessagesService {
     const limit = query.limit ?? 50;
 
     let cursorCreatedAt: Date | null = null;
+    let cursorId: string | null = null;
     if (query.cursor) {
       const cursorMessage = await this.messages.findOne({
         where: { id: query.cursor },
@@ -231,6 +251,7 @@ export class MessagesService {
         throw new BadRequestException('Cursor does not belong to this room');
       }
       cursorCreatedAt = cursorMessage.createdAt;
+      cursorId = cursorMessage.id;
     }
 
     const builder = this.messages
@@ -245,7 +266,7 @@ export class MessagesService {
       .take(limit + 1);
 
     if (cursorCreatedAt) {
-      builder.andWhere('message.createdAt < :cursor', { cursor: cursorCreatedAt });
+      builder.andWhere('(message.createdAt < :cursor OR (message.createdAt = :cursor AND message.id < :cursorId))', { cursor: cursorCreatedAt, cursorId });
     }
 
     const records = await builder.getMany();

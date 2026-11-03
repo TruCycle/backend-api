@@ -38,6 +38,7 @@ interface SendMessageFilePayload {
 
 interface SendMessagePayload {
   roomId: string;
+  clientMessageId?: string;
   text?: string;
   files?: SendMessageFilePayload[];
 }
@@ -152,6 +153,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
         payload.roomId,
         userId,
         payload.text,
+        payload.clientMessageId,
       );
     }
 
@@ -177,9 +179,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
 
     if (!primaryMessage) {
-      // No text provided; try to return the latest activity time via a synthetic ack
-      // Clients should rely on subsequent `message:new` events for attachment echoes.
-      return { event: 'message:sent', data: { success: true } } as any;
+      throw new BadRequestException('Message text or an image is required');
     }
     return { event: 'message:sent', data: primaryMessage };
   }
