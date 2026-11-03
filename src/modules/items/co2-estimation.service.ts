@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { safeFailure } from '../../common/utils/safe-log';
 
 export interface Co2Input {
   weightKg?: number | null;
@@ -8,79 +9,66 @@ export interface Co2Input {
   sizeHeight?: number | null;
 }
 
+/** An activity-emissions response alone does not establish avoided emissions. */
 @Injectable()
 export class Co2EstimationService {
   private readonly logger = new Logger(Co2EstimationService.name);
   private readonly apiKey = process.env.CLIMATIQ_API_KEY || '';
   private readonly factorId = process.env.CLIMATIQ_EMISSION_FACTOR_ID || '';
-  private readonly endpoint = process.env.CLIMATIQ_API_URL || 'https://beta3.api.climatiq.io/estimate';
+  private readonly endpoint = process.env.CLIMATIQ_API_URL || '';
+  private readonly methodReference = process.env.CO2_AVOIDED_METHOD_REFERENCE || '';
+  private readonly timeoutMs = 10_000;
 
   private toCubicMeters(input: Co2Input): number | null {
     const { sizeUnit, sizeLength, sizeBreadth, sizeHeight } = input;
-    if (
-      !sizeUnit || sizeLength == null || sizeBreadth == null || sizeHeight == null ||
-      !isFinite(sizeLength) || !isFinite(sizeBreadth) || !isFinite(sizeHeight)
-    ) {
-      return null;
-    }
-    const l = Math.max(0, Number(sizeLength));
-    const b = Math.max(0, Number(sizeBreadth));
-    const h = Math.max(0, Number(sizeHeight));
-    if (!l || !b || !h) return 0;
-    const unit = String(sizeUnit).toLowerCase();
-    const toMeters = unit === 'm' ? 1 : unit === 'inch' ? 0.0254 : unit === 'ft' ? 0.3048 : 1;
-    return l * toMeters * (b * toMeters) * (h * toMeters);
+    if (![sizeLength, sizeBreadth, sizeHeight].every(value => typeof value === 'number' && Number.isFinite(value) && value > 0)) return null;
+    const scale = sizeUnit === 'm' ? 1 : sizeUnit === 'inch' ? 0.0254 : sizeUnit === 'ft' ? 0.3048 : null;
+    if (scale === null) return null;
+    const volume = sizeLength! * sizeBreadth! * sizeHeight! * scale ** 3;
+    return Number.isFinite(volume) && volume > 0 ? volume : null;
   }
 
   async estimateSavedCo2Kg(input: Co2Input): Promise<number | null> {
+    // This reference identifies the reviewed factor, counterfactual, boundaries
+    // and version. Configuring it is a release decision, not proof supplied by code.
+    if (!this.apiKey || !this.factorId || !this.methodReference.trim()) return null;
+    let endpoint: URL;
+    try { endpoint = new URL(this.endpoint); } catch { return null; }
+    if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password) return null;
+    const weight = typeof input.weightKg === 'number' && Number.isFinite(input.weightKg) && input.weightKg > 0 ? input.weightKg : null;
+    const volume = this.toCubicMeters(input);
+    if (weight === null && volume === null) return null;
+
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      // Require API key and factor id to call Climatiq; otherwise return null gracefully
-      if (!this.apiKey || !this.factorId) {
-        this.logger.debug('CLIMATIQ_API_KEY or CLIMATIQ_EMISSION_FACTOR_ID not set; skipping CO2 estimation');
-        return null;
-      }
-
-      const weightKg = typeof input.weightKg === 'number' && isFinite(input.weightKg) ? Math.max(0, input.weightKg) : null;
-      const volumeM3 = this.toCubicMeters(input);
-
-      // Basic payload uses weight as activity value; include volume metadata when present
-      const payload: any = {
-        emission_factor: { id: this.factorId },
-        parameters: {
-          weight: weightKg ?? undefined,
-          weight_unit: weightKg != null ? 'kg' : undefined,
-          volume: volumeM3 ?? undefined,
-          volume_unit: volumeM3 != null ? 'm3' : undefined,
-        },
-      };
-
-      const res = await fetch(this.endpoint, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        this.logger.warn(`Climatiq estimate failed (${res.status}): ${text}`);
-        return null;
-      }
-
-      const json: any = await res.json();
-      // Common response fields: co2e in kg or co2e_unit; normalize to kg
-      const co2e = typeof json.co2e === 'number' ? json.co2e : Number(json?.co2e);
-      const unit = (json?.co2e_unit || 'kg').toString().toLowerCase();
-      if (!isFinite(co2e)) return null;
-      const valueKg = unit === 'g' ? co2e / 1000 : unit === 't' || unit === 'tonne' ? co2e * 1000 : co2e;
-      // Treat returned emissions as the avoided emissions (saved) for simplicity
-      return Math.max(0, Math.round(valueKg * 100) / 100);
-    } catch (err) {
-      this.logger.warn(`Climatiq estimation error: ${err instanceof Error ? err.message : String(err)}`);
+      const operation = (async () => {
+        const response = await fetch(endpoint.toString(), {
+          method: 'POST', redirect: 'error', signal: controller.signal,
+          headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emission_factor: { id: this.factorId }, parameters: {
+            ...(weight === null ? {} : { weight, weight_unit: 'kg' }),
+            ...(volume === null ? {} : { volume, volume_unit: 'm3' }),
+          } }),
+        });
+        if (!response.ok) {
+          this.logger.warn({ operation: 'co2_estimate', provider: 'climatiq', status: response.status });
+          return null;
+        }
+        const body: unknown = await response.json();
+        if (!body || typeof body !== 'object') return null;
+        const { co2e, co2e_unit: unit } = body as Record<string, unknown>;
+        if (typeof co2e !== 'number' || !Number.isFinite(co2e) || co2e < 0) return null;
+        const scale = unit === 'kg' ? 1 : unit === 'g' ? 0.001 : unit === 't' || unit === 'tonne' ? 1000 : null;
+        if (scale === null) return null;
+        const value = co2e * scale;
+        return Number.isFinite(value) && Number.isFinite(value * 100) ? Math.round(value * 100) / 100 : null;
+      })();
+      const deadline = new Promise<null>(resolve => { timer = setTimeout(() => { controller.abort(); resolve(null); }, this.timeoutMs); });
+      return await Promise.race([operation, deadline]);
+    } catch (error) {
+      this.logger.warn(safeFailure('co2_estimate', error));
       return null;
-    }
+    } finally { if (timer) clearTimeout(timer); }
   }
 }
-

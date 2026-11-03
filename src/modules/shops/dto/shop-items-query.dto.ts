@@ -4,14 +4,6 @@ import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-
 
 import { ItemPickupOption, ItemStatus } from '../../items/item.entity';
 
-function toInteger(value: any): number | undefined {
-  if (value === null || value === undefined || value === '') return undefined;
-  const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n)) return undefined;
-  const i = Math.trunc(n);
-  return Number.isFinite(i) ? i : undefined;
-}
-
 export class ShopItemsQueryDto {
   @ApiPropertyOptional({ description: 'Filter by item status', enum: ItemStatus })
   @IsOptional()

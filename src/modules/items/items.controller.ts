@@ -1,16 +1,21 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ApiBearerAuth, ApiBody, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags, ApiCreatedResponse } from '@nestjs/swagger';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { verifyAccessToken } from '../../common/security/access-token';
+import { ClaimsService } from '../claims/claims.service';
+import { User } from '../users/user.entity';
+import { AuthSessionsService } from '../auth/auth-sessions.service';
 
-import { CreateItemDto } from './dto/create-item.dto';
 import { CollectItemDto } from './dto/collect-item.dto';
+import { CreateItemDto } from './dto/create-item.dto';
 import { SearchItemsDto } from './dto/search-items.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { UserCollectedItemsQueryDto, UserItemsQueryDto } from './dto/user-items-query.dto';
 import { ItemsService } from './items.service';
-import { ClaimsService } from '../claims/claims.service';
 
 @ApiTags('items')
 @ApiBearerAuth()
@@ -20,6 +25,8 @@ export class ItemsController {
     private readonly items: ItemsService,
     private readonly claims: ClaimsService,
     private readonly jwt: JwtService,
+    @InjectRepository(User) private readonly users: Repository<User>,
+    private readonly sessions: AuthSessionsService,
   ) {}
 
   @Get('health')
@@ -96,15 +103,13 @@ export class ItemsController {
         const bearer = /^Bearer\s+/i;
         while (bearer.test(token)) token = token.replace(bearer, '').trim();
         if (token) {
-          const payload: any = await this.jwt.verifyAsync(token);
-          const sub = payload?.sub;
-          if (typeof sub === 'string' && sub.trim()) {
-            currentUserId = sub.trim();
-          }
+          const principal = await verifyAccessToken(this.jwt, this.users, token, this.sessions);
+          currentUserId = principal.userId;
         }
       }
-    } catch {
-      // ignore invalid/missing token and continue anonymously
+    } catch (error) {
+      if (!(error instanceof UnauthorizedException)) throw error;
+      // Invalid credentials receive only the anonymous projection.
     }
     return this.items.searchPublicListings(query, currentUserId);
   }
@@ -333,15 +338,13 @@ export class ItemsController {
         const bearer = /^Bearer\s+/i;
         while (bearer.test(token)) token = token.replace(bearer, '').trim();
         if (token) {
-          const payload: any = await this.jwt.verifyAsync(token);
-          const sub = payload?.sub;
-          if (typeof sub === 'string' && sub.trim()) {
-            currentUserId = sub.trim();
-          }
+          const principal = await verifyAccessToken(this.jwt, this.users, token, this.sessions);
+          currentUserId = principal.userId;
         }
       }
-    } catch {
-      // ignore invalid/missing token and continue anonymously
+    } catch (error) {
+      if (!(error instanceof UnauthorizedException)) throw error;
+      // Invalid credentials receive only the anonymous projection.
     }
     return this.items.getPublicItem(id, currentUserId);
   }

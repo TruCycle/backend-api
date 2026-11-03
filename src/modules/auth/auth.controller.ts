@@ -14,6 +14,7 @@ import { CreateShopDto } from '../shops/dto/create-shop.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyDto } from './dto/verify.dto';
+import { LogoutDto } from './dto/logout.dto';
 
 
 @ApiTags('auth')
@@ -39,7 +40,7 @@ export class AuthController {
     type: RegisterDto,
   })
   @ApiCreatedResponse({
-    description: 'User created successfully',
+    description: 'User created successfully. verificationDelivery describes provider acceptance, not inbox delivery.',
     schema: {
       example: {
         status: 'success',
@@ -53,6 +54,7 @@ export class AuthController {
             status: 'pending',
             roles: ['partner'],
           },
+          verificationDelivery: { status: 'accepted' },
           shop: {
             id: 'b84e...-uuid',
             name: 'Jane\'s Outlet',
@@ -70,7 +72,7 @@ export class AuthController {
     },
   })
   async register(@Body() dto: RegisterDto) {
-    const { user, shop } = await this.auth.register(
+    const { user, shop, verificationDelivery } = await this.auth.register(
       dto.email,
       dto.password,
       dto.role,
@@ -89,6 +91,7 @@ export class AuthController {
           status: user.status,
           roles: (user as any).roles ?? undefined,
         },
+        verificationDelivery,
         ...(shop ? { shop } : {}),
       },
     };
@@ -208,11 +211,29 @@ export class AuthController {
   @Post('resend-verification')
   @ApiOperation({ summary: 'Resend email verification link' })
   @ApiBody({ description: 'Email to resend verification to', type: ResendVerificationDto })
-  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Verification email sent successfully.', data: null } } })
+  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'If an account needs verification, a verification email has been requested.', data: null } } })
   async resendVerification(@Body() dto: ResendVerificationDto) {
     await this.auth.resendVerification(dto.email);
     // Always return success to avoid email enumeration
-    return { status: 'success', message: 'Verification email sent successfully.', data: null };
+    return { status: 'success', message: 'If an account needs verification, a verification email has been requested.', data: null };
+  }
+
+  @Post('logout')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Revoke the session identified by a signed refresh credential' })
+  async logout(@Body() dto: LogoutDto) {
+    await this.auth.logout(dto.refresh_token, dto.access_token);
+    return { status: 'success', message: 'Session revoked.', data: null };
+  }
+
+  @Post('logout-all')
+  @HttpCode(200)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Revoke all sessions for the current account' })
+  async logoutAll(@AuthUser() payload: { sub: string }) {
+    await this.auth.logoutAll(payload.sub);
+    return { status: 'success', message: 'All sessions revoked.', data: null };
   }
 
   @Post('forget-password')
@@ -230,42 +251,21 @@ export class AuthController {
   @ApiBody({ description: 'Verification token payload', type: VerifyDto })
   @HttpCode(200)
   @ApiOkResponse({
-    description: 'Verification success with user and tokens',
+    description: 'Email verified; sign in separately to start a session',
     schema: {
       example: {
         status: 'success',
-        message: 'Verification successfully.',
-        data: {
-          user: {
-            id: '3f2f8c2e-6b1a-4c8e-9a61-22f924e0f6f1',
-            firstName: 'Jane',
-            lastName: 'Doe',
-            email: 'jane@example.com',
-            status: 'active',
-          },
-          tokens: {
-            accessToken: 'eyJhbGciOi...access',
-            refreshToken: 'eyJhbGciOi...refresh',
-          },
-        },
+        message: 'Email verified. Sign in to continue.',
+        data: { verified: true },
       },
     },
   })
   async verify(@Body() dto: VerifyDto) {
-    const { user, tokens } = await this.auth.verifyUser(dto.token);
+    const data = await this.auth.verifyUser(dto.token);
     return {
       status: 'success',
-      message: 'Verification successfully.',
-      data: {
-        user: {
-          id: user.id,
-          firstName: (user as any).firstName ?? null,
-          lastName: (user as any).lastName ?? null,
-          email: (user as any).email,
-          status: (user as any).status,
-        },
-        tokens,
-      },
+      message: 'Email verified. Sign in to continue.',
+      data,
     };
   }
 
@@ -356,11 +356,11 @@ export class AuthController {
     },
   })
   async upgradeToPartner(@AuthUser() payload: any, @Body() shopDto?: CreateShopDto) {
-    const { user, shop, tokens } = await this.auth.upgradeToPartner(payload, shopDto);
+    const { user, shop } = await this.auth.upgradeToPartner(payload, shopDto);
     return {
       status: 'success',
       message: 'Upgraded to partner successfully.',
-      data: { user, ...(shop ? { shop } : {}), tokens },
+      data: { user, ...(shop ? { shop } : {}) },
     };
   }
 }

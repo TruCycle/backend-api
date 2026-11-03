@@ -1,3 +1,6 @@
+import { BadRequestException, Inject, Logger, OnModuleDestroy, UnauthorizedException, forwardRef } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { InjectRepository } from '@nestjs/typeorm';
 import {
   ConnectedSocket,
   MessageBody,
@@ -7,9 +10,13 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { BadRequestException, Inject, Logger, UnauthorizedException, forwardRef } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
+import { Repository } from 'typeorm';
+
+import { SocketAccess } from '../../common/security/socket-access';
+import { safeFailure } from '../../common/utils/safe-log';
+import { User } from '../users/user.entity';
+import { AuthSessionsService } from '../auth/auth-sessions.service';
 
 import { MessagesPresenceService } from './messages-presence.service';
 import { MessagesService, MessageViewModel } from './messages.service';
@@ -45,49 +52,52 @@ interface SendMessagePayload {
   },
   namespace: '/messages',
 })
-export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
   @WebSocketServer()
   private readonly server!: Server;
 
   private readonly logger = new Logger(MessagesGateway.name);
   private readonly socketUser = new Map<string, string>();
+  private readonly access: SocketAccess;
 
   constructor(
-    private readonly jwt: JwtService,
+    jwt: JwtService,
     private readonly presence: MessagesPresenceService,
     @Inject(forwardRef(() => MessagesService)) private readonly messages: MessagesService,
-  ) {}
+    @InjectRepository(User) users: Repository<User>,
+    sessions: AuthSessionsService,
+  ) { this.access = new SocketAccess(jwt, users, sessions); }
+
+  onModuleDestroy(): void { this.access.destroy(); }
 
   async handleConnection(client: Socket): Promise<void> {
     try {
       const token = this.extractToken(client);
-      const payload = await this.jwt.verifyAsync(token);
-      const userId = payload.sub as string | undefined;
-      if (!userId) {
-        throw new UnauthorizedException('Invalid token payload');
-      }
+      const { userId } = await this.access.connect(client, token);
       client.data.userId = userId;
       this.socketUser.set(client.id, userId);
+      client.emit('auth:ready');
       const becameOnline = this.presence.markOnline(userId, client.id);
       if (becameOnline) {
-        this.broadcastPresence(userId, true);
+        await this.broadcastPresence(userId, true);
       }
-      this.logger.verbose(`Socket ${client.id} connected for user ${userId}`);
+      this.logger.verbose({ operation: 'messages_socket_connected' });
     } catch (error) {
-      this.logger.warn(`Disconnecting socket during handshake: ${error}`);
+      this.logger.warn(safeFailure('messages_socket_handshake', error));
       client.disconnect(true);
     }
   }
 
   async handleDisconnect(client: Socket): Promise<void> {
+    this.access.release(client);
     const userId = this.socketUser.get(client.id) ?? (client.data?.userId as string | undefined);
     if (userId) {
       const becameOffline = this.presence.markOffline(userId, client.id);
       if (becameOffline) {
-        this.broadcastPresence(userId, false);
+        await this.broadcastPresence(userId, false);
       }
       this.socketUser.delete(client.id);
-      this.logger.verbose(`Socket ${client.id} disconnected for user ${userId}`);
+      this.logger.verbose({ operation: 'messages_socket_disconnected' });
     }
   }
 
@@ -96,10 +106,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: JoinRoomPayload,
   ): Promise<{ event: string; data: any }> {
-    const userId = client.data.userId as string | undefined;
-    if (!userId) {
-      throw new UnauthorizedException('Unauthenticated socket');
-    }
+    const { userId } = await this.access.authorize(client);
     if (!payload?.otherUserId) {
       throw new BadRequestException('Missing other user id');
     }
@@ -112,14 +119,15 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     };
   }
 
-  broadcastMessage(roomId: string, payloads: BroadcastPayload[]): void {
+  async broadcastMessage(roomId: string, payloads: BroadcastPayload[]): Promise<void> {
     for (const payload of payloads) {
-      const socketIds = this.findSocketIdsForUser(payload.userId);
+      const socketIds = await this.access.authorizedIds(payload.userId);
       if (socketIds.length === 0) continue;
       this.server.in(socketIds).socketsJoin(roomId);
       this.server.to(socketIds).emit('message:new', payload.message);
     }
-    this.server.to(roomId).emit('room:activity', { roomId, updatedAt: new Date().toISOString() });
+    const roomSockets = await this.access.authorizedIds(undefined, roomId);
+    if (roomSockets.length) this.server.to(roomSockets).emit('room:activity', { roomId, updatedAt: new Date().toISOString() });
   }
 
   @SubscribeMessage('message:send')
@@ -127,15 +135,13 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: SendMessagePayload,
   ): Promise<{ event: string; data: any }> {
-    const userId = client.data.userId as string | undefined;
-    if (!userId) {
-      throw new UnauthorizedException('Unauthenticated socket');
-    }
+    const { userId } = await this.access.authorize(client);
     if (!payload?.roomId) {
       throw new BadRequestException('roomId is required');
     }
 
     // Ensure the sender socket is in the room to receive room-scoped broadcasts
+    await this.messages.getRoomOrFail(payload.roomId, userId);
     client.join(payload.roomId);
 
     let primaryMessage: MessageViewModel | null = null;
@@ -178,12 +184,14 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     return { event: 'message:sent', data: primaryMessage };
   }
 
-  emitRoomCleared(roomId: string): void {
-    this.server.to(roomId).emit('room:cleared', { roomId });
+  async emitRoomCleared(roomId: string): Promise<void> {
+    const ids = await this.access.authorizedIds(undefined, roomId);
+    if (ids.length) this.server.to(ids).emit('room:cleared', { roomId });
   }
 
-  emitRoomDeleted(roomId: string): void {
-    this.server.to(roomId).emit('room:deleted', { roomId });
+  async emitRoomDeleted(roomId: string): Promise<void> {
+    const ids = await this.access.authorizedIds(undefined, roomId);
+    if (ids.length) this.server.to(ids).emit('room:deleted', { roomId });
   }
 
   private extractToken(client: Socket): string {
@@ -206,17 +214,8 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     throw new UnauthorizedException('Missing websocket token');
   }
 
-  private broadcastPresence(userId: string, online: boolean): void {
-    this.server.emit('presence:update', { userId, online });
-  }
-
-  private findSocketIdsForUser(userId: string): string[] {
-    const ids: string[] = [];
-    for (const [socketId, mappedUser] of this.socketUser.entries()) {
-      if (mappedUser === userId) {
-        ids.push(socketId);
-      }
-    }
-    return ids;
+  private async broadcastPresence(userId: string, online: boolean): Promise<void> {
+    const ids = await this.access.authorizedIds();
+    if (ids.length) this.server.to(ids).emit('presence:update', { userId, online });
   }
 }

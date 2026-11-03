@@ -1,6 +1,9 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Expose, Transform, Type } from 'class-transformer';
-import { IsArray, IsNumber, IsOptional, IsString, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+
+import { FULL_UK_POSTCODE_PATTERN, normalizeFullUkPostcode } from '../shop-validation';
+
 import { OpeningHoursDto } from './create-shop.dto';
 
 export class UpdateShopDto {
@@ -24,6 +27,7 @@ export class UpdateShopDto {
   @Expose({ name: 'address_line' })
   @IsOptional()
   @IsString()
+  @MinLength(1)
   @MaxLength(255)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   addressLine?: string;
@@ -32,23 +36,27 @@ export class UpdateShopDto {
   @IsOptional()
   @IsString()
   @MaxLength(32)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  @Transform(({ value }) => normalizeFullUkPostcode(value) ?? value)
+  @Matches(FULL_UK_POSTCODE_PATTERN, { message: 'Enter a full UK postcode, for example SW1A 1AA' })
   postcode?: string;
 
   @ApiPropertyOptional({ description: 'Latitude (WGS84)', minimum: -90, maximum: 90 })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 8 })
   @Min(-90)
+  @Max(90)
   latitude?: number;
 
   @ApiPropertyOptional({ description: 'Longitude (WGS84)', minimum: -180, maximum: 180 })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 8 })
   @Min(-180)
+  @Max(180)
   longitude?: number;
 
   @ApiPropertyOptional({ description: 'Active flag' })
   @IsOptional()
+  @IsBoolean()
   active?: boolean;
 
   @ApiPropertyOptional({ name: 'opening_hours', description: 'Opening days and times', type: OpeningHoursDto })

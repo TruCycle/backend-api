@@ -1,14 +1,16 @@
 import 'reflect-metadata';
+import * as fs from 'fs';
+import * as path from 'path';
+
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory, Reflector } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import * as path from 'path';
-import * as fs from 'fs';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { safeFailure } from './common/utils/safe-log';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -89,6 +91,6 @@ async function bootstrap() {
 
 bootstrap().catch((err) => {
   // eslint-disable-next-line no-console
-  console.error('Failed to bootstrap application', err);
+  console.error(safeFailure('application_bootstrap', err));
   process.exit(1);
 });

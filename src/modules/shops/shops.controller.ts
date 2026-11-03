@@ -2,10 +2,11 @@ import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req
 import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
 import { CreateShopDto } from './dto/create-shop.dto';
+import { ShopItemsQueryDto } from './dto/shop-items-query.dto';
 import { UpdateShopDto } from './dto/update-shop.dto';
 import { ShopsService } from './shops.service';
-import { ShopItemsQueryDto } from './dto/shop-items-query.dto';
 
 @ApiTags('shops')
 @Controller('shops')
@@ -77,7 +78,8 @@ export class ShopsController {
     @Query('postcode') postcode?: string,
     @Query('radius_m') radius?: string,
   ) {
-    const rN = radius !== undefined ? Number(radius) : undefined;
+    const rN = radius !== undefined && radius.trim() ? Number(radius) : radius === undefined ? undefined : NaN;
+    if (rN !== undefined && (!Number.isFinite(rN) || rN <= 0 || rN > 50000)) throw new BadRequestException('Search radius must be greater than zero and at most 50000 metres');
     const pc = (postcode ?? '').trim();
 
     if (pc) {
@@ -85,8 +87,11 @@ export class ShopsController {
     }
 
     if (lon !== undefined && lat !== undefined) {
-      const lonN = Number(lon);
-      const latN = Number(lat);
+      const lonN = lon.trim() ? Number(lon) : NaN;
+      const latN = lat.trim() ? Number(lat) : NaN;
+      if (!Number.isFinite(lonN) || lonN < -180 || lonN > 180 || !Number.isFinite(latN) || latN < -90 || latN > 90) {
+        throw new BadRequestException('Valid longitude and latitude are required');
+      }
       return this.shops.findNearby(lonN, latN, rN);
     }
 

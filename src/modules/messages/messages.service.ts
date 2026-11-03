@@ -22,6 +22,10 @@ import { User } from '../users/user.entity';
 
 export type MessageDirection = 'incoming' | 'outgoing' | 'general';
 
+// Compatibility projection: existing HTTP/socket clients concatenate these name
+// fields. Keep their shape while returning a label, never account name fields.
+const MESSAGE_MEMBER_LABEL = 'Community member';
+
 export interface MessageViewModel {
   id: string;
   roomId: string;
@@ -284,7 +288,7 @@ export class MessagesService {
     await this.getRoomOrFail(roomId, userId);
     await this.messages.delete({ room: { id: roomId } });
     if (this.gateway) {
-      this.gateway.emitRoomCleared(roomId);
+      await this.gateway.emitRoomCleared(roomId);
     }
   }
 
@@ -293,7 +297,7 @@ export class MessagesService {
     await this.messages.delete({ room: { id: room.id } });
     await this.rooms.delete({ id: room.id });
     if (this.gateway) {
-      this.gateway.emitRoomDeleted(roomId);
+      await this.gateway.emitRoomDeleted(roomId);
     }
   }
 
@@ -311,8 +315,8 @@ export class MessagesService {
   private async mapRoom(room: MessageRoom, viewerId?: string): Promise<ActiveRoomViewModel> {
     const participants = [room.userOne, room.userTwo].map((user) => ({
       id: user.id,
-      firstName: user.firstName ?? null,
-      lastName: user.lastName ?? null,
+      firstName: MESSAGE_MEMBER_LABEL,
+      lastName: null,
       profileImageUrl: user.profileImageUrl ?? null,
       online: this.presence.isOnline(user.id),
     }));
@@ -362,8 +366,8 @@ export class MessagesService {
       sender: message.sender
         ? {
             id: message.sender.id,
-            firstName: message.sender.firstName ?? null,
-            lastName: message.sender.lastName ?? null,
+            firstName: MESSAGE_MEMBER_LABEL,
+            lastName: null,
             profileImageUrl: message.sender.profileImageUrl ?? null,
           }
         : null,
@@ -377,7 +381,7 @@ export class MessagesService {
       userId: participantId,
       message: this.mapMessageForUser(message, participantId),
     }));
-    this.gateway.broadcastMessage(message.room.id, payloads);
+    await this.gateway.broadcastMessage(message.room.id, payloads);
   }
 
   private async touchRoom(roomId: string): Promise<void> {

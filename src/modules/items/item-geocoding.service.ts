@@ -2,210 +2,140 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
 import { ItemLocation } from './item-location.interface';
 
+type JsonObject = Record<string, unknown>;
+const asObject = (value: unknown): JsonObject | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : null;
+const text = (value: unknown): string | null => typeof value === 'string' && value.trim() ? value.trim() : null;
+function coordinate(value: unknown, limit: number): number | null {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim()))) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && Math.abs(parsed) <= limit ? parsed : null;
+}
+function aborted(): Error {
+  const error = new Error('Geocoding request cancelled');
+  error.name = 'AbortError';
+  return error;
+}
+
 @Injectable()
 export class ItemGeocodingService {
   private readonly logger = new Logger(ItemGeocodingService.name);
   private readonly endpoint = process.env.OSM_SEARCH_URL || 'https://nominatim.openstreetmap.org/search';
   private readonly reverseEndpoint = process.env.OSM_REVERSE_URL || 'https://nominatim.openstreetmap.org/reverse';
-  private readonly userAgent =
-    process.env.OSM_USER_AGENT || 'TruCycleBackend/0.1 (+https://trucycle.com/contact)';
-  private readonly requestTimeoutMs = Number(process.env.OSM_TIMEOUT_MS || 5000);
+  private readonly userAgent = process.env.OSM_USER_AGENT || 'TruCycleBackend/0.1 (+https://trucycle.co.uk)';
+  private readonly requestTimeoutMs = (() => {
+    const configured = Number(process.env.OSM_TIMEOUT_MS ?? 5000);
+    return Number.isFinite(configured) && configured > 0 ? Math.min(30_000, Math.max(1, Math.floor(configured))) : 5000;
+  })();
 
-  async forwardGeocode(query: string): Promise<ItemLocation> {
-    const trimmed = query.trim();
-    if (!trimmed) {
-      throw new BadRequestException('Address information is required');
-    }
-
-    const fetchFn: any = (globalThis as any).fetch;
-    if (typeof fetchFn !== 'function') {
-      this.logger.error('Global fetch is not available in this runtime');
-      throw new Error('Geocoder unavailable');
-    }
-
-    const AbortCtor: any = (globalThis as any).AbortController;
-    const controller = typeof AbortCtor === 'function' ? new AbortCtor() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), this.requestTimeoutMs) : null;
-
-    const queryOnce = async (q: string) => {
-      const params = new URLSearchParams({
-        q,
-        format: 'jsonv2',
-        limit: '1',
-        addressdetails: '0',
-      });
-      const url = `${this.endpoint}?${params.toString()}`;
-      const res = await fetchFn(url, {
-        method: 'GET',
-        headers: {
-          'User-Agent': this.userAgent,
-          Accept: 'application/json',
-          'Accept-Language': 'en',
-        },
-        signal: controller ? controller.signal : undefined,
-      });
-      if (!res || typeof res.status !== 'number') {
-        throw new Error('Unexpected geocoder response');
-      }
-      if (res.status === 429) {
-        this.logger.warn('Geocoder throttled the request (429)');
-      }
-      if (!res.ok) {
-        this.logger.warn(`Geocoder responded with status ${res.status}`);
-        throw new Error(`Geocoder responded with status ${res.status}`);
-      }
-      const payload: any = await res.json();
-      if (Array.isArray(payload) && payload.length > 0) {
-        return payload[0];
-      }
-      return null;
-    };
-
+  private async withDeadline<T>(label: string, callerSignal: AbortSignal | undefined,
+    operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (callerSignal?.aborted) throw aborted();
+    if (typeof globalThis.fetch !== 'function' || typeof AbortController !== 'function') throw new Error('Geocoder unavailable');
+    const controller = new AbortController();
+    let failure: Error | null = null;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let cancel = () => {};
+    const deadline = new Promise<never>((_resolve, reject) => {
+      cancel = () => { failure = aborted(); controller.abort(); reject(failure); };
+      callerSignal?.addEventListener('abort', cancel, { once: true });
+      timeout = setTimeout(() => {
+        failure = new Error(label + ' request timed out');
+        failure.name = 'GeocodingTimeoutError';
+        controller.abort(); reject(failure);
+      }, this.requestTimeoutMs);
+    });
     try {
-      // First attempt: as-is
-      let result: any = await queryOnce(trimmed);
-
-      // Heuristic fallbacks
-      if (!result) {
-        // Try extracting a UK postcode and geocoding that alone
-        const ukPostcodeMatch = trimmed.match(/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i);
-        if (ukPostcodeMatch?.[1]) {
-          const pc = ukPostcodeMatch[1].toUpperCase().replace(/\s+/g, ' ');
-          this.logger.debug(`Fallback geocoding with postcode only: ${pc}`);
-          result = await queryOnce(pc);
-        }
-      }
-
-      if (!result) {
-        // Try last comma-separated token (often most specific)
-        const parts = trimmed.split(',').map((p) => p.trim()).filter(Boolean);
-        if (parts.length > 1) {
-          const last = parts[parts.length - 1];
-          if (last && last.toLowerCase() !== trimmed.toLowerCase()) {
-            this.logger.debug(`Fallback geocoding with trailing token: ${last}`);
-            result = await queryOnce(last);
-          }
-        }
-      }
-
-      if (!result) {
-        throw new BadRequestException('Unable to geocode the supplied address');
-      }
-
-      const latitude = Number(result.lat);
-      const longitude = Number(result.lon);
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-        throw new BadRequestException('Geocoder returned invalid coordinates');
-      }
-      return { latitude, longitude };
-    } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        this.logger.warn('Geocoding request timed out');
-        throw new Error('Geocoding request timed out');
-      }
-      if (err instanceof BadRequestException) {
-        throw err;
-      }
-      this.logger.error('Failed to call geocoder', err instanceof Error ? err.stack : err);
-      throw err;
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+      // Race the whole operation, including response-body parsing and fallbacks.
+      // An abort-ignoring transport cannot return late success or start a fallback.
+      return await Promise.race([operation(controller.signal), deadline]);
+    } catch (error) {
+      if (failure) throw failure;
+      // Never log the supplied address, provider body, request URL or raw stack.
+      if (!(error instanceof BadRequestException)) this.logger.warn(label + ' lookup failed');
+      throw error;
+    } finally { clearTimeout(timeout); callerSignal?.removeEventListener('abort', cancel); }
   }
 
-  async reverseGeocode(
-    latitude: number,
-    longitude: number,
-  ): Promise<{
-    latitude: number;
-    longitude: number;
-    postcode: string | null;
-    addressLine: string | null;
-    neighborhood: string | null;
+  private async requestJson(endpoint: string, params: URLSearchParams, signal: AbortSignal): Promise<unknown> {
+    if (signal.aborted) throw aborted();
+    let response: Response;
+    try {
+      response = await globalThis.fetch(endpoint + '?' + params.toString(), {
+        method: 'GET', headers: { 'User-Agent': this.userAgent, Accept: 'application/json', 'Accept-Language': 'en' }, signal,
+      });
+    } catch {
+      if (signal.aborted) throw aborted();
+      // Transport errors may embed a URL/address; do not forward them to Nest's
+      // default exception logger, which logs uncaught Error messages/stacks.
+      throw new Error('Unable to contact geocoder');
+    }
+    if (signal.aborted) throw aborted();
+    if (!response || typeof response.status !== 'number' || !Number.isFinite(response.status)) throw new Error('Unexpected geocoder response');
+    if (!response.ok) throw new Error('Geocoder responded with status ' + response.status);
+    let payload: unknown;
+    try { payload = await response.json(); } catch { throw new Error('Unexpected geocoder response'); }
+    if (signal.aborted) throw aborted();
+    return payload;
+  }
+
+  async forwardGeocode(query: string, signal?: AbortSignal): Promise<ItemLocation> {
+    if (typeof query !== 'string' || !query.trim()) throw new BadRequestException('Address information is required');
+    const trimmed = query.trim();
+    const candidates = [trimmed];
+    const match = trimmed.match(/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i);
+    if (match) {
+      const compact = match[1].toUpperCase().replace(/\s+/g, '');
+      candidates.push(compact.slice(0, -3) + ' ' + compact.slice(-3));
+    }
+    const parts = trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+    if (parts.length > 1) candidates.push(parts[parts.length - 1]);
+    // Existing heuristic candidates are only used for genuine empty results;
+    // identical postcode spellings must not generate extra provider requests.
+    const seen = new Set<string>();
+    const distinct = candidates.filter((candidate) => {
+      const key = candidate.toUpperCase().replace(/\s+/g, '');
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+    return this.withDeadline('Geocoding', signal, async (requestSignal) => {
+      for (const candidate of distinct) {
+        const payload = await this.requestJson(this.endpoint, new URLSearchParams({ q: candidate, format: 'jsonv2', limit: '1', addressdetails: '0' }), requestSignal);
+        if (!Array.isArray(payload)) throw new Error('Unexpected geocoder response');
+        if (payload.length === 0) continue;
+        const result = asObject(payload[0]);
+        if (result && 'error' in result) throw new BadRequestException('Unable to geocode the supplied address');
+        const latitude = coordinate(result?.lat, 90);
+        const longitude = coordinate(result?.lon, 180);
+        if (latitude === null || longitude === null) throw new BadRequestException('Geocoder returned invalid coordinates');
+        return { latitude, longitude };
+      }
+      throw new BadRequestException('Unable to geocode the supplied address');
+    });
+  }
+
+  async reverseGeocode(latitude: number, longitude: number, signal?: AbortSignal): Promise<{
+    latitude: number; longitude: number; postcode: string | null; addressLine: string | null; neighborhood: string | null;
   }> {
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    if (typeof latitude !== 'number' || typeof longitude !== 'number' || coordinate(latitude, 90) === null || coordinate(longitude, 180) === null) {
       throw new BadRequestException('Valid latitude and longitude are required');
     }
-
-    const fetchFn: any = (globalThis as any).fetch;
-    if (typeof fetchFn !== 'function') {
-      this.logger.error('Global fetch is not available in this runtime');
-      throw new Error('Geocoder unavailable');
-    }
-
-    const AbortCtor: any = (globalThis as any).AbortController;
-    const controller = typeof AbortCtor === 'function' ? new AbortCtor() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), this.requestTimeoutMs) : null;
-
-    try {
-      const params = new URLSearchParams({
-        lat: latitude.toString(),
-        lon: longitude.toString(),
-        format: 'jsonv2',
-        addressdetails: '1',
-        zoom: '18',
-      });
-      const url = `${this.reverseEndpoint}?${params.toString()}`;
-      const res = await fetchFn(url, {
-        method: 'GET',
-        headers: {
-          'User-Agent': this.userAgent,
-          Accept: 'application/json',
-          'Accept-Language': 'en',
-        },
-        signal: controller ? controller.signal : undefined,
-      });
-
-      if (!res || typeof res.status !== 'number') {
-        throw new Error('Unexpected geocoder response');
+    return this.withDeadline('Reverse geocoding', signal, async (requestSignal) => {
+      const payload = asObject(await this.requestJson(this.reverseEndpoint, new URLSearchParams({
+        lat: String(latitude), lon: String(longitude), format: 'jsonv2', addressdetails: '1', zoom: '18',
+      }), requestSignal));
+      if (!payload || 'error' in payload || coordinate(payload.lat, 90) === null || coordinate(payload.lon, 180) === null) {
+        throw new BadRequestException('Unable to reverse geocode the supplied coordinates');
       }
-      if (!res.ok) {
-        this.logger.warn(`Reverse geocoder responded with status ${res.status}`);
-        throw new Error(`Reverse geocoder responded with status ${res.status}`);
-      }
-
-      const payload: any = await res.json();
-      const address = typeof payload?.address === 'object' && payload.address !== null ? payload.address : {};
-      const postcode =
-        typeof address.postcode === 'string' && address.postcode.trim().length > 0
-          ? address.postcode.trim().toUpperCase().replace(/\s+/g, ' ')
-          : null;
-      const road = typeof address.road === 'string' && address.road.trim().length > 0 ? address.road.trim() : null;
-      const houseNumber =
-        typeof address.house_number === 'string' && address.house_number.trim().length > 0
-          ? address.house_number.trim()
-          : null;
-      const neighborhoodCandidates = [
-        address.neighbourhood,
-        address.suburb,
-        address.quarter,
-        address.hamlet,
-        address.village,
-        address.city_district,
-      ];
-      const neighborhood = neighborhoodCandidates.find(
-        (value): value is string => typeof value === 'string' && value.trim().length > 0,
-      )?.trim() ?? null;
-
-      return {
-        latitude,
-        longitude,
-        postcode,
-        addressLine: road ? [houseNumber, road].filter(Boolean).join(' ') : null,
-        neighborhood,
-      };
-    } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        this.logger.warn('Reverse geocoding request timed out');
-        throw new Error('Reverse geocoding request timed out');
-      }
-      if (err instanceof BadRequestException) {
-        throw err;
-      }
-      this.logger.error('Failed to call reverse geocoder', err instanceof Error ? err.stack : err);
-      throw err;
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+      const address = asObject(payload.address) ?? {};
+      const postcode = text(address.postcode)?.toUpperCase().replace(/\s+/g, ' ') ?? null;
+      const road = text(address.road);
+      const houseNumber = text(address.house_number);
+      const neighborhood = [address.neighbourhood, address.suburb, address.quarter, address.hamlet, address.village, address.city_district]
+        .map(text).find((value) => value !== null) ?? null;
+      // Nominatim returns a nearby OSM object's centroid. Keep the requested GPS
+      // point; never silently replace it with that object's coordinates.
+      return { latitude, longitude, postcode, addressLine: road ? [houseNumber, road].filter(Boolean).join(' ') : null, neighborhood };
+    });
   }
 }

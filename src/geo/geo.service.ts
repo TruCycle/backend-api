@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 // SRID constants based on architecture doc
@@ -8,13 +8,12 @@ export const SRID = 4326;
 export class GeoService {
   constructor(private readonly dataSource: DataSource) {}
 
-  makePoint(lon: number, lat: number) {
-    return `ST_SetSRID(ST_MakePoint(${lon}, ${lat}), ${SRID})`;
-  }
-
-  // Example: find shops within radius in degrees (caller must convert meters→degrees if needed)
-  async nearestShops(lon: number, lat: number, radiusDeg = 0.05) {
-    const point = this.makePoint(lon, lat);
+  async nearestShops(lon: number, lat: number, radiusMeters = 5000) {
+    if (!Number.isFinite(lon) || lon < -180 || lon > 180 || !Number.isFinite(lat) || lat < -90 || lat > 90 ||
+        !Number.isFinite(radiusMeters) || radiusMeters <= 0 || radiusMeters > 50000) {
+      throw new BadRequestException('Valid coordinates and a radius of up to 50000 metres are required');
+    }
+    const point = 'ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography';
     return this.dataSource.query(
       `SELECT id,
               name,
@@ -23,18 +22,17 @@ export class GeoService {
               postcode,
               latitude,
               longitude,
-              operational_notes,
               opening_hours,
               acceptable_categories,
               active,
               ST_AsGeoJSON(geom) AS geom,
-              ST_Distance(geom::geography, ${point}::geography) AS distance_meters
+              ST_Distance(geom::geography, ${point}) AS distance_meters
          FROM shop
         WHERE active = TRUE
-          AND ST_DWithin(geom, ${point}, $1)
-        ORDER BY geom <-> ${point}
+          AND ST_DWithin(geom::geography, ${point}, $3)
+        ORDER BY distance_meters ASC, id ASC
         LIMIT 25`,
-      [radiusDeg],
+      [lon, lat, radiusMeters],
     );
   }
 }

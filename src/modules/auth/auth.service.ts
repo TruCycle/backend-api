@@ -6,6 +6,7 @@ import { randomInt } from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 
 import { PasswordService } from '../../common/security/password.service';
+import { frontendOrigin } from '../../common/utils/frontend-origin';
 import { EmailService } from '../notifications/email.service';
 import {
   buildPasswordResetOtpEmailTemplate,
@@ -20,12 +21,9 @@ import { User, UserStatus } from '../users/user.entity';
 import { KycProfile, KycStatus } from '../users/kyc-profile.entity';
 import { Shop } from '../shops/shop.entity';
 import { CreateShopDto } from '../shops/dto/create-shop.dto';
-
-interface JwtPayload {
-  sub: string;
-  email: string;
-  roles: RoleCode[];
-}
+import { normalizeShopIdentity, withShopOwnerLock, assertNoDuplicateShop } from '../shops/shop-validation';
+import { AuthSessionsService } from './auth-sessions.service';
+import { ItemGeocodingService } from '../items/item-geocoding.service';
 
 @Injectable()
 export class AuthService {
@@ -38,254 +36,122 @@ export class AuthService {
     private readonly passwordService: PasswordService,
     private readonly jwt: JwtService,
     private readonly email: EmailService,
+    private readonly sessions: AuthSessionsService,
+    private readonly geocoding: ItemGeocodingService,
   ) {}
 
-  // Minimal internal geocoder to prioritise postcode/address over lat/lng during shop creation
   private async geocodeAddress(query: string): Promise<{ latitude: number; longitude: number }> {
-    const trimmed = (query ?? '').trim();
-    if (!trimmed) throw new BadRequestException('Address information is required');
-
-    const endpoint = process.env.OSM_SEARCH_URL || 'https://nominatim.openstreetmap.org/search';
-    const userAgent = process.env.OSM_USER_AGENT || 'TruCycleBackend/0.1 (+https://trucycle.com/contact)';
-    const timeoutMs = Number(process.env.OSM_TIMEOUT_MS || 5000);
-
-    const fetchFn: any = (globalThis as any).fetch;
-    if (typeof fetchFn !== 'function') throw new Error('Geocoder unavailable');
-
-    const AbortCtor: any = (globalThis as any).AbortController;
-    const controller = typeof AbortCtor === 'function' ? new AbortCtor() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-    try {
-      const params = new URLSearchParams({ q: trimmed, format: 'jsonv2', limit: '1', addressdetails: '0' });
-      const url = `${endpoint}?${params.toString()}`;
-      const res = await fetchFn(url, {
-        method: 'GET',
-        headers: { 'User-Agent': userAgent, Accept: 'application/json', 'Accept-Language': 'en' },
-        signal: controller ? controller.signal : undefined,
-      });
-      if (!res || !res.ok) throw new Error(`Geocoder responded with status ${res?.status}`);
-      const payload: any = await res.json();
-      if (!Array.isArray(payload) || payload.length === 0) {
-        throw new BadRequestException('Unable to geocode the supplied address');
-      }
-      const latitude = Number(payload[0]?.lat);
-      const longitude = Number(payload[0]?.lon);
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-        throw new BadRequestException('Geocoder returned invalid coordinates');
-      }
-      return { latitude, longitude };
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+    const point = await this.geocoding.forwardGeocode(query);
+    return { latitude: point.latitude, longitude: point.longitude };
   }
 
   private async getOrCreateRole(code: RoleCode): Promise<Role> {
-    let role = await this.roles.findOne({ where: { code } });
-    if (!role) {
-      role = this.roles.create({ code });
-      role = await this.roles.save(role);
+    const role = await this.roles.findOne({ where: { code } });
+    if (role) return role;
+    try { return await this.roles.save(this.roles.create({ code })); }
+    catch (error) {
+      // Outside the account transaction: recover only a concurrent role insert.
+      if ((error as { code?: string })?.code !== '23505') throw error;
+      const winner = await this.roles.findOne({ where: { code } });
+      if (!winner) throw error;
+      return winner;
     }
-    return role;
   }
 
-  async register(
-    email: string,
-    password: string,
-    roleCode?: RoleCode,
-    firstName?: string,
-    lastName?: string,
-    shopDto?: CreateShopDto,
-  ) {
+  async register(email: string, password: string, roleCode?: RoleCode, firstName?: string, lastName?: string, shopDto?: CreateShopDto) {
     const normalizedEmail = email.trim().toLowerCase();
-    const existing = await this.users.findOne({ where: { email: normalizedEmail } });
-    if (existing) {
-      // If a user re-registers without shop details, return a simple duplicate message
-      if (!shopDto) {
-        throw new ConflictException('Email already registered');
-      }
-      // If they included shop details (attempting partner), direct them to the upgrade endpoint
-      throw new ConflictException('Email already registered. Please log in and use the upgrade-to-partner endpoint.');
+    const requestedRole = String(roleCode ?? '').trim().toLowerCase();
+    if (requestedRole && !['customer', 'collector', 'partner', 'donor'].includes(requestedRole)) {
+      throw new BadRequestException('This role cannot be requested through public registration');
     }
-
+    const code = normalizeIncomingRole(roleCode ?? (shopDto ? RoleCode.PARTNER : RoleCode.CUSTOMER));
+    if (code === RoleCode.PARTNER && !shopDto) throw new BadRequestException('Shop details are required to register as a partner');
+    const identity = shopDto && code === RoleCode.PARTNER ? normalizeShopIdentity(shopDto) : undefined;
+    if (await this.users.findOne({ where: { email: normalizedEmail } })) throw new ConflictException('Email already registered. Please log in or use account recovery.');
+    const location = identity ? await this.geocodeAddress(identity.postcode) : undefined;
     const hash = await this.passwordService.hash(password);
-    const user = this.users.create({
-      email: normalizedEmail,
-      firstName: firstName?.trim(),
-      lastName: lastName?.trim(),
-      passwordHash: hash,
-      status: UserStatus.PENDING,
-    });
-    const saved = await this.users.save(user);
-
-    // If a shop payload is provided, default to PARTNER role
-    const inferredRole = roleCode ?? (shopDto ? RoleCode.PARTNER : undefined);
-    const code = normalizeIncomingRole(inferredRole || RoleCode.CUSTOMER);
-
-    // Enforce: Partner role requires at least one shop
-    let createdShop: any | undefined;
-    if (code === RoleCode.PARTNER) {
-      if (!shopDto) {
-        throw new BadRequestException('Shop details are required to register as a partner');
-      }
-      // Geocode using postcode only (postcode has priority)
-      const located = await this.geocodeAddress(shopDto.postcode);
-      const lat = Number(located.latitude);
-      const lon = Number(located.longitude);
-      const shop = this.shops.create({
-        owner: saved,
-        name: shopDto.name,
-        phoneNumber: shopDto.phoneNumber,
-        addressLine: shopDto.addressLine,
-        postcode: shopDto.postcode,
-        latitude: lat,
-        longitude: lon,
-        openingHours: shopDto.openingHours
-          ? { days: shopDto.openingHours.days, open_time: shopDto.openingHours.open_time, close_time: shopDto.openingHours.close_time }
-          : undefined,
-        acceptableCategories: shopDto.acceptableCategories,
-        geom: { type: 'Point', coordinates: [lon, lat] } as any,
-      });
-      const savedShop = await this.shops.save(shop);
-      createdShop = this.viewShop(savedShop);
-    }
-
-    // Link role after enforcing partner shop requirement
     const role = await this.getOrCreateRole(code);
-    const link = this.userRoles.create({ user: saved, role });
-    await this.userRoles.save(link);
-
-    // Issue an access token (kept for backward compatibility/tests)
-    const token = await this.issueToken(saved);
-
-    // Generate a time-limited email verification token and send email
-    await this.sendVerificationEmail(saved);
-    await this.sendWelcomeEmail(saved);
-
-    return { user: await this.findUserWithRoles(saved.id), token, shop: createdShop };
+    let created: { user: User; shop?: Shop };
+    try {
+      created = await this.users.manager.transaction(async manager => {
+        const users = manager.getRepository(User);
+        const saved = await users.save(users.create({ email: normalizedEmail, firstName: firstName?.trim(), lastName: lastName?.trim(), passwordHash: hash, status: UserStatus.PENDING }));
+        let shop: Shop | undefined;
+        if (identity && location && shopDto) {
+          // The pending-owner exception applies only to this newly-created user.
+          shop = await withShopOwnerLock(manager, saved.id, async (tx, owner) => {
+            await assertNoDuplicateShop(tx, owner.id, identity);
+            const shops = tx.getRepository(Shop);
+            return shops.save(shops.create({ owner, ...identity, phoneNumber: shopDto.phoneNumber,
+              latitude: location.latitude, longitude: location.longitude,
+              openingHours: shopDto.openingHours ? { days: shopDto.openingHours.days, open_time: shopDto.openingHours.open_time, close_time: shopDto.openingHours.close_time } : undefined,
+              acceptableCategories: shopDto.acceptableCategories, geom: { type: 'Point', coordinates: [location.longitude, location.latitude] } }));
+          }, { allowInactiveOwner: true });
+        }
+        const links = manager.getRepository(UserRole);
+        await links.save(links.create({ user: saved, role }));
+        return { user: saved, shop };
+      });
+    } catch (error) {
+      if ((error as { code?: string })?.code === '23505') throw new ConflictException('Email already registered. Please log in or use account recovery.');
+      throw error;
+    }
+    const verificationDelivery = await this.sendVerificationEmail(created.user);
+    await this.sendWelcomeEmail(created.user);
+    return { user: await this.findUserWithRoles(created.user.id), shop: created.shop ? this.viewShop(created.shop) : undefined, verificationDelivery };
   }
 
   async upgradeToPartner(authPayload: any, shopDto?: CreateShopDto) {
-    if (!authPayload || typeof authPayload.sub !== 'string') {
-      throw new UnauthorizedException('Authenticated user context not found');
-    }
-    const userId = authPayload.sub.trim();
-    const user = await this.users.findOne({ where: { id: userId } });
-    if (!user) throw new UnauthorizedException('User record not found');
-
-    // Enforce: must have at least one shop to be partner
-    const existingShops = await this.shops.count({ where: { owner: { id: user.id } } });
-    let createdShop: any | undefined;
-    if (existingShops === 0 && !shopDto) {
-      throw new BadRequestException('Shop details are required to upgrade to partner');
-    }
-
-    if (shopDto) {
-      // Geocode using postcode only (postcode has priority)
-      const located = await this.geocodeAddress(shopDto.postcode);
-      const lat = Number(located.latitude);
-      const lon = Number(located.longitude);
-      const shop = this.shops.create({
-        owner: user,
-        name: shopDto.name,
-        phoneNumber: shopDto.phoneNumber,
-        addressLine: shopDto.addressLine,
-        postcode: shopDto.postcode,
-        latitude: lat,
-        longitude: lon,
-        openingHours: shopDto.openingHours
-          ? { days: shopDto.openingHours.days, open_time: shopDto.openingHours.open_time, close_time: shopDto.openingHours.close_time }
-          : undefined,
-        acceptableCategories: shopDto.acceptableCategories,
-        geom: { type: 'Point', coordinates: [lon, lat] } as any,
-      });
-      const savedShop = await this.shops.save(shop);
-      createdShop = this.viewShop(savedShop);
-    }
-
-    // Link partner role now (after ensuring shop requirement)
+    const userId = typeof authPayload?.sub === 'string' ? authPayload.sub.trim() : '';
+    if (!userId) throw new UnauthorizedException('Authenticated user context not found');
+    const identity = shopDto ? normalizeShopIdentity(shopDto) : undefined;
+    const location = identity ? await this.geocodeAddress(identity.postcode) : undefined;
     const partnerRole = await this.getOrCreateRole(RoleCode.PARTNER);
-    const links = await this.userRoles.find({ where: { user: { id: user.id } } });
-    const hasPartner = links.some((l) => l.role.code === partnerRole.code);
-    if (!hasPartner) {
-      const link = this.userRoles.create({ user, role: partnerRole });
-      await this.userRoles.save(link);
-    }
-
-    // Return updated user (with roles), optional created shop, and refreshed tokens including new roles
-    const updatedUser = await this.findUserWithRoles(user.id);
-    const accessToken = await this.issueToken(user);
-    const refreshToken = await this.issueRefreshToken(user);
-    const tokens = {
-      accessToken,
-      refreshToken,
-      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
-      refreshTokenExpiry: this.getExpiryFromJwt(refreshToken),
-    };
-    return { user: updatedUser, shop: createdShop, tokens };
+    const createdShop = await withShopOwnerLock(this.users.manager, userId, async (manager, user) => {
+      const shops = manager.getRepository(Shop);
+      if (!identity && !await shops.count({ where: { owner: { id: userId }, active: true } })) throw new BadRequestException('Shop details are required to upgrade to partner');
+      let shop: Shop | undefined;
+      if (identity && location && shopDto) {
+        await assertNoDuplicateShop(manager, userId, identity);
+        shop = await shops.save(shops.create({ owner: user, ...identity, phoneNumber: shopDto.phoneNumber,
+          latitude: location.latitude, longitude: location.longitude,
+          openingHours: shopDto.openingHours ? { days: shopDto.openingHours.days, open_time: shopDto.openingHours.open_time, close_time: shopDto.openingHours.close_time } : undefined,
+          acceptableCategories: shopDto.acceptableCategories, geom: { type: 'Point', coordinates: [location.longitude, location.latitude] } }));
+      }
+      const links = manager.getRepository(UserRole);
+      const existing = await links.find({ where: { user: { id: user.id } } });
+      if (!existing.some(link => link.role.code === RoleCode.PARTNER)) await links.save(links.create({ user, role: partnerRole }));
+      return shop;
+    });
+    return { user: await this.findUserWithRoles(userId), shop: createdShop ? this.viewShop(createdShop) : undefined };
   }
 
   async login(email: string, password: string) {
     const user = await this.users.findOne({ where: { email } });
     if (!user || !user.passwordHash) throw new UnauthorizedException('Invalid credentials');
-    const ok = await this.passwordService.compare(password, user.passwordHash);
+    const checkedPasswordHash = user.passwordHash;
+    const ok = await this.passwordService.compare(password, checkedPasswordHash);
     if (!ok) throw new UnauthorizedException('Invalid credentials');
     if (user.status !== UserStatus.ACTIVE)
       throw new UnauthorizedException('User is not active');
 
-    const accessToken = await this.issueToken(user);
-    const refreshToken = await this.issueRefreshToken(user);
-    const tokens = {
-      accessToken,
-      refreshToken,
-      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
-      refreshTokenExpiry: this.getExpiryFromJwt(refreshToken),
-    };
+    const tokens = await this.sessions.create(user.id, { passwordHash: checkedPasswordHash });
 
     return { user: await this.findUserWithRoles(user.id), tokens };
   }
 
   async refreshTokens(refreshToken: string) {
-    const token = refreshToken?.trim();
-    if (!token) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-
-    let payload: any;
-    try {
-      payload = await this.jwt.verifyAsync(token);
-    } catch (_err) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-
-    if (!payload || payload.type !== 'refresh' || !payload.sub) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-
-    const user = await this.users.findOne({ where: { id: payload.sub as string } });
-    if (!user) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-    if (payload.email && payload.email !== user.email) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-    if (user.status !== UserStatus.ACTIVE) {
-      throw new UnauthorizedException('User is not active');
-    }
-
-    const accessToken = await this.issueToken(user);
-    const nextRefreshToken = await this.issueRefreshToken(user);
-    const tokens = {
-      accessToken,
-      refreshToken: nextRefreshToken,
-      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
-      refreshTokenExpiry: this.getExpiryFromJwt(nextRefreshToken),
-    };
-
-    return { user: await this.findUserWithRoles(user.id), tokens };
+    const { userId, tokens } = await this.sessions.refresh(refreshToken);
+    return { user: await this.findUserWithRoles(userId), tokens };
   }
 
+  async logout(refreshToken?: string, accessToken?: string): Promise<void> {
+    if (!refreshToken && !accessToken) throw new BadRequestException('A session credential is required');
+    await this.sessions.revoke(refreshToken || accessToken!, refreshToken ? 'refresh' : 'access');
+  }
+  async logoutAll(userId: string): Promise<void> { await this.sessions.revokeAll(userId); }
   async verifyUser(token: string) {
-    let payload: any;
+    let payload: Record<string, unknown>;
     try {
       payload = await this.jwt.verifyAsync(token);
     } catch (_err) {
@@ -294,42 +160,28 @@ export class AuthService {
     }
 
     // Basic sanity checks on token payload
-    if (!payload || payload.type !== 'verify' || !payload.sub) {
+    if (!payload || payload.type !== 'verify' || typeof payload.sub !== 'string' || !payload.sub.trim() || typeof payload.exp !== 'number' || !Number.isFinite(payload.exp * 1000) || payload.exp * 1000 <= Date.now()) {
       throw new UnauthorizedException('Invalid or expired token');
     }
-    const uid = payload.sub as string;
-    const user = await this.users.findOne({ where: { id: uid } });
-    if (!user) {
-      // Generic error to avoid leaking existence
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-
-    // Optional: ensure token email matches user email if present
-    if (payload.email && payload.email !== user.email) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-
-    // If user is deleted or suspended, do not proceed
-    if (user.status === UserStatus.DELETED || user.status === UserStatus.SUSPENDED) {
-      throw new BadRequestException('Account not eligible for verification');
-    }
-
-    // Activate pending users
-    if (user.status === UserStatus.PENDING) {
-      user.status = UserStatus.ACTIVE;
-      await this.users.save(user);
-    }
-
-    const accessToken = await this.issueToken(user);
-    const refreshToken = await this.issueRefreshToken(user);
-    const tokens = {
-      accessToken,
-      refreshToken,
-      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
-      refreshTokenExpiry: this.getExpiryFromJwt(refreshToken),
-    };
-
-    return { user: await this.findUserWithRoles(user.id), tokens };
+    const uid = payload.sub;
+    return this.users.manager.transaction(async manager => {
+      const users = manager.getRepository(User);
+      const user = await users.findOne({ where: { id: uid }, loadEagerRelations: false, lock: { mode: 'pessimistic_write' } });
+      // Recheck after the row lock. No provider work inside this transaction.
+      if (!user || (payload.exp as number) * 1000 <= Date.now() ||
+          typeof payload.email !== 'string' || payload.email !== user.email) {
+        throw new UnauthorizedException('Invalid or expired token');
+      }
+      if (![UserStatus.PENDING, UserStatus.ACTIVE].includes(user.status)) {
+        throw new BadRequestException('Account not eligible for verification');
+      }
+      if (user.status === UserStatus.PENDING) {
+        user.status = UserStatus.ACTIVE;
+        await users.save(user);
+      }
+      // Verification cannot mint sessions or replace a signed-in account.
+      return { verified: true as const };
+    });
   }
 
   private googleClient?: OAuth2Client;
@@ -423,37 +275,9 @@ export class AuthService {
       }
     }
 
-    const accessToken = await this.issueToken(user);
-    const refreshToken = await this.issueRefreshToken(user);
-    const tokens = {
-      accessToken,
-      refreshToken,
-      accessTokenExpiry: this.getExpiryFromJwt(accessToken),
-      refreshTokenExpiry: this.getExpiryFromJwt(refreshToken),
-    };
+    const tokens = await this.sessions.create(user.id, { googleId });
 
     return { user: await this.findUserWithRoles(user.id), tokens };
-  }
-
-  private async issueToken(user: User): Promise<string> {
-    const roles = await this.userRoles.find({ where: { user: { id: user.id } } });
-    const roleCodes: RoleCode[] = roles.map((r) => r.role.code as RoleCode);
-    const payload: JwtPayload = { sub: user.id, email: user.email, roles: roleCodes };
-    return this.jwt.signAsync(payload);
-  }
-
-  private async issueRefreshToken(user: User): Promise<string> {
-    const refreshExpiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '90d';
-    const payload = { sub: user.id, email: user.email, type: 'refresh' };
-    return this.jwt.signAsync(payload, { expiresIn: refreshExpiresIn });
-  }
-
-  private getExpiryFromJwt(token: string): string | null {
-    const decoded: any = this.jwt.decode(token);
-    if (decoded && typeof decoded === 'object' && decoded.exp) {
-      return new Date(decoded.exp * 1000).toISOString();
-    }
-    return null;
   }
 
   private async findUserWithRoles(id: string) {
@@ -472,14 +296,16 @@ export class AuthService {
   }
 
   private async sendVerificationEmail(user: User) {
-    const appBase = process.env.APP_BASE_URL || 'http://localhost:3000';
+    // APP_BASE_URL may point to the API; activation links must target the frontend.
+    const appBase = frontendOrigin();
+    if (!appBase) return { status: 'unavailable' as const };
     const verifyToken = await this.jwt.signAsync(
       { sub: user.id, email: user.email, type: 'verify' },
       { expiresIn: '24h' },
     );
     const verifyUrl = `${appBase.replace(/\/$/, '')}/auth/verify-email?token=${encodeURIComponent(verifyToken)}`;
     const html = buildVerifyEmailTemplate({ firstName: user.firstName, verifyUrl });
-    await this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
+    return this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
   }
 
   private async sendWelcomeEmail(user: User) {
@@ -522,7 +348,9 @@ export class AuthService {
     // Look up user; avoid leaking existence or state
     const user = await this.users.findOne({ where: { email: normalizedEmail } });
     if (user && user.status === UserStatus.PENDING) {
-      await this.sendVerificationEmail(user);
+      try { await this.sendVerificationEmail(user); } catch {
+        // Keep the public response identical even if token generation is unavailable.
+      }
     }
     // Always return success from controller to prevent user enumeration
   }
@@ -587,16 +415,22 @@ export class AuthService {
       await this.users.save(user);
       throw new UnauthorizedException('Invalid or expired OTP');
     }
-    const otpValid = await this.passwordService.compare(normalizedOtp, user.resetOtpHash);
+    const acceptedOtpHash = user.resetOtpHash;
+    const otpValid = await this.passwordService.compare(normalizedOtp, acceptedOtpHash);
     if (!otpValid) {
       throw new UnauthorizedException('Invalid or expired OTP');
     }
 
     const hash = await this.passwordService.hash(newPassword);
-    user.passwordHash = hash;
-    user.resetOtpHash = null;
-    user.resetOtpExpiresAt = null;
-    await this.users.save(user);
+    await this.users.manager.transaction(async manager => {
+      const users = manager.getRepository(User);
+      const locked = await users.findOne({ where: { id: user.id }, loadEagerRelations: false, lock: { mode: 'pessimistic_write' } });
+      if (!locked || locked.status === UserStatus.DELETED || locked.status === UserStatus.SUSPENDED || locked.resetOtpHash !== acceptedOtpHash ||
+          !locked.resetOtpExpiresAt || new Date(locked.resetOtpExpiresAt).getTime() <= Date.now()) throw new UnauthorizedException('Invalid or expired OTP');
+      locked.passwordHash = hash; locked.resetOtpHash = null; locked.resetOtpExpiresAt = null;
+      await users.save(locked);
+      await this.sessions.revokeAllInTransaction(manager, locked.id);
+    });
 
     // Optional: notify user about password change
     try {

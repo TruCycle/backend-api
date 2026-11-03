@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 
@@ -10,8 +10,6 @@ import { Item } from '../items/item.entity';
 
 @Injectable()
 export class RewardsService {
-  private readonly logger = new Logger(RewardsService.name);
-
   constructor(
     @InjectRepository(Wallet) private readonly wallets: Repository<Wallet>,
     @InjectRepository(LedgerEntry) private readonly ledger: Repository<LedgerEntry>,
@@ -20,7 +18,7 @@ export class RewardsService {
 
   private parseAmount(value: any, fallback: number): number {
     const n = Number(value);
-    return Number.isFinite(n) ? n : fallback;
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
   }
 
   private get currency(): string {
@@ -37,10 +35,14 @@ export class RewardsService {
   }
 
   async ensureWallet(manager: EntityManager, userId: string): Promise<Wallet> {
+    if (!manager.queryRunner?.isTransactionActive) {
+      return manager.transaction(transaction => this.ensureWallet(transaction, userId));
+    }
     const userRepo = manager.getRepository(User);
     const walletRepo = manager.getRepository(Wallet);
 
-    const user = await userRepo.findOne({ where: { id: userId } });
+    // Serialize first-wallet creation on the stable owner row.
+    const user = await userRepo.findOne({ where: { id: userId }, lock: { mode: 'pessimistic_write' } });
     if (!user) throw new Error('User not found for wallet');
 
     let wallet = await walletRepo.findOne({ where: { owner: { id: userId }, currency: this.currency } });
@@ -70,46 +72,39 @@ export class RewardsService {
     purpose: LedgerPurpose,
     ref: string,
   ): Promise<LedgerEntry | null> {
+    if (!manager.queryRunner?.isTransactionActive) {
+      throw new Error('Reward credits require an active transaction');
+    }
     const ledgerRepo = manager.getRepository(LedgerEntry);
     const walletRepo = manager.getRepository(Wallet);
 
+    if (!Number.isFinite(amount)) return null;
     const amt = Math.max(0, Math.floor(amount * 100) / 100);
     if (amt <= 0) return null;
-
-    const nextBalance = this.add(wallet.availableAmount, amt);
+    const current = await walletRepo.findOne({ where: { id: wallet.id }, lock: { mode: 'pessimistic_write' } });
+    if (!current || current.status !== WalletStatus.ACTIVE) throw new Error('Reward wallet unavailable');
+    const nextBalance = this.add(current.availableAmount, amt);
     const entry = ledgerRepo.create({
       wallet,
       type: LedgerEntryType.CREDIT,
       amount: amt.toFixed(2),
-      currency: wallet.currency,
+      currency: current.currency,
       balanceAfter: nextBalance,
       purpose,
       ref,
     });
 
-    try {
-      await ledgerRepo.save(entry);
-      await walletRepo.update(wallet.id, { availableAmount: nextBalance });
-      return entry;
-    } catch (err: any) {
-      // Unique violation => idempotent duplicate; treat as success
-      if (err && (err.code === '23505' || String(err.message || '').includes('unique'))) {
-        this.logger.debug(`Duplicate reward credit ignored (wallet=${wallet.id}, purpose=${purpose}, ref=${ref})`);
-        return null;
-      }
-      throw err;
-    }
+    // ON CONFLICT avoids leaving PostgreSQL's enclosing transaction aborted.
+    const inserted = await ledgerRepo.createQueryBuilder().insert().into(LedgerEntry)
+      .values(entry).orIgnore().returning('id').execute();
+    if (!Array.isArray(inserted.raw) || inserted.raw.length === 0) return null;
+    await walletRepo.update(wallet.id, { availableAmount: nextBalance });
+    return entry;
   }
 
   // Ensure idempotent award on claim completion (works for both QR and manual flows)
   async awardOnClaimComplete(manager: EntityManager, claim: Claim): Promise<void> {
     const ref = claim.id;
-
-    // Collector award
-    if (claim.collector?.id) {
-      const collectorWallet = await this.ensureWallet(manager, claim.collector.id);
-      await this.credit(manager, collectorWallet, this.collectorReward, LedgerPurpose.CLAIM_COMPLETE_COLLECTOR, ref);
-    }
 
     // Donor award (best-effort; donor may not be loaded on the claim in some flows)
     let donorId: string | null = claim.item?.donor?.id || null;
@@ -122,9 +117,14 @@ export class RewardsService {
         donorId = null;
       }
     }
-    if (donorId) {
-      const donorWallet = await this.ensureWallet(manager, donorId);
-      await this.credit(manager, donorWallet, this.donorReward, LedgerPurpose.CLAIM_COMPLETE_DONOR, ref);
+    const awards = [
+      { userId: claim.collector?.id, amount: this.collectorReward, purpose: LedgerPurpose.CLAIM_COMPLETE_COLLECTOR },
+      { userId: donorId, amount: this.donorReward, purpose: LedgerPurpose.CLAIM_COMPLETE_DONOR },
+    ].filter(award => Boolean(award.userId)).sort((left, right) => left.userId!.localeCompare(right.userId!));
+    // Consistent owner lock order also covers reciprocal concurrent exchanges.
+    for (const award of awards) {
+      const wallet = await this.ensureWallet(manager, award.userId!);
+      await this.credit(manager, wallet, award.amount, award.purpose, ref);
     }
   }
 }

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PasswordService } from '../../common/security/password.service';
+import { ItemGeocodingService } from '../items/item-geocoding.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { Role } from '../users/role.entity';
 import { UserRole } from '../users/user-role.entity';
@@ -20,7 +21,7 @@ import { Shop } from '../shops/shop.entity';
     forwardRef(() => NotificationsModule),
   ],
   controllers: [AuthController],
-  providers: [AuthService, PasswordService, JwtAuthGuard],
+  providers: [AuthService, PasswordService, JwtAuthGuard, ItemGeocodingService],
   exports: [],
 })
 export class AuthModule {}

@@ -1,3 +1,6 @@
+import { BadRequestException, Inject, Logger, OnModuleDestroy, UnauthorizedException, forwardRef } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { InjectRepository } from '@nestjs/typeorm';
 import {
   ConnectedSocket,
   MessageBody,
@@ -7,12 +10,17 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { BadRequestException, Inject, Logger, UnauthorizedException, forwardRef } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
+import { Repository } from 'typeorm';
 
-import { NotificationsService } from './notifications.service';
+import { SocketAccess } from '../../common/security/socket-access';
+import { resolveOutwardPostcode } from '../../common/utils/postcode';
+import { safeFailure } from '../../common/utils/safe-log';
+import { User } from '../users/user.entity';
+import { AuthSessionsService } from '../auth/auth-sessions.service';
+
 import { NotificationViewModel } from './notification.entity';
+import { NotificationsService } from './notifications.service';
 
 interface ReadPayload {
   id?: string;
@@ -29,45 +37,45 @@ interface ReadPayload {
   },
   namespace: '/notifications',
 })
-export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
   @WebSocketServer()
   private readonly server!: Server;
 
   private readonly logger = new Logger(NotificationsGateway.name);
-  private readonly socketUser = new Map<string, string>();
+  private readonly access: SocketAccess;
 
   constructor(
-    private readonly jwt: JwtService,
+    jwt: JwtService,
     @Inject(forwardRef(() => NotificationsService)) private readonly notifications: NotificationsService,
-  ) {}
+    @InjectRepository(User) users: Repository<User>,
+    sessions: AuthSessionsService,
+  ) { this.access = new SocketAccess(jwt, users, sessions); }
+
+  onModuleDestroy(): void { this.access.destroy(); }
 
   async handleConnection(client: Socket): Promise<void> {
     try {
       const token = this.extractToken(client);
-      const payload = await this.jwt.verifyAsync(token);
-      const userId = payload.sub as string | undefined;
-      if (!userId) {
-        throw new UnauthorizedException('Invalid token payload');
-      }
+      const { userId } = await this.access.connect(client, token);
       client.data.userId = userId;
-      this.socketUser.set(client.id, userId);
-      this.logger.verbose(`Notifications socket ${client.id} connected for user ${userId}`);
+      client.emit('auth:ready');
+      this.logger.verbose({ operation: 'notifications_socket_connected' });
     } catch (error) {
-      this.logger.warn(`Disconnecting notifications socket during handshake: ${error}`);
+      this.logger.warn(safeFailure('notifications_socket_handshake', error));
       client.disconnect(true);
     }
   }
 
   async handleDisconnect(client: Socket): Promise<void> {
-    const userId = this.socketUser.get(client.id) ?? (client.data?.userId as string | undefined);
+    this.access.release(client);
+    const userId = client.data?.userId as string | undefined;
     if (userId) {
-      this.socketUser.delete(client.id);
-      this.logger.verbose(`Notifications socket ${client.id} disconnected for user ${userId}`);
+      this.logger.verbose({ operation: 'notifications_socket_disconnected' });
     }
   }
 
-  emitToUser(userId: string, notification: NotificationViewModel): void {
-    const socketIds = this.findSocketIdsForUser(userId);
+  async emitToUser(userId: string, notification: NotificationViewModel): Promise<void> {
+    const socketIds = await this.access.authorizedIds(userId);
     if (socketIds.length === 0) return;
     this.server.to(socketIds).emit('notification:new', notification);
   }
@@ -76,7 +84,7 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
    * Broadcast a rescue or fly-tip event to every connected client. Used by the
    * found-items module to power the live rescue ticker on the dashboard.
    */
-  broadcastRescue(
+  async broadcastRescue(
     kind: 'rescue' | 'flytip',
     payload: {
       id: string;
@@ -89,11 +97,14 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
       imageUrl?: string | null;
       ts?: string;
     },
-  ): void {
+  ): Promise<void> {
     if (!this.server) return;
+    const socketIds = await this.access.authorizedIds();
+    if (!socketIds.length) return;
     const event = kind === 'flytip' ? 'rescue:flytip' : 'rescue:new';
-    this.server.emit(event, {
+    this.server.to(socketIds).emit(event, {
       ...payload,
+      postcode: resolveOutwardPostcode(payload.postcode),
       ts: payload.ts ?? new Date().toISOString(),
     });
   }
@@ -103,8 +114,7 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: ReadPayload,
   ): Promise<{ event: string; data: any }> {
-    const userId = client.data.userId as string | undefined;
-    if (!userId) throw new UnauthorizedException('Unauthenticated socket');
+    const { userId } = await this.access.authorize(client);
     if (!payload || (!payload.id && !Array.isArray(payload.ids))) {
       throw new BadRequestException('id or ids is required');
     }
@@ -131,12 +141,5 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
     throw new UnauthorizedException('Missing websocket token');
   }
 
-  private findSocketIdsForUser(userId: string): string[] {
-    const ids: string[] = [];
-    for (const [socketId, mappedUser] of this.socketUser.entries()) {
-      if (mappedUser === userId) ids.push(socketId);
-    }
-    return ids;
-  }
 }
 

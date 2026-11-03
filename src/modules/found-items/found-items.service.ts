@@ -6,18 +6,22 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, IsNull, LessThanOrEqual, Repository } from 'typeorm';
 
-import { normalizePostcode } from '../../common/utils/postcode';
+import { normalizePostcode, resolveOutwardPostcode } from '../../common/utils/postcode';
+import { projectFoundItemLocation, publicLocationPoint, validLocationPoint } from '../../common/utils/public-location';
+import { safeFailure } from '../../common/utils/safe-log';
 import { GamificationService } from '../gamification/gamification.service';
 import { ItemGeocodingService } from '../items/item-geocoding.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import { User, UserStatus } from '../users/user.entity';
+
 import { CreateFoundItemClaimDto } from './dto/create-found-item-claim.dto';
 import { CreateFoundItemDto, CreateFoundItemImageDto } from './dto/create-found-item.dto';
 import { MyFoundItemsQueryDto } from './dto/my-found-items-query.dto';
-import { ReportFoundItemDto } from './dto/report-found-item.dto';
+import { ObserveFoundItemDto } from './dto/observe-found-item.dto';
+import { FOUND_ITEM_REPORT_REASONS, ReportFoundItemDto } from './dto/report-found-item.dto';
 import { SearchFoundItemCatalogDto } from './dto/search-found-item-catalog.dto';
 import { FoundItemSortBy, SearchFoundItemsDto } from './dto/search-found-items.dto';
 import { UpdateFoundItemStatusDto } from './dto/update-found-item-status.dto';
@@ -28,14 +32,16 @@ import {
   searchFoundItemCarbonCatalog,
   type FoundItemCarbonCatalogEntry,
 } from './found-item-carbon-catalog';
-import { FoundItem, FoundItemImage, FoundItemStatus } from './found-item.entity';
 import { FoundItemClaim, FoundItemClaimStatus } from './found-item-claim.entity';
+import { FoundItemObservation } from './found-item-observation.entity';
 import { FoundItemReport } from './found-item-report.entity';
+import { FoundItem, FoundItemImage, FoundItemStatus } from './found-item.entity';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 const DEFAULT_PAGE = 1;
-const DEFAULT_MAX_DISTANCE_KM = 5;
+// Real names and email-derived labels stay private until optional display names exist.
+const PUBLIC_ACTOR_LABEL = 'Community member';
 const ACTIVE_CLAIM_STATUSES: readonly FoundItemClaimStatus[] = [FoundItemClaimStatus.PENDING, FoundItemClaimStatus.ACKNOWLEDGED];
 const FOUND_ITEM_FALLBACK_IMPACT_FACTORS: Record<string, { defaultWeightKg: number; impactFactor: number }> = {
   furniture: { defaultWeightKg: 25, impactFactor: 3.44 },
@@ -58,6 +64,10 @@ interface ResolvedFoundItemLocation {
 
 @Injectable()
 export class FoundItemsService {
+  private transactionScoped = false;
+  private afterCommit: (() => Promise<void>)[] = [];
+  // Reviewable QA proposal defaults; activation is separately gated.
+  readonly lifecyclePolicy = { nearbyKm: 5, closedHours: 24, expiryHours: 168, nudgeHours: 72 };
   private readonly logger = new Logger(FoundItemsService.name);
 
   constructor(
@@ -69,28 +79,50 @@ export class FoundItemsService {
     private readonly notifications: NotificationsService,
     private readonly notificationsGateway: NotificationsGateway,
     private readonly gamification: GamificationService,
+    @InjectRepository(FoundItemObservation) private readonly observations: Repository<FoundItemObservation>,
   ) {}
+
+  configureLifecyclePolicy(policy: Partial<FoundItemsService['lifecyclePolicy']>): void {
+    for (const [key, value] of Object.entries(policy)) {
+      if (!(key in this.lifecyclePolicy) || !Number.isFinite(value) || value <= 0) {
+        throw new BadRequestException('Lifecycle policy values must be positive finite numbers');
+      }
+    }
+    Object.assign(this.lifecyclePolicy, policy);
+  }
 
   async list(userId: string, query: SearchFoundItemsDto) {
     const page = Math.max(query.page ?? DEFAULT_PAGE, DEFAULT_PAGE);
     const limit = Math.min(Math.max(query.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
     const status = query.status ?? FoundItemStatus.AVAILABLE;
+    const postcodeArea = query.postcode === undefined ? null : resolveOutwardPostcode(query.postcode);
+    if (query.postcode !== undefined && !postcodeArea) {
+      throw new BadRequestException('Enter a valid postcode or postcode area');
+    }
 
     const qb = this.foundItems
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.poster', 'poster')
-      .where('item.status = :status', { status });
+      .where(query.includeRecentClosed && query.status === undefined
+        ? '(item.status IN (:...activeStatuses) OR (item.status IN (:...closedStatuses) AND item.closed_at >= :closedSince))'
+        : 'item.status = :status', {
+        status, activeStatuses: [FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED],
+        closedStatuses: [FoundItemStatus.PICKED_UP, FoundItemStatus.GONE, FoundItemStatus.EXPIRED],
+        closedSince: new Date(Date.now() - this.lifecyclePolicy.closedHours * 3600000),
+      });
 
     if (query.category) {
       qb.andWhere('LOWER(item.category) = LOWER(:category)', { category: query.category });
     }
-    if (query.postcode) {
-      qb.andWhere('UPPER(item.postcode) LIKE :postcode', { postcode: `%${query.postcode}%` });
-    }
-
-    const items = await qb.getMany();
+    // Do not let exact/postcode-prefix matching become a public membership oracle.
+    // This flow already materialises rows before distance filtering/pagination.
+    const rows = await qb.getMany();
+    const items = postcodeArea && query.maxDistance === undefined ? rows.filter((item) => resolveOutwardPostcode(item.postcode) === postcodeArea) : rows;
     const claimCounts = await this.loadClaimCounts(items.map((item) => item.id));
     const origin = await this.resolveOrigin(query);
+    if (!origin && (query.maxDistance !== undefined || query.sortBy === FoundItemSortBy.NEAREST)) {
+      throw new BadRequestException('Provide a search location for distance filtering or nearest sorting');
+    }
     const mappedItems = items.map((item) => this.mapFoundItem(item, claimCounts.get(item.id) ?? 0, origin));
     const filteredItems = mappedItems.filter((item) => {
       if (!origin || query.maxDistance === undefined) {
@@ -156,12 +188,12 @@ export class FoundItemsService {
     }) : null;
 
     return {
-      item: this.mapFoundItem(item, claimCounts.get(item.id) ?? 0, null),
+      item: this.mapFoundItem(item, claimCounts.get(item.id) ?? 0, null, userId),
       claims: claims.map((claim) => ({
         id: claim.id,
         foundItemId: claim.foundItemId,
         claimerId: claim.claimerId,
-        claimerName: this.getUserDisplayName(claim.claimer),
+        claimerName: PUBLIC_ACTOR_LABEL,
         message: claim.message ?? null,
         status: claim.status,
         createdAt: claim.createdAt.toISOString(),
@@ -172,7 +204,7 @@ export class FoundItemsService {
               id: viewerClaim.id,
               foundItemId: viewerClaim.foundItemId,
               claimerId: viewerClaim.claimerId,
-              claimerName: this.getUserDisplayName(viewerClaim.claimer),
+              claimerName: PUBLIC_ACTOR_LABEL,
               message: viewerClaim.message ?? null,
               status: viewerClaim.status,
               createdAt: viewerClaim.createdAt.toISOString(),
@@ -200,7 +232,7 @@ export class FoundItemsService {
     const pagedItems = items.slice((page - 1) * limit, page * limit);
 
     return {
-      items: pagedItems.map((item) => this.mapFoundItem(item, claimCounts.get(item.id) ?? 0, null)),
+      items: pagedItems.map((item) => this.mapFoundItem(item, claimCounts.get(item.id) ?? 0, null, userId)),
       pagination: {
         page,
         limit,
@@ -232,20 +264,22 @@ export class FoundItemsService {
       latitude: location.latitude,
       longitude: location.longitude,
       images: this.normalizeImages(dto.images),
-      expiresAt: null,
+      lastSeenAt: new Date(),
+      expiresAt: new Date(Date.now() + this.lifecyclePolicy.expiryHours * 3600000),
     });
 
     const saved = await this.foundItems.save(item);
     try {
       await this.gamification.recordFoundItemPosted(poster.id, saved.id, saved.postedAt);
     } catch (error) {
-      this.logger.warn(`Unable to record found-item post activity for ${saved.id}: ${String(error)}`);
+      this.logger.warn(safeFailure('found-item.post.activity', error));
     }
 
-    return { item: this.mapFoundItem(saved, 0, null) };
+    return { item: this.mapFoundItem(saved, 0, null, userId) };
   }
 
-  async updateStatus(userId: string, foundItemId: string, dto: UpdateFoundItemStatusDto) {
+  async updateStatus(userId: string, foundItemId: string, dto: UpdateFoundItemStatusDto): Promise<{ item: ReturnType<FoundItemsService['mapFoundItem']> }> {
+    if (!this.transactionScoped) return this.withItemLock(foundItemId, (scoped) => scoped.updateStatus(userId, foundItemId, dto));
     const item = await this.foundItems.findOne({
       where: { id: foundItemId.trim() },
       relations: { poster: true },
@@ -258,6 +292,21 @@ export class FoundItemsService {
     }
     if (dto.status === FoundItemStatus.REPORTED || dto.status === FoundItemStatus.CLAIMED) {
       throw new BadRequestException('This status cannot be set directly');
+    }
+
+    // Repeated requests must not repeat rewards, claim completion or public events.
+    if (item.status === dto.status) {
+      const counts = await this.loadClaimCounts([item.id]);
+      return { item: this.mapFoundItem(item, counts.get(item.id) ?? 0, null, userId) };
+    }
+    if (dto.status === FoundItemStatus.AVAILABLE && (item.status === FoundItemStatus.GONE || item.status === FoundItemStatus.EXPIRED)) {
+      return this.reconfirm(userId, foundItemId);
+    }
+    if (item.status === FoundItemStatus.PICKED_UP || item.status === FoundItemStatus.REPORTED) {
+      throw new BadRequestException('This closed found item cannot be changed directly');
+    }
+    if (dto.status === FoundItemStatus.PICKED_UP && (item.status === FoundItemStatus.EXPIRED || item.status === FoundItemStatus.GONE)) {
+      throw new BadRequestException('Reconfirm availability before recording a pickup');
     }
 
     const activeClaims = await this.claims.find({ where: { foundItemId: item.id } });
@@ -273,13 +322,13 @@ export class FoundItemsService {
         await this.claims.save(claim);
       }
       try {
-        await this.gamification.recordFoundItemPickedUp(userId, item.id, new Date());
+        this.afterCommit.push(async () => { await this.gamification.recordFoundItemPickedUp(userId, item.id, new Date()); });
       } catch (error) {
-        this.logger.warn(`Unable to record found-item pickup activity for ${item.id}: ${String(error)}`);
+        this.logger.warn(safeFailure('found-item.pickup.activity', error));
       }
     }
 
-    if (dto.status === FoundItemStatus.AVAILABLE || dto.status === FoundItemStatus.EXPIRED) {
+    if (dto.status === FoundItemStatus.AVAILABLE || dto.status === FoundItemStatus.EXPIRED || dto.status === FoundItemStatus.GONE) {
       for (const claim of activeClaims.filter((currentClaim) => ACTIVE_CLAIM_STATUSES.includes(currentClaim.status))) {
         claim.status = FoundItemClaimStatus.CANCELLED;
         await this.claims.save(claim);
@@ -287,31 +336,32 @@ export class FoundItemsService {
     }
 
     item.status = dto.status;
+    item.closedAt = [FoundItemStatus.PICKED_UP, FoundItemStatus.EXPIRED, FoundItemStatus.GONE].includes(dto.status) ? new Date() : null;
     const saved = await this.foundItems.save(item);
     const claimCount = await this.loadClaimCounts([saved.id]);
 
     if (dto.status === FoundItemStatus.PICKED_UP) {
       try {
-        const rescuer = await this.users.findOne({ where: { id: userId } });
-        this.notificationsGateway.broadcastRescue('rescue', {
+        this.afterCommit.push(async () => { await this.notificationsGateway.broadcastRescue('rescue', {
           id: saved.id,
           title: saved.title,
           category: saved.category,
-          postcode: saved.postcode,
+          postcode: resolveOutwardPostcode(saved.postcode) ?? '',
           co2eKg: Number(saved.estimatedCo2eKg ?? 0),
           impactPoints: Number(saved.impactPoints ?? 0),
-          rescuerName: rescuer ? [rescuer.firstName, rescuer.lastName].filter(Boolean).join(' ').trim() || null : null,
+          rescuerName: PUBLIC_ACTOR_LABEL,
           imageUrl: saved.images?.[0]?.url ?? null,
-        });
+        }); });
       } catch (error) {
-        this.logger.warn(`Unable to broadcast rescue event for ${saved.id}: ${String(error)}`);
+        this.logger.warn(safeFailure('found-item.rescue.broadcast', error));
       }
     }
 
-    return { item: this.mapFoundItem(saved, claimCount.get(saved.id) ?? 0, null) };
+    return { item: this.mapFoundItem(saved, claimCount.get(saved.id) ?? 0, null, userId) };
   }
 
   async remove(userId: string, foundItemId: string): Promise<void> {
+    if (!this.transactionScoped) return this.withItemLock(foundItemId, (scoped) => scoped.remove(userId, foundItemId));
     const item = await this.foundItems.findOne({ where: { id: foundItemId.trim() } });
     if (!item) {
       throw new NotFoundException('Found item not found');
@@ -320,10 +370,15 @@ export class FoundItemsService {
       throw new ForbiddenException('Only the poster can delete this found item');
     }
 
+    const claims = await this.claims.find({ where: { foundItemId: item.id } });
+    if (claims.some((claim) => ACTIVE_CLAIM_STATUSES.includes(claim.status))) {
+      throw new BadRequestException('Close the found item before deleting a post with active requests');
+    }
     await this.foundItems.delete(item.id);
   }
 
-  async claim(userId: string, foundItemId: string, dto: CreateFoundItemClaimDto) {
+  async claim(userId: string, foundItemId: string, dto: CreateFoundItemClaimDto): Promise<{ claim: {id: string; foundItemId: string; claimerId: string; claimerName: string; message: string | null; status: FoundItemClaimStatus; createdAt: string} }> {
+    if (!this.transactionScoped) return this.withItemLock(foundItemId, (scoped) => scoped.claim(userId, foundItemId, dto));
     const claimer = await this.ensureActiveUser(userId);
     const item = await this.foundItems.findOne({
       where: { id: foundItemId.trim() },
@@ -335,7 +390,7 @@ export class FoundItemsService {
     if (item.posterId === userId) {
       throw new ForbiddenException('You cannot claim your own found item');
     }
-    if (item.status !== FoundItemStatus.AVAILABLE) {
+    if (item.status !== FoundItemStatus.AVAILABLE || (item.expiresAt && item.expiresAt <= new Date())) {
       throw new BadRequestException('This found item is no longer available');
     }
 
@@ -345,6 +400,7 @@ export class FoundItemsService {
     }
 
     const claim = this.claims.create({
+      ...(existingClaim ? { id: existingClaim.id } : {}),
       foundItemId: item.id,
       foundItem: item,
       claimerId: claimer.id,
@@ -357,27 +413,29 @@ export class FoundItemsService {
     await this.foundItems.save(item);
 
     try {
-      await this.gamification.recordFoundItemClaimed(userId, savedClaim.id, savedClaim.createdAt);
+      this.afterCommit.push(async () => { await this.gamification.recordFoundItemClaimed(userId, savedClaim.id, savedClaim.createdAt); });
     } catch (error) {
-      this.logger.warn(`Unable to record found-item claim activity for ${savedClaim.id}: ${String(error)}`);
+      this.logger.warn(safeFailure('found-item.claim.activity', error));
     }
 
     try {
-      await this.notifications.createAndEmit(
+      this.afterCommit.push(async () => { await this.notifications.createAndEmit(
         item.posterId,
         'general',
         'Found item interest',
-        `${this.getUserDisplayName(claimer)} wants to pick up “${item.title}”.`,
+        `${PUBLIC_ACTOR_LABEL} wants to pick up “${item.title}”.`,
         { foundItemId: item.id, claimId: savedClaim.id },
-      );
-    } catch {}
+      ); });
+    } catch {
+      // Interest remains recorded if the optional notification fails.
+    }
 
     return {
       claim: {
         id: savedClaim.id,
         foundItemId: savedClaim.foundItemId,
         claimerId: savedClaim.claimerId,
-        claimerName: this.getUserDisplayName(claimer),
+        claimerName: PUBLIC_ACTOR_LABEL,
         message: savedClaim.message ?? null,
         status: savedClaim.status,
         createdAt: savedClaim.createdAt.toISOString(),
@@ -385,31 +443,61 @@ export class FoundItemsService {
     };
   }
 
+  async acknowledgeClaim(userId: string, id: string, claimId: string): Promise<{ success: boolean }> {
+    if (!this.transactionScoped) return this.withItemLock(id, (scoped) => scoped.acknowledgeClaim(userId, id, claimId));
+    const item = await this.foundItems.findOne({ where: { id: id.trim() } });
+    if (!item) throw new NotFoundException('Found item not found');
+    if (item.posterId !== userId) throw new ForbiddenException('Only the poster can acknowledge a pickup request');
+    if (item.status !== FoundItemStatus.CLAIMED) throw new BadRequestException('This spot has no active pickup request');
+    const claim = await this.claims.findOne({ where: { id: claimId.trim(), foundItemId: item.id } });
+    if (!claim || !ACTIVE_CLAIM_STATUSES.includes(claim.status)) throw new BadRequestException('This pickup request is not active');
+    if (claim.status !== FoundItemClaimStatus.ACKNOWLEDGED) {
+      claim.status = FoundItemClaimStatus.ACKNOWLEDGED;
+      await this.claims.save(claim);
+    }
+    return { success: true };
+  }
+
   async cancelClaim(userId: string, foundItemId: string): Promise<void> {
+    if (!this.transactionScoped) return this.withItemLock(foundItemId, (scoped) => scoped.cancelClaim(userId, foundItemId));
     const itemId = foundItemId.trim();
     const claim = await this.claims.findOne({ where: { foundItemId: itemId, claimerId: userId } });
     if (!claim) {
       throw new NotFoundException('Found item claim not found');
     }
 
+    if (claim.status === FoundItemClaimStatus.CANCELLED) return;
+    if (!ACTIVE_CLAIM_STATUSES.includes(claim.status)) {
+      throw new BadRequestException('Completed pickup requests cannot be cancelled');
+    }
     claim.status = FoundItemClaimStatus.CANCELLED;
     await this.claims.save(claim);
 
-    const activeClaims = await this.claims.count({
-      where: { foundItemId: itemId, status: FoundItemClaimStatus.PENDING },
-    });
-    if (activeClaims === 0) {
-      await this.foundItems.update(itemId, { status: FoundItemStatus.AVAILABLE });
+    const remainingClaims = await this.claims.find({ where: { foundItemId: itemId } });
+    if (!remainingClaims.some((current) => ACTIVE_CLAIM_STATUSES.includes(current.status))) {
+      // A cancellation must never reopen an expired, reported or completed spot.
+      await this.foundItems.update(
+        { id: itemId, status: FoundItemStatus.CLAIMED },
+        { status: FoundItemStatus.AVAILABLE },
+      );
     }
   }
 
-  async report(userId: string, foundItemId: string, dto: ReportFoundItemDto) {
+  async report(userId: string, foundItemId: string, dto: ReportFoundItemDto): Promise<{ success: boolean }> {
+    if (!this.transactionScoped) return this.withItemLock(foundItemId, (scoped) => scoped.report(userId, foundItemId, dto));
     const reporter = await this.ensureActiveUser(userId);
     const item = await this.foundItems.findOne({ where: { id: foundItemId.trim() } });
     if (!item) {
       throw new NotFoundException('Found item not found');
     }
 
+    if (!(FOUND_ITEM_REPORT_REASONS as readonly string[]).includes(dto.reason?.trim())) throw new BadRequestException('Choose a report reason');
+    if (dto.reason === 'not_there') {
+      const claim = await this.claims.findOne({ where: { foundItemId: item.id, claimerId: userId } });
+      if (!claim || !ACTIVE_CLAIM_STATUSES.includes(claim.status)) {
+        throw new ForbiddenException('Only an active claimant can report not there on arrival');
+      }
+    }
     const report = this.reports.create({
       foundItemId: item.id,
       foundItem: item,
@@ -419,25 +507,139 @@ export class FoundItemsService {
       details: dto.details?.trim() || null,
     });
     await this.reports.save(report);
-    item.status = FoundItemStatus.REPORTED;
-    await this.foundItems.save(item);
-
-    try {
-      this.notificationsGateway.broadcastRescue('flytip', {
-        id: item.id,
-        title: item.title,
-        category: item.category,
-        postcode: item.postcode,
-        co2eKg: Number(item.estimatedCo2eKg ?? 0),
-        impactPoints: Number(item.impactPoints ?? 0),
-        rescuerName: [reporter.firstName, reporter.lastName].filter(Boolean).join(' ').trim() || null,
-        imageUrl: item.images?.[0]?.url ?? null,
-      });
-    } catch (error) {
-      this.logger.warn(`Unable to broadcast fly-tip event for ${item.id}: ${String(error)}`);
+    if (dto.reason === 'already_gone' || dto.reason === 'not_there') {
+      const claim = await this.claims.findOne({ where: { foundItemId: item.id, claimerId: userId } });
+      if (claim?.status === FoundItemClaimStatus.ACKNOWLEDGED || (dto.latitude !== undefined && dto.longitude !== undefined)) {
+        await this.observe(userId, item.id, { kind: 'gone', latitude: dto.latitude, longitude: dto.longitude });
+      }
+    } else if (item.status === FoundItemStatus.AVAILABLE || item.status === FoundItemStatus.CLAIMED) {
+      await this.closeWithoutPickup(item, FoundItemStatus.REPORTED, new Date());
     }
+    // A report is an unverified signal. It must not announce fly-tipping,
+    // a successful pickup or environmental impact.
 
     return { success: true };
+  }
+
+  private async withItemLock<T>(id: string, operation: (service: FoundItemsService) => Promise<T>): Promise<T> {
+    const effects: (() => Promise<void>)[] = [];
+    const result = await this.foundItems.manager.transaction(async (manager) => {
+      const items = manager.getRepository(FoundItem);
+      // Every mutation takes this lock first, including claim creation and cancellation.
+      // No external I/O is performed while the parent item is locked.
+      const item = await items.findOne({ where: { id: id.trim() }, lock: { mode: 'pessimistic_write' } });
+      if (!item) throw new NotFoundException('Found item not found');
+      const scoped = new FoundItemsService(items, manager.getRepository(FoundItemClaim),
+        manager.getRepository(FoundItemReport), manager.getRepository(User), this.geocoding,
+        this.notifications, this.notificationsGateway, this.gamification, manager.getRepository(FoundItemObservation));
+      scoped.transactionScoped = true;
+      scoped.afterCommit = effects;
+      Object.assign(scoped.lifecyclePolicy, this.lifecyclePolicy);
+      return operation(scoped);
+    });
+    for (const effect of effects) {
+      try { await effect(); } catch { this.logger.warn('Optional found-item post-commit effect failed'); }
+    }
+    return result;
+  }
+
+  async reconfirm(userId: string, id: string): Promise<{ item: ReturnType<FoundItemsService['mapFoundItem']> }> {
+    if (!this.transactionScoped) return this.withItemLock(id, (scoped) => scoped.reconfirm(userId, id));
+    await this.ensureActiveUser(userId);
+    const item = await this.foundItems.findOne({ where: { id: id.trim() }, relations: { poster: true } });
+    if (!item) throw new NotFoundException('Found item not found');
+    if (item.posterId !== userId) throw new ForbiddenException('Only the poster can reconfirm or dispute this spot');
+    if ([FoundItemStatus.PICKED_UP, FoundItemStatus.REPORTED].includes(item.status)) {
+      throw new BadRequestException('This closed spot cannot be reconfirmed');
+    }
+    const previous = await this.observations.find({ where: { foundItemId: item.id } });
+    item.lastSeenAt = new Date(Math.max(Date.now(), ...previous.map((row) => row.observedAt.getTime() + 1), (item.lastSeenAt?.getTime() ?? 0) + 1));
+    item.expiresAt = new Date(item.lastSeenAt.getTime() + this.lifecyclePolicy.expiryHours * 3600000);
+    item.expiryNudgedAt = null;
+    item.closedAt = null;
+    if (item.status === FoundItemStatus.GONE || item.status === FoundItemStatus.EXPIRED) item.status = FoundItemStatus.AVAILABLE;
+    await this.foundItems.save(item);
+    const counts = await this.loadClaimCounts([item.id]);
+    return { item: this.mapFoundItem(item, counts.get(item.id) ?? 0, null, userId) };
+  }
+
+  async observe(userId: string, id: string, dto: ObserveFoundItemDto): Promise<{ item: ReturnType<FoundItemsService['mapFoundItem']> }> {
+    if (!this.transactionScoped) return this.withItemLock(id, (scoped) => scoped.observe(userId, id, dto));
+    await this.ensureActiveUser(userId);
+    const item = await this.foundItems.findOne({ where: { id: id.trim() }, relations: { poster: true } });
+    if (!item) throw new NotFoundException('Found item not found');
+    if (!['still_there', 'gone'].includes(dto.kind)) throw new BadRequestException('Choose a supported observation');
+    if (item.posterId === userId && dto.kind === 'still_there') return this.reconfirm(userId, id);
+    if (item.status === FoundItemStatus.GONE && dto.kind === 'gone') {
+      const previous = await this.observations.find({ where: { foundItemId: item.id, observerId: userId } });
+      if (item.posterId === userId || previous.some((row) => row.observerId === userId && row.kind === 'gone')) {
+        const counts = await this.loadClaimCounts([item.id]);
+        return { item: this.mapFoundItem(item, counts.get(item.id) ?? 0, null, userId) };
+      }
+    }
+    if (![FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED].includes(item.status)) {
+      throw new BadRequestException('This spot is closed');
+    }
+    const claim = await this.claims.findOne({ where: { foundItemId: item.id, claimerId: userId } });
+    const acknowledged = claim?.status === FoundItemClaimStatus.ACKNOWLEDGED;
+    if (item.posterId !== userId && !acknowledged) {
+      const origin = validLocationPoint(dto.latitude, dto.longitude);
+      const point = publicLocationPoint(item.latitude, item.longitude);
+      const distance = this.computeApproximateDistance(origin, point?.latitude ?? null, point?.longitude ?? null);
+      if (!origin || distance === null || distance > this.lifecyclePolicy.nearbyKm) {
+        throw new ForbiddenException('A self-attested location within the nearby area is required');
+      }
+    }
+    const observedAt = new Date(Math.max(Date.now(), (item.lastSeenAt?.getTime() ?? 0) + 1));
+    // Upsert under the same parent lock: an account can never supply two votes.
+    await this.observations.upsert({ foundItemId: item.id, observerId: userId, kind: dto.kind, observedAt }, ['foundItemId', 'observerId']);
+    if (dto.kind === 'still_there') {
+      item.lastSeenAt = observedAt;
+      item.expiresAt = new Date(observedAt.getTime() + this.lifecyclePolicy.expiryHours * 3600000);
+      item.expiryNudgedAt = null;
+      await this.foundItems.save(item);
+    } else {
+      const observations = await this.observations.find({ where: { foundItemId: item.id, kind: 'gone' } });
+      const votes = new Set(observations.filter((row) => row.observedAt > (item.lastSeenAt ?? item.postedAt)).map((row) => row.observerId));
+      if (item.posterId === userId || acknowledged || votes.size >= 2) await this.closeWithoutPickup(item, FoundItemStatus.GONE, observedAt);
+    }
+    const counts = await this.loadClaimCounts([item.id]);
+    return { item: this.mapFoundItem(item, counts.get(item.id) ?? 0, null, userId) };
+  }
+
+  private async closeWithoutPickup(item: FoundItem, status: FoundItemStatus.GONE | FoundItemStatus.EXPIRED | FoundItemStatus.REPORTED, now: Date) {
+    const claims = await this.claims.find({ where: { foundItemId: item.id } });
+    for (const claim of claims.filter((row) => ACTIVE_CLAIM_STATUSES.includes(row.status))) {
+      claim.status = FoundItemClaimStatus.CANCELLED;
+      await this.claims.save(claim);
+    }
+    item.status = status;
+    item.closedAt = now;
+    await this.foundItems.save(item);
+  }
+
+  // Deliberately callable only: no scheduler, startup hook or automatic activation.
+  async processLifecycle(now = new Date(), limit = 100): Promise<{ nudged: number; expired: number }> {
+    const result = { nudged: 0, expired: 0 };
+    const active = In([FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED]);
+    const candidates = await this.foundItems.find({ where: [
+      { status: active, expiresAt: LessThanOrEqual(now) },
+      { status: active, expiryNudgedAt: IsNull(), lastSeenAt: LessThanOrEqual(new Date(now.getTime() - this.lifecyclePolicy.nudgeHours * 3600000)) },
+    ], order: { id: 'ASC' }, take: Math.min(Math.max(limit, 1), 100) });
+    for (const candidate of candidates) {
+      await this.withItemLock(candidate.id, async (scoped) => {
+        const item = await scoped.foundItems.findOne({ where: { id: candidate.id } });
+        if (!item || ![FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED].includes(item.status) || !item.lastSeenAt || !item.expiresAt) return;
+        if (item.expiresAt <= now) {
+          await scoped.closeWithoutPickup(item, FoundItemStatus.EXPIRED, now); result.expired += 1;
+        } else if (!item.expiryNudgedAt && item.lastSeenAt.getTime() <= now.getTime() - scoped.lifecyclePolicy.nudgeHours * 3600000) {
+          item.expiryNudgedAt = now; await scoped.foundItems.save(item); result.nudged += 1;
+          scoped.afterCommit.push(async () => { await scoped.notifications.createAndEmit(item.posterId, 'general', 'Is your spot still there?',
+            'Reconfirm your spot if it is still available. Otherwise it will expire at its scheduled expiry.', { foundItemId: item.id }); });
+        }
+      });
+    }
+    return result;
   }
 
   private async ensureActiveUser(userId: string): Promise<User> {
@@ -487,9 +689,7 @@ export class FoundItemsService {
           neighborhood: reverse.neighborhood,
         };
       } catch (error) {
-        this.logger.debug(
-          `Found-item reverse geocoding fallback for ${latitude},${longitude}: ${String(error)}`,
-        );
+        this.logger.debug(safeFailure('found-item.reverse-geocode', error));
         return {
           postcode: this.resolvePostcode(dto, user),
           latitude,
@@ -530,7 +730,7 @@ export class FoundItemsService {
         const result = await this.geocoding.forwardGeocode(query);
         return { latitude: result.latitude, longitude: result.longitude };
       } catch (error) {
-        this.logger.debug(`Found-item geocoding fallback for query="${query}": ${String(error)}`);
+        this.logger.debug(safeFailure('found-item.forward-geocode', error));
       }
     }
 
@@ -651,18 +851,23 @@ export class FoundItemsService {
   }
 
   private async resolveOrigin(query: SearchFoundItemsDto): Promise<{ latitude: number; longitude: number } | null> {
-    if (typeof query.lat === 'number' && typeof query.lng === 'number') {
-      return { latitude: query.lat, longitude: query.lng };
+    if (query.lat !== undefined || query.lng !== undefined) {
+      const point = validLocationPoint(query.lat, query.lng);
+      if (!point) throw new BadRequestException('Enter valid search coordinates');
+      return point;
     }
     if (!query.postcode) {
       return null;
     }
 
     try {
-      return this.geocoding.forwardGeocode(query.postcode);
-    } catch (error) {
-      this.logger.debug(`Unable to geocode found-items origin ${query.postcode}: ${String(error)}`);
-      return null;
+      const resolved = await this.geocoding.forwardGeocode(query.postcode);
+      const point = validLocationPoint(resolved.latitude, resolved.longitude);
+      if (!point) throw new Error('Invalid search origin');
+      return point;
+    } catch {
+      this.logger.debug('Unable to resolve the supplied found-items search origin');
+      throw new BadRequestException('Unable to resolve search location. Please try again.');
     }
   }
 
@@ -706,8 +911,13 @@ export class FoundItemsService {
     item: FoundItem,
     claimCount: number,
     origin: { latitude: number; longitude: number } | null,
+    viewerId?: string,
   ) {
-    const approximateDistance = this.computeApproximateDistance(origin, item.latitude ?? null, item.longitude ?? null);
+    const location = projectFoundItemLocation(item, viewerId !== undefined && viewerId === item.posterId);
+    // Public list membership and ordering always use the public point, including
+    // when the current viewer happens to own an entry in that public feed.
+    const publicPoint = publicLocationPoint(item.latitude, item.longitude);
+    const approximateDistance = this.computeApproximateDistance(origin, publicPoint?.latitude ?? null, publicPoint?.longitude ?? null);
     return {
       id: item.id,
       title: item.title,
@@ -720,11 +930,7 @@ export class FoundItemsService {
         altText: image.altText ?? null,
       })),
       location: {
-        latitude: item.latitude ?? 0,
-        longitude: item.longitude ?? 0,
-        address: item.address ?? null,
-        neighborhood: item.neighborhood ?? null,
-        postcode: item.postcode,
+        ...location,
         approximateDistance,
       },
       condition: item.condition ?? null,
@@ -734,22 +940,16 @@ export class FoundItemsService {
       isFlyTipped: item.isFlyTipped === true,
       poster: {
         id: item.poster.id,
-        name: this.getUserDisplayName(item.poster),
+        name: PUBLIC_ACTOR_LABEL,
         avatarUrl: item.poster.profileImageUrl ?? null,
       },
       postedAt: item.postedAt.toISOString(),
       expiresAt: item.expiresAt ? item.expiresAt.toISOString() : null,
+      lastSeenAt: item.lastSeenAt?.toISOString() ?? null,
+      closedAt: item.closedAt?.toISOString() ?? null,
       claimCount,
       viewCount: item.viewCount,
     };
-  }
-
-  private getUserDisplayName(user: User): string {
-    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
-    if (fullName) {
-      return fullName;
-    }
-    return user.email.split('@')[0] || 'Community member';
   }
 
   private computeApproximateDistance(
@@ -769,7 +969,8 @@ export class FoundItemsService {
       Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
       Math.cos(toRadians(origin.latitude)) * Math.cos(toRadians(latitude)) *
       Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const bounded = Math.min(1, Math.max(0, a));
+    const c = 2 * Math.atan2(Math.sqrt(bounded), Math.sqrt(1 - bounded));
     return Math.round(earthRadiusKm * c * 10) / 10;
   }
 }

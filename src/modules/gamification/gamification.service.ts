@@ -8,7 +8,7 @@ import { FoundItem, FoundItemStatus } from '../found-items/found-item.entity';
 import { FoundItemClaim, FoundItemClaimStatus } from '../found-items/found-item-claim.entity';
 import { Item } from '../items/item.entity';
 import { User } from '../users/user.entity';
-import { GamificationBadge, GamificationBadgeCategory } from './badge.entity';
+import { GamificationBadge } from './badge.entity';
 import { type CommunityBoardWindow } from './dto/community-board-query.dto';
 import { GamificationBadgeFilter, GamificationBadgesQueryDto } from './dto/gamification-badges-query.dto';
 import { PointHistoryQueryDto } from './dto/point-history-query.dto';
@@ -78,6 +78,7 @@ const FOUND_ITEM_POST_POINTS = 50;
 const FOUND_ITEM_CLAIM_POINTS = 25;
 const FOUND_ITEM_PICKED_UP_POINTS = 30;
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const COMMUNITY_MEMBER_LABEL = 'Community member';
 
 interface CommunityBoardPostcodeEntry {
   readonly postcode: string;
@@ -334,7 +335,7 @@ export class GamificationService {
     const entries: LeaderboardEntryView[] = rows.map((row, index) => ({
       rank: offset + index + 1,
       userId: row.userId,
-      name: this.resolveSpotterName(row.user),
+      name: COMMUNITY_MEMBER_LABEL,
       postcode: resolveOutwardPostcode(row.user?.postcode ?? null),
       totalPoints: row.totalPoints,
       currentLevel: row.currentLevel,
@@ -356,7 +357,7 @@ export class GamificationService {
         currentUser = {
           rank: rankRaw + 1,
           userId: currentRow.userId,
-          name: this.resolveSpotterName(currentRow.user),
+          name: COMMUNITY_MEMBER_LABEL,
           postcode: resolveOutwardPostcode(currentRow.user?.postcode ?? null),
           totalPoints: currentRow.totalPoints,
           currentLevel: currentRow.currentLevel,
@@ -392,13 +393,16 @@ export class GamificationService {
     }
 
     const topArea = [...areaTally.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+    const pickedUp = items.filter(item => item.status === FoundItemStatus.PICKED_UP);
+    const hasUnknownEstimate = pickedUp.some(item =>
+      typeof item.estimatedCo2eKg !== 'number' || !Number.isFinite(item.estimatedCo2eKg) || item.estimatedCo2eKg < 0);
 
     return {
       spotsPosted: items.length,
       liveSpots: items.filter((item) => item.status === FoundItemStatus.AVAILABLE || item.status === FoundItemStatus.CLAIMED).length,
       rescuedSpots: items.filter((item) => item.status === FoundItemStatus.PICKED_UP).length,
       reportedSpots: items.filter((item) => item.status === FoundItemStatus.REPORTED).length,
-      totalCo2eKg: items.reduce((total, item) => total + (item.estimatedCo2eKg ?? 0), 0),
+      totalCo2eKg: hasUnknownEstimate ? null : pickedUp.reduce((total, item) => total + item.estimatedCo2eKg, 0),
       totalImpactPoints: items.reduce((total, item) => total + (item.impactPoints ?? 0), 0),
       topArea,
       userArea,
@@ -454,7 +458,6 @@ export class GamificationService {
     const startAt = this.getWindowStart(window);
     const queryBuilder = this.getFoundItemRepository()
       .createQueryBuilder('item')
-      .leftJoinAndSelect('item.poster', 'poster')
       .orderBy('item.posted_at', 'DESC');
 
     if (startAt) {
@@ -495,7 +498,7 @@ export class GamificationService {
         existingPostcode.rescues += item.status === FoundItemStatus.PICKED_UP ? 1 : 0;
         existingPostcode.activeSpots +=
           item.status === FoundItemStatus.AVAILABLE || item.status === FoundItemStatus.CLAIMED ? 1 : 0;
-        existingPostcode.totalCo2eKg += item.estimatedCo2eKg ?? 0;
+        existingPostcode.totalCo2eKg += item.status === FoundItemStatus.PICKED_UP ? this.nonNegativeMetric(item.estimatedCo2eKg) : 0;
         existingPostcode.impactPoints += item.impactPoints ?? 0;
         postcodeMap.set(outwardPostcode, existingPostcode);
       }
@@ -503,7 +506,7 @@ export class GamificationService {
       const posterId = item.posterId;
       const spotter = spotterMap.get(posterId) ?? {
         userId: posterId,
-        name: this.resolveSpotterName(item.poster),
+        name: COMMUNITY_MEMBER_LABEL,
         postcode: outwardPostcode,
         spotsPosted: 0,
         rescues: 0,
@@ -512,7 +515,7 @@ export class GamificationService {
       };
       spotter.spotsPosted += 1;
       spotter.rescues += item.status === FoundItemStatus.PICKED_UP ? 1 : 0;
-      spotter.totalCo2eKg += item.estimatedCo2eKg ?? 0;
+      spotter.totalCo2eKg += item.status === FoundItemStatus.PICKED_UP ? this.nonNegativeMetric(item.estimatedCo2eKg) : 0;
       spotter.impactPoints += item.impactPoints ?? 0;
       if (!spotter.postcode && outwardPostcode) {
         spotter.postcode = outwardPostcode;
@@ -532,7 +535,7 @@ export class GamificationService {
       return (
         right.impactPoints - left.impactPoints ||
         right.spotsPosted - left.spotsPosted ||
-        left.name.localeCompare(right.name)
+        left.userId.localeCompare(right.userId)
       );
     });
 
@@ -549,19 +552,6 @@ export class GamificationService {
 
     const days = window === 'week' ? 7 : 30;
     return new Date(Date.now() - days * DAY_IN_MS);
-  }
-
-  private resolveSpotterName(user: User | null | undefined): string {
-    if (!user) {
-      return 'Community member';
-    }
-
-    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
-    if (fullName) {
-      return fullName;
-    }
-
-    return user.email.split('@')[0] || 'Community member';
   }
 
   private async recordActivity(manager: EntityManager, input: PointActivityInput): Promise<void> {
@@ -730,23 +720,14 @@ export class GamificationService {
       return;
     }
 
-    try {
-      await repo.save(
-        repo.create({
-          userId: input.userId,
-          points: input.points,
-          reason: input.reason,
-          actionType: input.actionType,
-          actionId: input.actionId,
-          occurredAt: input.occurredAt,
-        }),
-      );
-    } catch (error: any) {
-      if (error?.code === '23505' || String(error?.message || '').toLowerCase().includes('unique')) {
-        return;
-      }
-      throw error;
-    }
+    await repo.createQueryBuilder().insert().into(PointTransaction).values({
+      userId: input.userId, points: input.points, reason: input.reason,
+      actionType: input.actionType, actionId: input.actionId, occurredAt: input.occurredAt,
+    }).orIgnore().execute();
+  }
+
+  private nonNegativeMetric(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
   }
 
   private async syncUserState(manager: EntityManager, userId: string): Promise<void> {

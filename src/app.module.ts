@@ -5,52 +5,28 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { JwtAuthModule } from './common/security/jwt-auth.module';
 import configuration from './config/configuration';
-import { PostgisExtensionMigration1700000000001 } from './database/migrations/1700000000001-CreatePostgisExtension';
-import { CreateUuidExtension1700000000002 } from './database/migrations/1700000000002-CreateUuidExtension';
-import { CreateUserKycAddress1700000000003 } from './database/migrations/1700000000003-CreateUserKycAddress';
-import { CreateServiceZoneAndSeedLondon1700000000004 } from './database/migrations/1700000000004-CreateServiceZoneAndSeedLondon';
-import { CreatePickupOrderAndItem1700000000005 } from './database/migrations/1700000000005-CreatePickupOrderAndItem';
-import { AddPendingStatusAndUserNames1700000000006 } from './database/migrations/1700000000006-AddPendingStatusAndUserNames';
-import { SetUserStatusDefaultPending1700000000007 } from './database/migrations/1700000000007-SetUserStatusDefaultPending';
-import { CreateItemListing1700000000008 } from './database/migrations/1700000000008-CreateItemListing';
-import { CreateClaimsTable1700000000009 } from './database/migrations/1700000000009-CreateClaimsTable';
-import { AddClaimApprovedAt1700000000010 } from './database/migrations/1700000000010-AddClaimApprovedAt';
-import { AddClaimCompletionAndScanEvents1700000000011 } from './database/migrations/1700000000011-AddClaimCompletionAndScanEvents';
-import { AddUserProfileImageAndItemCo2AndReviews1700000000012 } from './database/migrations/1700000000012-AddUserProfileImageAndItemCo2AndReviews';
-import { CreateMessagesTables1700000000013 } from './database/migrations/1700000000013-CreateMessagesTables';
-import { AllowMultipleClaimsPerItem1700000000014 } from './database/migrations/1700000000014-AllowMultipleClaimsPerItem';
+import { buildDatabaseOptions } from './database/database-options';
+import { migrationRegistry } from './database/migration-registry';
 import { GeoModule } from './geo/geo.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { Claim } from './modules/claims/claim.entity';
 import { ClaimsModule } from './modules/claims/claims.module';
+import { FoundItemsModule } from './modules/found-items/found-items.module';
+import { GamificationModule } from './modules/gamification/gamification.module';
 import { Item } from './modules/items/item.entity';
 import { ItemsModule } from './modules/items/items.module';
+import { MessageRoom } from './modules/messages/message-room.entity';
+import { Message } from './modules/messages/message.entity';
+import { MessagesModule } from './modules/messages/messages.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { QrModule } from './modules/qr/qr.module';
 import { ReviewsModule } from './modules/reviews/reviews.module';
 // Removed modules: Addresses, Admin, Media, Orders, Search
+import { RewardsModule } from './modules/rewards/rewards.module';
+import { Shop } from './modules/shops/shop.entity';
 import { ShopsModule } from './modules/shops/shops.module';
 import { User } from './modules/users/user.entity';
 import { UsersModule } from './modules/users/users.module';
-import { MessagesModule } from './modules/messages/messages.module';
-import { MessageRoom } from './modules/messages/message-room.entity';
-import { Message } from './modules/messages/message.entity';
-import { Shop } from './modules/shops/shop.entity';
-import { CreateShopTable1700000000015 } from './database/migrations/1700000000015-CreateShopTable';
-import { CreateNotificationTable1700000000020 } from './database/migrations/1700000000020-CreateNotificationTable';
-import { CreateWalletAndLedger1700000000021 } from './database/migrations/1700000000021-CreateWalletAndLedger';
-import { RewardsModule } from './modules/rewards/rewards.module';
-import { ExtendShopContactHoursCategories1700000000016 } from './database/migrations/1700000000016-ExtendShopContactHoursCategories';
-import { AddUserPostcode1700000000017 } from './database/migrations/1700000000017-AddUserPostcode';
-import { AddShopOperationalNotes1700000000018 } from './database/migrations/1700000000018-AddShopOperationalNotes';
-import { UniqueClaimPerCollectorPerItem1700000000019 } from './database/migrations/1700000000019-UniqueClaimPerCollectorPerItem';
-import { AddApprovedCollectorIdToItemTable1700000000022 } from './database/migrations/1700000000022-AddApprovedCollectorIdToItemTable';
-import { AddPasswordResetOtpToUser1700000000023 } from './database/migrations/1700000000023-AddPasswordResetOtpToUser';
-import { CreateGamificationTables1700000000024 } from './database/migrations/1700000000024-CreateGamificationTables';
-import { CreateFoundItemsTables1700000000025 } from './database/migrations/1700000000025-CreateFoundItemsTables';
-import { EnhanceFoundItemsLocationAndImpact1700000000026 } from './database/migrations/1700000000026-EnhanceFoundItemsLocationAndImpact';
-import { FoundItemsModule } from './modules/found-items/found-items.module';
-import { GamificationModule } from './modules/gamification/gamification.module';
 
 // Enable DB explicitly via ENABLE_DB=true; default is disabled to allow quick boot
 const enableDb = process.env.ENABLE_DB === 'true';
@@ -73,47 +49,18 @@ const dbModules: any[] = enableDb
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('db.host'),
-        port: config.get<number>('db.port'),
-        username: config.get<string>('db.user'),
-        password: config.get<string>('db.password'),
-        database: config.get<string>('db.name'),
-        ssl: config.get<boolean>('db.ssl') || false,
+        ...buildDatabaseOptions({
+          host: config.getOrThrow<string>('db.host'),
+          port: config.getOrThrow<number>('db.port'),
+          user: config.getOrThrow<string>('db.user'),
+          password: config.getOrThrow<string>('db.password'),
+          name: config.getOrThrow<string>('db.name'),
+          ssl: config.get<boolean>('db.ssl') ?? false,
+          logging: config.get<boolean>('db.logging') ?? false,
+        }),
         autoLoadEntities: true,
-        synchronize: config.get<boolean>('db.synchronize') || false,
-        logging: config.get<boolean>('db.logging') || false,
         entities: [User, Item, Claim, MessageRoom, Message, Shop],
-        migrations: [
-          PostgisExtensionMigration1700000000001,
-          CreateUuidExtension1700000000002,
-          CreateUserKycAddress1700000000003,
-          CreateServiceZoneAndSeedLondon1700000000004,
-          CreatePickupOrderAndItem1700000000005,
-          AddPendingStatusAndUserNames1700000000006,
-          SetUserStatusDefaultPending1700000000007,
-          CreateItemListing1700000000008,
-          CreateClaimsTable1700000000009,
-          AddClaimApprovedAt1700000000010,
-          AddClaimCompletionAndScanEvents1700000000011,
-          AddUserProfileImageAndItemCo2AndReviews1700000000012,
-          CreateMessagesTables1700000000013,
-          AllowMultipleClaimsPerItem1700000000014,
-          CreateShopTable1700000000015,
-          ExtendShopContactHoursCategories1700000000016,
-          AddUserPostcode1700000000017,
-          AddShopOperationalNotes1700000000018,
-          UniqueClaimPerCollectorPerItem1700000000019,
-          CreateNotificationTable1700000000020,
-          CreateWalletAndLedger1700000000021,
-          AddApprovedCollectorIdToItemTable1700000000022,
-          AddPasswordResetOtpToUser1700000000023,
-          CreateGamificationTables1700000000024,
-          CreateFoundItemsTables1700000000025,
-          EnhanceFoundItemsLocationAndImpact1700000000026,
-        ],
-        migrationsRun: true,
-        migrationsTransactionMode: 'each',
+        migrations: migrationRegistry,
       }),
     }),
     UsersModule,

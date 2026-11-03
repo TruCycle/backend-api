@@ -1,6 +1,7 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 
 import { User } from '../users/user.entity';
+
 import { FoundItem } from './found-item.entity';
 
 export enum FoundItemReportStatus {

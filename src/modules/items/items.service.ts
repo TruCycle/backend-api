@@ -2,15 +2,18 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
+import { resolveOutwardPostcode } from '../../common/utils/postcode';
+import { publicLocationPoint, validLocationPoint } from '../../common/utils/public-location';
+import { safeFailure } from '../../common/utils/safe-log';
 import { Claim, ClaimStatus } from '../claims/claim.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 import { QrImageService } from '../qr/qr-image.service';
 import { UserReview } from '../reviews/user-review.entity';
+import { Shop } from '../shops/shop.entity';
 import { KycProfile, KycStatus } from '../users/kyc-profile.entity';
 import { User, UserStatus } from '../users/user.entity';
-import { Shop } from '../shops/shop.entity';
 
 import { Co2EstimationService } from './co2-estimation.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { CreateItemDto, CreateItemImageDto } from './dto/create-item.dto';
 import { SearchItemsDto } from './dto/search-items.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
@@ -18,6 +21,7 @@ import { UserCollectedItemsQueryDto, UserItemsQueryDto } from './dto/user-items-
 import { ItemGeocodingService } from './item-geocoding.service';
 import { ItemLocation } from './item-location.interface';
 import { Item, ItemPickupOption, ItemStatus, SizeUnit } from './item.entity';
+import { projectItemLocation, PUBLIC_ITEM_GEOGRAPHY_SQL } from './public-item-location';
 
 const DEFAULT_RADIUS_KM = 5;
 const MIN_RADIUS_KM = 0.1;
@@ -26,6 +30,7 @@ const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 const DEFAULT_PAGE = 1;
 const MAX_PAGE = 100;
+const PUBLIC_DONOR_LABEL = 'Community member';
 const PUBLIC_ITEM_STATUSES: readonly ItemStatus[] = [
   ItemStatus.ACTIVE,
   // Once a claim is approved the item is still visible for tracking/logistics
@@ -329,6 +334,10 @@ export class ItemsService {
     return this.formatShopForOutput(shop);
   }
 
+  private dropoffForViewer(shop: DropoffLocationView | null, isOwner: boolean): DropoffLocationView | null {
+    return shop && !isOwner ? { ...shop, operational_notes: null } : shop;
+  }
+
   private async fetchScanEvents(itemId: string) {
     try {
       const rows: any[] = await this.items.query(
@@ -357,7 +366,7 @@ export class ItemsService {
       }
       return events;
     } catch (err) {
-      this.logger.debug(`Scan events unavailable for item ${itemId}: ${err instanceof Error ? err.message : err}`);
+      this.logger.debug(safeFailure('item_scan_history', err));
       return [];
     }
   }
@@ -450,6 +459,7 @@ export class ItemsService {
               : null,
           latitude,
           longitude,
+          precision: validLocationPoint(latitude, longitude) ? 'exact' : 'unavailable',
         },
         dropoff_location: dropoffMap.get(this.sanitizeShopId(item.dropoffLocationId)) ?? null,
         created_at: this.formatDate(item.createdAt),
@@ -530,16 +540,10 @@ export class ItemsService {
 
     const items = claims.map((claim) => {
       const item = claim.item;
-      const metadata = item ? this.sanitizeMetadata(item.metadata ?? undefined) : null;
+      const isOwner = item?.donor?.id === normalizedUserId;
+      const metadata = item && isOwner ? this.sanitizeMetadata(item.metadata ?? undefined) : null;
       const images = item ? this.normalizeImagesForOutput(item.images) : [];
       const owner = item?.donor ? ownerMap.get(item.donor.id) ?? null : null;
-      const latitude =
-        item && typeof item.latitude === 'number' && Number.isFinite(item.latitude) ? Number(item.latitude) : null;
-      const longitude =
-        item && typeof item.longitude === 'number' && Number.isFinite(item.longitude)
-          ? Number(item.longitude)
-          : null;
-
       const rewardCurrency = this.getRewardCurrency();
       const collectorReward = this.getCollectorRewardAmount();
       const rewardAmount = claim.status === ClaimStatus.COMPLETE ? collectorReward : 0;
@@ -566,23 +570,13 @@ export class ItemsService {
                 : this.buildQrCodeUrl(item.id),
             images,
             metadata,
+            metadata_redacted: !isOwner,
             estimated_co2_saved_kg:
               typeof item.estimatedCo2SavedKg === 'number' && Number.isFinite(item.estimatedCo2SavedKg)
                 ? Number(item.estimatedCo2SavedKg)
                 : null,
-            location: {
-              address_line:
-                typeof item.addressLine === 'string' && item.addressLine.trim()
-                  ? item.addressLine.trim()
-                  : null,
-              postcode:
-                typeof item.postcode === 'string' && item.postcode.trim()
-                  ? item.postcode.trim().toUpperCase()
-                  : null,
-              latitude,
-              longitude,
-            },
-            dropoff_location: dropoffMap.get(this.sanitizeShopId(item.dropoffLocationId)) ?? null,
+            location: projectItemLocation(item, isOwner),
+            dropoff_location: this.dropoffForViewer(dropoffMap.get(this.sanitizeShopId(item.dropoffLocationId)) ?? null, isOwner),
             created_at: this.formatDate(item.createdAt),
             owner,
           }
@@ -709,11 +703,11 @@ export class ItemsService {
       location: { type: 'Point', coordinates: [location.longitude, location.latitude] },
       latitude: location.latitude,
       longitude: location.longitude,
-      sizeUnit: dto.sizeUnit as SizeUnit,
-      sizeLength: dto.sizeLength,
-      sizeBreadth: dto.sizeBreadth,
-      sizeHeight: dto.sizeHeight,
-      weightKg: dto.weightKg,
+      sizeUnit: dto.sizeUnit ?? null,
+      sizeLength: dto.sizeLength ?? null,
+      sizeBreadth: dto.sizeBreadth ?? null,
+      sizeHeight: dto.sizeHeight ?? null,
+      weightKg: dto.weightKg ?? null,
     });
 
     const saved = await this.items.save(entity);
@@ -727,7 +721,7 @@ export class ItemsService {
         await this.items.update(saved.id, { qrCodeUrl: saved.qrCodeUrl });
       }
     } catch (err) {
-      this.logger.warn(`QR upload failed for item ${saved.id}: ${err instanceof Error ? err.message : err}`);
+      this.logger.warn(safeFailure('item_qr_upload', err));
       if (!saved.qrCodeUrl) {
         saved.qrCodeUrl = this.buildQrCodeUrl(saved.id);
         await this.items.update(saved.id, { qrCodeUrl: saved.qrCodeUrl });
@@ -743,7 +737,7 @@ export class ItemsService {
         }
       }
     } catch (err) {
-      this.logger.debug(`Drop-in notify failed for item ${saved.id}: ${err instanceof Error ? err.message : err}`);
+      this.logger.debug(safeFailure('item_dropin_notify', err));
     }
 
     // Compute CO2 estimate (non-blocking if it fails)
@@ -760,24 +754,26 @@ export class ItemsService {
         await this.items.update(saved.id, { estimatedCo2SavedKg: estimated });
       }
     } catch (err) {
-      this.logger.debug(`CO2 estimate failed for item ${saved.id}: ${err instanceof Error ? err.message : err}`);
+      this.logger.debug(safeFailure('item_co2_estimate', err));
     }
 
     // Notify users within 10km of new item (exchange/donation)
     try {
       // Only notify for exchange or donation
-      if ([ItemPickupOption.DONATE, ItemPickupOption.EXCHANGE].includes(saved.pickupOption)) {
+      const itemPoint = publicLocationPoint(saved.latitude, saved.longitude);
+      if (itemPoint && [ItemPickupOption.DONATE, ItemPickupOption.EXCHANGE].includes(saved.pickupOption)) {
         // Get all active users with postcode, excluding donor
         const users = await this.users
           .createQueryBuilder('user')
+          .select(['user.id', 'user.postcode'])
           .where('user.status = :status', { status: UserStatus.ACTIVE })
           .andWhere('user.id != :donorId', { donorId: saved.donor.id })
           .andWhere('user.postcode IS NOT NULL')
           .getMany();
         // Geocode all user postcodes (cache results to avoid duplicate lookups)
         const postcodeCache = new Map();
-        const itemLat = saved.latitude;
-        const itemLng = saved.longitude;
+        const itemLat = itemPoint.latitude;
+        const itemLng = itemPoint.longitude;
         const interestedUsers = [];
         for (const user of users) {
           let coords = postcodeCache.get(user.postcode);
@@ -793,7 +789,8 @@ export class ItemsService {
               continue; // skip users with un-geocodable postcodes
             }
           }
-          // Haversine formula for distance (in km)
+          if (!validLocationPoint(coords.latitude, coords.longitude)) continue;
+          // Distance is from the same public item point as all discovery output.
           const toRad = (v: number) => (v * Math.PI) / 180;
           const R = 6371; // Earth radius in km
           const dLat = toRad(itemLat - coords.latitude);
@@ -811,11 +808,11 @@ export class ItemsService {
         }
         // Send notification to interested users
         for (const user of interestedUsers) {
-          await this.notifications.notifyNearbyItem(user.id, saved.id, saved.title ?? undefined, saved.postcode);
+          await this.notifications.notifyNearbyItem(user.id, saved.id, saved.title ?? undefined, resolveOutwardPostcode(saved.postcode) ?? undefined);
         }
       }
-    } catch (err) {
-      this.logger.warn(`Nearby user notification failed for item ${saved.id}: ${err instanceof Error ? err.message : err}`);
+    } catch {
+      this.logger.warn('Nearby item notification failed');
     }
 
     return {
@@ -832,6 +829,7 @@ export class ItemsService {
         postcode: saved.postcode,
         latitude: saved.latitude,
         longitude: saved.longitude,
+        precision: validLocationPoint(saved.latitude, saved.longitude) ? 'exact' : 'unavailable',
       },
       qr_code: saved.qrCodeUrl,
       created_at: saved.createdAt.toISOString(),
@@ -846,9 +844,16 @@ export class ItemsService {
   }
 
   private async buildOwnerDetails(userId: string) {
-    const user = await this.users.findOne({ where: { id: userId } });
+    const user = await this.users.findOne({
+      where: { id: userId },
+      select: { id: true, status: true, profileImageUrl: true },
+      loadEagerRelations: false,
+    });
     if (!user) return null;
-    const kyc = await this.kycs.findOne({ where: { user: { id: userId } }, relations: { user: true } });
+    const kyc = await this.kycs.findOne({
+      where: { user: { id: userId } }, select: { status: true },
+      loadEagerRelations: false,
+    });
     const agg = await this.reviews
       .createQueryBuilder('r')
       .select('r.target_user_id', 'target_user_id')
@@ -862,7 +867,7 @@ export class ItemsService {
 
     return {
       id: user.id,
-      name: this.displayName(user),
+      name: PUBLIC_DONOR_LABEL,
       profile_image: user.profileImageUrl ?? null,
       verification: {
         email_verified: user.status === UserStatus.ACTIVE,
@@ -887,7 +892,12 @@ export class ItemsService {
       throw new BadRequestException('Item id is required');
     }
 
-    const item = await this.items.findOne({ where: { id }, relations: { donor: true } });
+    const item = await this.items.findOne({
+      where: { id },
+      // Only donor.id is used here; do not hydrate their private account fields.
+      loadRelationIds: { relations: ['donor'], disableMixedMap: true },
+      loadEagerRelations: false,
+    });
     if (!item) {
       throw new NotFoundException('Item not found');
     }
@@ -897,17 +907,9 @@ export class ItemsService {
     }
 
     const images = this.normalizeImagesForOutput(item.images);
-    const metadata = this.sanitizeMetadata(item.metadata ?? undefined);
-    const scanEvents = await this.fetchScanEvents(item.id);
-
-    const latitude =
-      typeof item.latitude === 'number' && Number.isFinite(item.latitude)
-        ? Number(item.latitude)
-        : null;
-    const longitude =
-      typeof item.longitude === 'number' && Number.isFinite(item.longitude)
-        ? Number(item.longitude)
-        : null;
+    const isOwner = Boolean(currentUserId && currentUserId === item.donor?.id);
+    const metadata = isOwner ? this.sanitizeMetadata(item.metadata ?? undefined) : null;
+    const scanEvents = isOwner ? await this.fetchScanEvents(item.id) : [];
 
     const createdAt =
       item.createdAt instanceof Date && !Number.isNaN(item.createdAt.getTime())
@@ -915,7 +917,7 @@ export class ItemsService {
         : new Date(item.createdAt as unknown as string).toISOString();
 
     const owner = item.donor ? await this.buildOwnerDetails(item.donor.id) : null;
-    const dropoffLocation = await this.loadDropoffLocation(item.dropoffLocationId);
+    const dropoffLocation = this.dropoffForViewer(await this.loadDropoffLocation(item.dropoffLocationId), isOwner);
 
     // If a user context is provided, best-effort load their claim for this item
     let userClaim: Claim | null = null;
@@ -930,8 +932,10 @@ export class ItemsService {
       }
     }
 
-    // Fetch all claims for this item (for donor view)
-    const allClaims = await this.claims.find({ where: { item: { id } }, relations: ['collector'] });
+    // Collector identities belong only in the authenticated donor's view.
+    const allClaims = currentUserId && currentUserId === item.donor?.id
+      ? await this.claims.find({ where: { item: { id } }, relations: ['collector'] })
+      : [];
     const claims = allClaims.map((claim) => ({
       id: claim.id,
       status: claim.status,
@@ -961,22 +965,17 @@ export class ItemsService {
         typeof item.estimatedCo2SavedKg === 'number' && Number.isFinite(item.estimatedCo2SavedKg)
           ? Number(item.estimatedCo2SavedKg)
           : null,
-      location: {
-        postcode:
-          typeof item.postcode === 'string'
-            ? item.postcode.trim().toUpperCase().slice(0, 32) || null
-            : null,
-        latitude,
-        longitude,
-      },
+      location: projectItemLocation(item, isOwner),
       qr_code:
         typeof item.qrCodeUrl === 'string' && item.qrCodeUrl.trim()
           ? item.qrCodeUrl.trim()
           : this.buildQrCodeUrl(item.id),
       scan_events: scanEvents,
+      scan_events_redacted: !isOwner,
       images,
       pickup_option: item.pickupOption,
       metadata,
+      metadata_redacted: !isOwner,
       created_at: createdAt,
       owner,
       dropoff_location: dropoffLocation,
@@ -1107,7 +1106,7 @@ export class ItemsService {
         }
       } catch (err) {
         this.logger.debug(
-          `CO2 estimate failed during update for item ${saved.id}: ${err instanceof Error ? err.message : err}`,
+          safeFailure('item_update_co2_estimate', err),
         );
       }
     }
@@ -1144,34 +1143,21 @@ export class ItemsService {
   }
 
   async searchPublicListings(dto: SearchItemsDto, currentUserId?: string) {
-    // If postcode is provided, it has priority over lat/lng
-    const pc = (dto.postcode ?? '').trim();
-    let originLat: number | undefined = undefined;
-    let originLng: number | undefined = undefined;
+    if (dto.postcode !== undefined && dto.postcode !== null && typeof dto.postcode !== 'string') throw new BadRequestException('Valid postcode is required');
+    const pc = typeof dto.postcode === 'string' ? dto.postcode.trim() : '';
+    let origin: ItemLocation | null = null;
     if (pc) {
       try {
         const located = await this.geocoding.forwardGeocode(pc);
-        originLat = located.latitude;
-        originLng = located.longitude;
+        origin = validLocationPoint(located.latitude, located.longitude);
       } catch (err) {
         if (err instanceof BadRequestException) throw err;
         throw new ServiceUnavailableException('Failed to resolve postcode to coordinates');
       }
-    } else {
-      originLat = typeof dto.lat === 'number' && Number.isFinite(dto.lat) ? dto.lat : undefined;
-      originLng = typeof dto.lng === 'number' && Number.isFinite(dto.lng) ? dto.lng : undefined;
-      if (originLat === undefined || originLng === undefined) {
-        throw new BadRequestException('Provide either lat/lng or postcode to search items');
-      }
-    }
-
-    if (
-      typeof originLat !== 'number' ||
-      typeof originLng !== 'number' ||
-      !Number.isFinite(originLat) ||
-      !Number.isFinite(originLng)
-    ) {
-      throw new BadRequestException('Valid latitude and longitude are required');
+      if (!origin) throw new BadRequestException('Valid latitude and longitude are required');
+    } else if (dto.lat !== undefined || dto.lng !== undefined) {
+      origin = validLocationPoint(dto.lat, dto.lng);
+      if (!origin) throw new BadRequestException('Valid latitude and longitude are required');
     }
 
     let radiusKm =
@@ -1197,11 +1183,7 @@ export class ItemsService {
       throw new BadRequestException('Requested status is not available for public listings');
     }
 
-    const pointExpr = 'ST_SetSRID(ST_MakePoint(:originLng, :originLat), 4326)';
-    const geographyPoint = `${pointExpr}::geography`;
-
-    const qb = this.items
-      .createQueryBuilder('item')
+    const qb = this.items.createQueryBuilder('item')
       .select('item.id', 'id')
       .addSelect('item.title', 'title')
       .addSelect('item.status', 'status')
@@ -1214,18 +1196,21 @@ export class ItemsService {
       .addSelect('item.estimated_co2_saved_kg', 'estimated_co2_saved_kg')
       .addSelect('item.images', 'images')
       .addSelect('item.created_at', 'created_at')
-      .addSelect(`ST_Distance(item.location::geography, ${geographyPoint})`, 'distance_meters')
+      .addSelect('item.latitude', 'latitude')
+      .addSelect('item.longitude', 'longitude')
+      .addSelect('item.postcode', 'postcode')
       .where('item.status IN (:...statuses)', { statuses: statusFilters })
-      .andWhere(`ST_DWithin(item.location::geography, ${geographyPoint}, :radiusMeters)`)
-      .orderBy('distance_meters', 'ASC')
-      .addOrderBy('item.created_at', 'DESC')
-      .offset(offset)
-      .limit(limit)
-      .setParameters({
-        originLat,
-        originLng,
-        radiusMeters,
-      });
+      .offset(offset).limit(limit);
+    if (origin) {
+      const originGeography = 'ST_SetSRID(ST_MakePoint(:originLng, :originLat), 4326)::geography';
+      qb.addSelect('ST_Distance((' + PUBLIC_ITEM_GEOGRAPHY_SQL + '), ' + originGeography + ')', 'distance_meters')
+        .andWhere('ST_DWithin((' + PUBLIC_ITEM_GEOGRAPHY_SQL + '), ' + originGeography + ', :radiusMeters)')
+        .orderBy('distance_meters', 'ASC').addOrderBy('item.created_at', 'DESC').addOrderBy('item.id', 'ASC')
+        .setParameters({ originLat: origin.latitude, originLng: origin.longitude, radiusMeters });
+    } else {
+      // No invented origin/radius: catalogue includes items with unknown locations.
+      qb.addSelect('NULL', 'distance_meters').orderBy('item.created_at', 'DESC').addOrderBy('item.id', 'ASC');
+    }
 
     if (dto.category) {
       const normalizedCategory = dto.category.trim().toLowerCase();
@@ -1241,7 +1226,7 @@ export class ItemsService {
     const donors = donorIds.length
       ? await this.users
         .createQueryBuilder('u')
-        .select(['u.id', 'u.firstName', 'u.lastName', 'u.email', 'u.status', 'u.profileImageUrl'])
+        .select(['u.id', 'u.status', 'u.profileImageUrl'])
         .where('u.id IN (:...ids)', { ids: donorIds })
         .getMany()
       : [];
@@ -1295,7 +1280,8 @@ export class ItemsService {
     }
 
     const items = rows.map((row: any) => {
-      const rawDistance = Number(row.distance_meters);
+      const rawDistance = origin && row.distance_meters !== null && row.distance_meters !== undefined && row.distance_meters !== ''
+        ? Number(row.distance_meters) : NaN;
       const distanceKm = Number.isFinite(rawDistance)
         ? Math.round((Math.max(rawDistance, 0) / 1000) * 10) / 10
         : null;
@@ -1338,7 +1324,7 @@ export class ItemsService {
       const owner = donor
         ? {
           id: donor.id,
-          name: this.displayName(donor),
+          name: PUBLIC_DONOR_LABEL,
           profile_image: donor.profileImageUrl ?? null,
           verification: {
             email_verified: donor.status === UserStatus.ACTIVE,
@@ -1350,7 +1336,7 @@ export class ItemsService {
         }
         : null;
 
-      const dropoffLocation = dropoffMap.get(this.sanitizeShopId(row.dropoff_location_id)) ?? null;
+      const dropoffLocation = this.dropoffForViewer(dropoffMap.get(this.sanitizeShopId(row.dropoff_location_id)) ?? null, false);
 
       const claim = userClaimMap.get(row.id);
 
@@ -1361,6 +1347,7 @@ export class ItemsService {
         condition: row.condition,
         category: row.category,
         distance_km: distanceKm ?? null,
+        location: projectItemLocation(row, false),
         pickup_option: row.pickup_option,
         qr_code: qrCode,
         images,
@@ -1384,11 +1371,11 @@ export class ItemsService {
     });
 
     return {
-      search_origin: {
-        lat: Number(originLat.toFixed(6)),
-        lng: Number(originLng.toFixed(6)),
+      search_origin: origin ? {
+        lat: Number(origin.latitude.toFixed(6)),
+        lng: Number(origin.longitude.toFixed(6)),
         radius_km: Math.round(radiusKm * 10) / 10,
-      },
+      } : null,
       items,
     };
   }

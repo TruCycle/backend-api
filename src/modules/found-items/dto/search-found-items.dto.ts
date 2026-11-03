@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Expose, Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsIn,
   IsInt,
@@ -13,8 +14,9 @@ import {
   Min,
 } from 'class-validator';
 
-import { FOUND_ITEM_CATEGORIES } from './create-found-item.dto';
 import { FoundItemStatus } from '../found-item.entity';
+
+import { FOUND_ITEM_CATEGORIES } from './create-found-item.dto';
 
 function toNumber(value: unknown): number | undefined {
   if (value === null || value === undefined || value === '') {
@@ -42,6 +44,10 @@ export enum FoundItemSortBy {
 }
 
 export class SearchFoundItemsDto {
+  @ApiPropertyOptional({ description: 'Include active and recently closed spots when status is omitted' })
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true') @IsBoolean()
+  includeRecentClosed?: boolean;
+
   @ApiPropertyOptional({ enum: FOUND_ITEM_CATEGORIES })
   @IsOptional()
   @IsIn(FOUND_ITEM_CATEGORIES)

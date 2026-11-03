@@ -4,8 +4,9 @@
   "private": true,
   "type": "commonjs",
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0 <25"
   },
+  "packageManager": "npm@11.16.0",
   "scripts": {
     "build": "rimraf dist && tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
@@ -14,8 +15,9 @@
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"{src,test}/**/*.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "migration:run": "ts-node -r dotenv/config -r tsconfig-paths/register ./src/scripts/run-migrations.ts",
+    "migration:run": "ts-node -r tsconfig-paths/register ./src/scripts/run-migrations.ts",
     "test": "jest --passWithNoTests",
+    "test:unit": "node scripts/check-unit-tests.cjs",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage"
   },

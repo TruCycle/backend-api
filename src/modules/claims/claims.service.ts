@@ -112,7 +112,9 @@ export class ClaimsService {
       if (donorId) {
         await this.notifications.notifyItemClaimRequested(donorId, collector.id, item.id, item.title ?? undefined);
       }
-    } catch { }
+    } catch {
+      // Claim creation remains successful if the optional notification fails.
+    }
 
     const createdAt =
       saved.createdAt instanceof Date && !Number.isNaN(saved.createdAt.getTime())
@@ -172,7 +174,9 @@ export class ClaimsService {
       if (claim.collector?.id) {
         await this.notifications.notifyItemClaimApproved(claim.collector.id, claim.item.id, claim.item.title ?? undefined);
       }
-    } catch { }
+    } catch {
+      // Approval remains successful if the optional notification fails.
+    }
 
     return {
       id: saved.id,
@@ -302,7 +306,9 @@ export class ClaimsService {
       // Rewards: idempotent award for claim completion (QR flow)
       try {
         await this.rewards.awardOnClaimComplete(manager, claim);
-      } catch { }
+      } catch {
+        // Preserve the existing completion flow if reward allocation fails.
+      }
 
       try {
         const donorId = claim.item?.donor?.id || null;
@@ -324,7 +330,9 @@ export class ClaimsService {
             completionDate,
           );
         }
-      } catch { }
+      } catch {
+        // Progress-update failures are tolerated by the existing completion flow.
+      }
 
       // Notifications: collection + drop-off
       try {
@@ -342,7 +350,9 @@ export class ClaimsService {
             await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
           }
         }
-      } catch { }
+      } catch {
+        // Notification failures are tolerated by the existing collection flow.
+      }
 
       const events = await fetchScanEvents(manager, claim.item.id);
 
@@ -366,7 +376,6 @@ export class ClaimsService {
     const isAdmin = userHasRole(authPayload, RoleCode.ADMIN);
     const isFacility = userHasRole(authPayload, RoleCode.FACILITY);
     const isPartner = userHasRole(authPayload, RoleCode.PARTNER);
-    const isCollector = userHasRole(authPayload, RoleCode.COLLECTOR);
 
     const actor = await this.users.findOne({ where: { id: authPayload.sub } });
     if (!actor) {
@@ -481,7 +490,9 @@ export class ClaimsService {
       // Rewards: idempotent award for claim completion (manual flow)
       try {
         await this.rewards.awardOnClaimComplete(manager, claim);
-      } catch { }
+      } catch {
+        // Preserve the existing completion flow if reward allocation fails.
+      }
 
       try {
         const resolvedDonorId = donorId || null;
@@ -503,7 +514,9 @@ export class ClaimsService {
             completionDate,
           );
         }
-      } catch { }
+      } catch {
+        // Progress-update failures are tolerated by the existing completion flow.
+      }
 
       // Notifications: collection + drop-off
       try {
@@ -519,7 +532,9 @@ export class ClaimsService {
             await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
           }
         }
-      } catch { }
+      } catch {
+        // Notification failures are tolerated by the existing collection flow.
+      }
 
       const events = await fetchScanEvents(manager, claim.item.id);
       return {

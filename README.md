@@ -18,7 +18,7 @@ A comprehensive circular economy platform built with NestJS, TypeORM, PostgreSQL
 
 ### Prerequisites
 
-- **Node.js 18+** - JavaScript runtime
+- **Node.js 22.12+ and below 25** - use the pinned Node 24.18.0 runtime and npm 11.16.0
 - **PostgreSQL 15+ with PostGIS extension** - Spatial database
 - **Docker Desktop** (recommended) or local PostgreSQL installation
 
@@ -43,7 +43,7 @@ A comprehensive circular economy platform built with NestJS, TypeORM, PostgreSQL
    # Install Node dependencies
    npm install
    
-   # Run database migrations
+   # List registered migrations offline (does not connect or apply)
    npm run migration:run
    ```
 
@@ -61,12 +61,14 @@ A comprehensive circular economy platform built with NestJS, TypeORM, PostgreSQL
    # DB_HOST, DB_PORT, DB_USER, DB_PASS, DB_NAME
    # Set DB_SSL=true for hosted providers (Supabase, Neon, etc.)
    
-   # Install dependencies and run migrations
+   # Install dependencies and list registered migrations offline
    npm install
    npm run migration:run
    ```
 
-3) **Start the API**
+   **Schema prerequisite:** the command above only lists registered migrations. A new/empty database needs a separately reviewed bootstrap procedure. The guarded apply command requires an existing TypeORM ledger and the exact expected pending migration names. Review target, backup/restore evidence and migration impact before applying; see Migration Management below. Do not start a database-enabled API against an unprepared schema.
+
+3) **Start the API after the schema prerequisite is complete**
    ```bash
    npm run start:dev
    ```
@@ -103,7 +105,7 @@ DB_PASS=postgres          # Database password
 DB_NAME=trucycle          # Database name
 DB_SSL=false              # Enable SSL for hosted databases (true for Supabase/Neon)
 DB_LOGGING=false          # Enable TypeORM SQL query logging
-TYPEORM_SYNC=false        # Auto-sync schema (dev only, use migrations in production)
+TYPEORM_SYNC=false        # Automatic schema sync is disabled by the shared connection policy
 ```
 
 **Purpose**: Connects the API to PostgreSQL. The PostGIS extension is required for geospatial queries (item locations, nearby search, service zones).
@@ -2220,7 +2222,7 @@ psql -U postgres -d trucycle
 
 **Common Debugging**:
 ```bash
-# Check migrations status
+# List registered migrations offline; this does not inspect the live ledger
 npm run migration:run
 
 # View database logs (Docker)
@@ -2270,15 +2272,18 @@ psql -U postgres -d trucycle < backup.sql
 
 **Migration Management**:
 - Migrations in `src/database/migrations/`
-- Run migrations: `npm run migration:run`
-- Create new migration: Add file with timestamp prefix
-- Migrations run automatically on app start if `migrationsRun: true`
+- List registered migrations offline: `npm run migration:run`. This does not load dotenv, open a connection or prove which migrations are applied.
+- After the exact release plan is reviewed and approved, apply using `npm run migration:run -- --apply --expect <exact-pending-migration-names>`. Supply the complete pending names as one comma-separated argument in registry order. Never infer approval from this example or automatically fill the list from a live response.
+- The apply path checks the existing TypeORM ledger against the shared registry under a same-session advisory lock and rejects missing, unknown or mismatched history and an unexpected pending list. An absent ledger requires a separate bootstrap procedure.
+- Add new migrations to `src/database/migrations/` and the ordered shared registry; preserve existing names and timestamps.
+- App startup never applies migrations, synchronises schema, drops schemas or installs extensions. These are explicit release/bootstrap operations.
 
 **Production Considerations**:
-- Disable `TYPEORM_SYNC` in production (use migrations only)
+- Automatic schema sync is disabled for every environment, regardless of `TYPEORM_SYNC`; provision required extensions explicitly.
 - Test migrations on staging first
 - Backup before running migrations
 - Migrations run in transaction mode (`migrationsTransactionMode: 'each'`)
+- The Google-auth migration's existing `down()` removes `google_id`; it is not an automatic rollback plan. Review duplicate-ID preflight, index-lock impact and schema drift before approving it.
 
 ---
 

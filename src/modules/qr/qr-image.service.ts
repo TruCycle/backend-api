@@ -3,6 +3,8 @@ import QRCode from 'qrcode';
 
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 
+import { safeFailure } from '../../common/utils/safe-log';
+
 function trimTrailingSlash(input: string): string {
   return input.replace(/\/$/, '');
 }
@@ -64,7 +66,7 @@ export class QrImageService {
         color: { dark: '#000000', light: '#FFFFFF' },
       } as any);
     } catch (err) {
-      this.logger.error(`Failed generating QR PNG: ${err instanceof Error ? err.message : err}`);
+      this.logger.error(safeFailure('qr_png_generate', err));
       throw new InternalServerErrorException('Failed to generate QR PNG');
     }
   }

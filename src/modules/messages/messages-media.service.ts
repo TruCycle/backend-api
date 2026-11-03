@@ -1,5 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { UploadApiOptions, UploadApiResponse, v2 as cloudinary } from 'cloudinary';
+
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+
+import { safeFailure } from '../../common/utils/safe-log';
 
 @Injectable()
 export class MessagesMediaService {
@@ -52,7 +55,7 @@ export class MessagesMediaService {
 
       return url;
     } catch (error) {
-      this.logger.error(`Failed to upload image to Cloudinary: ${error}`);
+      this.logger.error(safeFailure('message_image_upload', error));
       throw new InternalServerErrorException('Failed to upload message image');
     }
   }

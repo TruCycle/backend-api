@@ -43,8 +43,8 @@ const messageExample = {
   createdAt: '2024-06-01T13:45:00.000Z',
   sender: {
     id: '9f0c9559-83d3-4afd-8a79-5f437c82c1d1',
-    firstName: 'Ada',
-    lastName: 'Lovelace',
+    firstName: 'Community member',
+    lastName: null,
     profileImageUrl: null,
   },
 };
@@ -54,15 +54,15 @@ const roomExample = {
   participants: [
     {
       id: '9f0c9559-83d3-4afd-8a79-5f437c82c1d1',
-      firstName: 'Ada',
-      lastName: 'Lovelace',
+      firstName: 'Community member',
+      lastName: null,
       profileImageUrl: null,
       online: true,
     },
     {
       id: '2c4c0f2c-97f2-4e4f-96b4-e8d9ba1d21f6',
-      firstName: 'Grace',
-      lastName: 'Hopper',
+      firstName: 'Community member',
+      lastName: null,
       profileImageUrl: null,
       online: false,
     },

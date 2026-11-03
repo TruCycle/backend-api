@@ -1,69 +1,71 @@
-import 'reflect-metadata';
-import { DataSource } from 'typeorm';
+import type { QueryRunner } from 'typeorm';
 
 import configuration from '../config/configuration';
-import { PostgisExtensionMigration1700000000001 } from '../database/migrations/1700000000001-CreatePostgisExtension';
-import { CreateUuidExtension1700000000002 } from '../database/migrations/1700000000002-CreateUuidExtension';
-import { CreateUserKycAddress1700000000003 } from '../database/migrations/1700000000003-CreateUserKycAddress';
-import { CreateServiceZoneAndSeedLondon1700000000004 } from '../database/migrations/1700000000004-CreateServiceZoneAndSeedLondon';
-import { CreatePickupOrderAndItem1700000000005 } from '../database/migrations/1700000000005-CreatePickupOrderAndItem';
-import { AddPendingStatusAndUserNames1700000000006 } from '../database/migrations/1700000000006-AddPendingStatusAndUserNames';
-import { SetUserStatusDefaultPending1700000000007 } from '../database/migrations/1700000000007-SetUserStatusDefaultPending';
-import { CreateItemListing1700000000008 } from '../database/migrations/1700000000008-CreateItemListing';
-import { CreateClaimsTable1700000000009 } from '../database/migrations/1700000000009-CreateClaimsTable';
-import { AddClaimApprovedAt1700000000010 } from '../database/migrations/1700000000010-AddClaimApprovedAt';
-import { AddClaimCompletionAndScanEvents1700000000011 } from '../database/migrations/1700000000011-AddClaimCompletionAndScanEvents';
-import { AddUserProfileImageAndItemCo2AndReviews1700000000012 } from '../database/migrations/1700000000012-AddUserProfileImageAndItemCo2AndReviews';
-import { AllowMultipleClaimsPerItem1700000000014 } from '../database/migrations/1700000000014-AllowMultipleClaimsPerItem';
-import { CreateMessagesTables1700000000013 } from '../database/migrations/1700000000013-CreateMessagesTables';
-import { CreateShopTable1700000000015 } from '../database/migrations/1700000000015-CreateShopTable';
-import { CreateNotificationTable1700000000020 } from '../database/migrations/1700000000020-CreateNotificationTable';
-import { CreateWalletAndLedger1700000000021 } from '../database/migrations/1700000000021-CreateWalletAndLedger';
-import { AddPasswordResetOtpToUser1700000000023 } from '../database/migrations/1700000000023-AddPasswordResetOtpToUser';
-import { Role } from '../modules/users/role.entity';
-import { UserRole } from '../modules/users/user-role.entity';
-import { User } from '../modules/users/user.entity';
+import { buildDatabaseOptions } from '../database/database-options';
+import { migrationRegistry, registeredMigrationNames } from '../database/migration-registry';
+import { createMigrationReleaseLogger, MigrationSafetyError, runMigrationCommand } from '../database/migration-release';
+import type { MigrationReleaseSession } from '../database/migration-release';
 
-async function run() {
-  const cfg = configuration();
+// This factory is reached only after both explicit apply flags validate.
+async function createReleaseSession(): Promise<MigrationReleaseSession> {
+  await import('dotenv/config');
+  await import('reflect-metadata');
+  const { DataSource, MigrationExecutor } = await import('typeorm');
   const dataSource = new DataSource({
-    type: 'postgres',
-    host: cfg.db.host,
-    port: cfg.db.port,
-    username: cfg.db.user,
-    password: cfg.db.password,
-    database: cfg.db.name,
-    entities: [User, Role, UserRole],
-    migrations: [
-      PostgisExtensionMigration1700000000001,
-      CreateUuidExtension1700000000002,
-      CreateUserKycAddress1700000000003,
-      CreateServiceZoneAndSeedLondon1700000000004,
-      CreatePickupOrderAndItem1700000000005,
-      AddPendingStatusAndUserNames1700000000006,
-      SetUserStatusDefaultPending1700000000007,
-      CreateItemListing1700000000008,
-      CreateClaimsTable1700000000009,
-      AddClaimApprovedAt1700000000010,
-      AddClaimCompletionAndScanEvents1700000000011,
-      AddUserProfileImageAndItemCo2AndReviews1700000000012,
-      CreateMessagesTables1700000000013,
-      AllowMultipleClaimsPerItem1700000000014,
-      CreateShopTable1700000000015,
-      CreateNotificationTable1700000000020,
-      CreateWalletAndLedger1700000000021,
-      AddPasswordResetOtpToUser1700000000023,
-    ],
-    logging: cfg.db.logging,
-    migrationsTransactionMode: 'each',
+    ...buildDatabaseOptions(configuration().db),
+    logging: false,
+    logger: createMigrationReleaseLogger(),
+    entities: [],
+    migrations: migrationRegistry,
   });
-  await dataSource.initialize();
-  await dataSource.runMigrations();
-  await dataSource.destroy();
+  let connectedRunner: QueryRunner | undefined;
+  try {
+    await dataSource.initialize();
+    const queryRunner = dataSource.createQueryRunner();
+    connectedRunner = queryRunner;
+    await queryRunner.connect();
+    return {
+      query: (sql, parameters) => queryRunner.query(sql, parameters),
+      executePending: async () => {
+        // Reuse the locked connection for preflight and execution, including
+        // each migration transaction. Other release CLI processes use this lock.
+        const executor = new MigrationExecutor(dataSource, queryRunner);
+        executor.transaction = 'each';
+        const applied = await executor.executePendingMigrations();
+        return applied.map((migration) => migration.name);
+      },
+      close: async () => {
+        try {
+          if (!queryRunner.isReleased) await queryRunner.release();
+        } finally {
+          if (dataSource.isInitialized) await dataSource.destroy();
+        }
+      },
+    };
+  } catch (error) {
+    try {
+      if (connectedRunner && !connectedRunner.isReleased) await connectedRunner.release();
+    } finally {
+      if (dataSource.isInitialized) await dataSource.destroy();
+    }
+    throw error;
+  }
 }
 
-run().catch((e) => {
-  // eslint-disable-next-line no-console
-  console.error(e);
-  process.exit(1);
-});
+async function main(): Promise<void> {
+  const result = await runMigrationCommand(process.argv.slice(2), registeredMigrationNames, createReleaseSession);
+  // This is an offline registry listing, never a claim about database status.
+  console.log(result.kind === 'list' ? 'Offline registered migration history (database not inspected):' : 'Applied migrations:');
+  result.names.forEach((name) => console.log(name));
+  if (result.kind === 'list') {
+    console.log('Release execution requires --apply and an explicitly reviewed complete --expect list. Fresh databases require a separate bootstrap procedure.');
+  }
+}
+
+if (require.main === module) {
+  void main().catch((error: unknown) => {
+    // Do not dump connection settings, query parameters or duplicate subject IDs.
+    console.error(error instanceof MigrationSafetyError ? error.message : 'Migration release failed; inspect restricted operational logs before retrying.');
+    process.exitCode = 1;
+  });
+}
