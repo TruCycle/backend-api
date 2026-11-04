@@ -121,25 +121,37 @@ describe('Activation recovery with synthetic repositories only', () => {
 
   it('rejects over-budget reset operations before querying account state', async () => {
     configureResetEmailLimits();
+    process.env.APP_RELEASE_SHA = 'a'.repeat(40);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const query = jest.fn().mockResolvedValue([{ allowed: false, retry_after: 20 }]);
     const limitedController = new AuthController(service, new AuthResetEmailLimiter({ query } as unknown as DataSource));
     const setHeader = jest.fn();
     const response = { setHeader } as unknown as ExpressResponse;
     await expect(limitedController.forgetPassword({ email: user.email }, response)).rejects.toMatchObject({ status: 429 });
+    await expect(limitedController.forgetPassword({ email: 'another@example.invalid' }, response)).rejects.toMatchObject({ status: 429 });
     await expect(limitedController.resetPassword({ email: user.email, otp: '000000', new_password: 'synthetic-only' }, response))
       .rejects.toMatchObject({ status: 429 });
     expect(setHeader).toHaveBeenCalledWith('Retry-After', '20');
     expect(users.findOne).not.toHaveBeenCalled();
+    expect(warn.mock.calls).toEqual([
+      [{ event: 'auth_rate_limit', scope: 'reset_email', operation: 'reset_request', outcome: 'limited', release: 'a'.repeat(40) }],
+      [{ event: 'auth_rate_limit', scope: 'reset_email', operation: 'reset_attempt', outcome: 'limited', release: 'a'.repeat(40) }],
+    ]);
   });
 
   it('fails closed without exposing counter-store diagnostics', async () => {
     configureResetEmailLimits();
+    process.env.APP_RELEASE_SHA = 'PRIVATE_INVALID_RELEASE';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const query = jest.fn().mockRejectedValue(new Error('PRIVATE_COUNTER_DIAGNOSTIC'));
     const limiter = new AuthResetEmailLimiter({ query } as unknown as DataSource);
     await expect(limiter.consume('reset_attempt', user.email, {} as ExpressResponse)).rejects.toMatchObject({
       status: 503,
       message: 'Authentication is temporarily unavailable',
     });
+    expect(warn.mock.calls).toEqual([
+      [{ event: 'auth_rate_limit', scope: 'reset_email', operation: 'reset_attempt', outcome: 'unavailable' }],
+    ]);
   });
 
   it('does not issue a code if the account changes email before the issuance lock', async () => {

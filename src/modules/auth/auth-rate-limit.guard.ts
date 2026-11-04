@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 
-import { applyDecorators, CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable, Optional, ServiceUnavailableException, SetMetadata, UseGuards } from '@nestjs/common';
+import { applyDecorators, CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable, Logger, Optional, ServiceUnavailableException, SetMetadata, UseGuards } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { Response } from 'express';
@@ -72,19 +72,47 @@ const consumeResetEmail = `WITH bucket AS MATERIALIZED (
 )
 SELECT EXISTS(SELECT 1 FROM accepted) AS allowed, (60 - second % 60)::integer AS retry_after FROM bucket`;
 
-async function enforceBudget(database: DataSource | undefined, statement: string, parameters: unknown[], response: Response) {
+const budgetLogger = new Logger('AuthRateLimits');
+const lastBudgetEvent = new Map<string, number>();
+
+function reportBudgetEvent(operation: Operation, scope: 'global' | 'reset_email', outcome: 'limited' | 'unavailable') {
+  const key = `${operation}:${scope}:${outcome}`;
+  const now = Date.now();
+  const last = lastBudgetEvent.get(key);
+  if (last !== undefined && now >= last && now - last < 60_000) return;
+  lastBudgetEvent.set(key, now);
+  const release = process.env.APP_RELEASE_SHA;
+  budgetLogger.warn({
+    event: 'auth_rate_limit',
+    operation,
+    scope,
+    outcome,
+    ...(release && /^[0-9a-f]{40}$/i.test(release) ? { release } : {}),
+  });
+}
+
+async function enforceBudget(
+  database: DataSource | undefined,
+  statement: string,
+  parameters: [Operation, ...unknown[]],
+  response: Response,
+  scope: 'global' | 'reset_email',
+) {
   let result: { allowed?: unknown; retry_after?: unknown } | undefined;
   try {
     const rows = await database?.query(statement, parameters);
     result = rows?.[0];
   } catch {
+    reportBudgetEvent(parameters[0], scope, 'unavailable');
     throw new ServiceUnavailableException('Authentication is temporarily unavailable');
   }
   if (!result || typeof result.allowed !== 'boolean' || typeof result.retry_after !== 'number' ||
       !Number.isInteger(result.retry_after) || result.retry_after < 1 || result.retry_after > 60) {
+    reportBudgetEvent(parameters[0], scope, 'unavailable');
     throw new ServiceUnavailableException('Authentication is temporarily unavailable');
   }
   if (result.allowed) return;
+  reportBudgetEvent(parameters[0], scope, 'limited');
   response.setHeader('Retry-After', String(result.retry_after));
   throw new HttpException('Too many requests. Try again shortly.', HttpStatus.TOO_MANY_REQUESTS);
 }
@@ -100,7 +128,7 @@ export class AuthRateLimitGuard implements CanActivate {
     const limit = operation && this.limits.get(operation);
     if (!limit) return true;
 
-    await enforceBudget(this.database, consume, [operation, limit], context.switchToHttp().getResponse<Response>());
+    await enforceBudget(this.database, consume, [operation, limit], context.switchToHttp().getResponse<Response>(), 'global');
     return true;
   }
 }
@@ -131,7 +159,7 @@ export class AuthResetEmailLimiter {
     const digest = createHmac('sha256', this.key)
       .update(`${operation}:${email.trim().toLowerCase()}`)
       .digest();
-    await enforceBudget(this.database, consumeResetEmail, [operation, digest, limit], response);
+    await enforceBudget(this.database, consumeResetEmail, [operation, digest, limit], response, 'reset_email');
   }
 }
 
