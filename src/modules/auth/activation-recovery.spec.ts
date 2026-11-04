@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import type { Response as ExpressResponse } from 'express';
+import type { DataSource, EntityManager } from 'typeorm';
 import { Repository } from 'typeorm';
 
 import { PasswordService } from '../../common/security/password.service';
@@ -10,11 +12,11 @@ import { Role, RoleCode } from '../users/role.entity';
 import { UserRole } from '../users/user-role.entity';
 import { User, UserStatus } from '../users/user.entity';
 
+import { AuthResetEmailLimiter } from './auth-rate-limit.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AuthSessionsService } from './auth-sessions.service';
 import { ItemGeocodingService } from '../items/item-geocoding.service';
-import type { EntityManager } from 'typeorm';
 import { AuthSession } from './auth-session.entity';
 import { authSessionMemory } from '../../testing/auth-session-memory.test-support';
 
@@ -65,7 +67,7 @@ describe('Activation recovery with synthetic repositories only', () => {
   let service: AuthService;
   const sessions = { create: jest.fn().mockResolvedValue({ accessToken: 'ACCESS_SYNTHETIC', refreshToken: 'REFRESH_SYNTHETIC' }) };
   beforeEach(() => {
-    original = { ...process.env }; delete process.env.FRONTEND_BASE_URL; jest.resetAllMocks();
+    original = { ...process.env }; delete process.env.FRONTEND_BASE_URL; delete process.env.AUTH_RESET_EMAIL_LIMITS; jest.resetAllMocks();
     users.findOne.mockResolvedValue({ ...user }); users.create.mockImplementation((value) => value); users.save.mockImplementation(async (value) => ({ ...value, id: user.id }));
     roles.findOne.mockResolvedValue({ id: 'role', code: RoleCode.CUSTOMER }); links.find.mockResolvedValue([{ role: { code: RoleCode.CUSTOMER } }]); links.create.mockImplementation((value) => value);
     const manager = { queryRunner: { isTransactionActive: true }, getRepository: (entity: unknown) => entity === User ? users : links };
@@ -76,6 +78,70 @@ describe('Activation recovery with synthetic repositories only', () => {
     service = new AuthService(users as unknown as Repository<User>, roles as unknown as Repository<Role>, links as unknown as Repository<UserRole>, {} as Repository<Shop>, {} as Repository<KycProfile>, { hash: jest.fn().mockResolvedValue('synthetic-hash') } as unknown as PasswordService, jwt as unknown as JwtService, { sendEmail } as unknown as EmailService, sessions as unknown as AuthSessionsService, {} as ItemGeocodingService);
   });
   afterEach(() => { process.env = original; jest.restoreAllMocks(); });
+  function configureResetEmailLimits() {
+    process.env.AUTH_RATE_LIMITS = JSON.stringify({ register: 100, login: 100, google: 100, resend: 100, reset_request: 100, reset_attempt: 100 });
+    process.env.AUTH_RESET_EMAIL_LIMITS = JSON.stringify({ reset_request: 2, reset_attempt: 3 });
+    process.env.AUTH_RESET_EMAIL_LIMIT_KEY = Buffer.alloc(32, 1).toString('hex');
+    process.env.DB_LOGGING = 'false';
+  }
+
+  it('does not call the scoped counter while it is disabled', async () => {
+    const query = jest.fn();
+    await new AuthResetEmailLimiter({ query } as unknown as DataSource).consume('reset_request', user.email, {} as ExpressResponse);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('normalizes reset targets and sends separate binary digests for operations to the database', async () => {
+    configureResetEmailLimits();
+    const query = jest.fn().mockResolvedValue([{ allowed: true, retry_after: 20 }]);
+    const limiter = new AuthResetEmailLimiter({ query } as unknown as DataSource);
+    const response = {} as ExpressResponse;
+    await limiter.consume('reset_request', `  ${user.email.toUpperCase()}  `, response);
+    await limiter.consume('reset_request', user.email, response);
+    await limiter.consume('reset_attempt', user.email, response);
+    const [first, repeated, attempt] = query.mock.calls.map(([, parameters]) => parameters);
+    expect(first).toEqual(['reset_request', expect.any(Buffer), 2]);
+    expect(first[1]).toHaveLength(32);
+    expect(first).toEqual(repeated);
+    expect(attempt).toEqual(['reset_attempt', expect.any(Buffer), 3]);
+    expect(attempt[1]).not.toEqual(first[1]);
+  });
+
+  it('requires global budgets, a digest key and query logging off before enabling scoped budgets', () => {
+    configureResetEmailLimits();
+    delete process.env.AUTH_RATE_LIMITS;
+    expect(() => new AuthResetEmailLimiter()).toThrow('requires AUTH_RATE_LIMITS');
+    configureResetEmailLimits();
+    process.env.DB_LOGGING = 'true';
+    expect(() => new AuthResetEmailLimiter()).toThrow('requires DB_LOGGING=false');
+    configureResetEmailLimits();
+    delete process.env.AUTH_RESET_EMAIL_LIMIT_KEY;
+    expect(() => new AuthResetEmailLimiter()).toThrow('AUTH_RESET_EMAIL_LIMIT_KEY');
+  });
+
+  it('rejects over-budget reset operations before querying account state', async () => {
+    configureResetEmailLimits();
+    const query = jest.fn().mockResolvedValue([{ allowed: false, retry_after: 20 }]);
+    const limitedController = new AuthController(service, new AuthResetEmailLimiter({ query } as unknown as DataSource));
+    const setHeader = jest.fn();
+    const response = { setHeader } as unknown as ExpressResponse;
+    await expect(limitedController.forgetPassword({ email: user.email }, response)).rejects.toMatchObject({ status: 429 });
+    await expect(limitedController.resetPassword({ email: user.email, otp: '000000', new_password: 'synthetic-only' }, response))
+      .rejects.toMatchObject({ status: 429 });
+    expect(setHeader).toHaveBeenCalledWith('Retry-After', '20');
+    expect(users.findOne).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without exposing counter-store diagnostics', async () => {
+    configureResetEmailLimits();
+    const query = jest.fn().mockRejectedValue(new Error('PRIVATE_COUNTER_DIAGNOSTIC'));
+    const limiter = new AuthResetEmailLimiter({ query } as unknown as DataSource);
+    await expect(limiter.consume('reset_attempt', user.email, {} as ExpressResponse)).rejects.toMatchObject({
+      status: 503,
+      message: 'Authentication is temporarily unavailable',
+    });
+  });
+
   it('does not issue a code if the account changes email before the issuance lock', async () => {
     users.findOne.mockResolvedValueOnce({ ...user, status: UserStatus.ACTIVE });
     users.findOne.mockResolvedValueOnce({ ...user, email: 'changed@example.invalid', status: UserStatus.ACTIVE });
@@ -107,12 +173,12 @@ describe('Activation recovery with synthetic repositories only', () => {
     expect(sendEmail.mock.calls[0][0].html).toContain('http://localhost:4201/auth/verify-email?token=');
   });
   it.each(['not-a-url', 'javascript:alert(1)', 'http://public.example.invalid'])('contains invalid frontend config %s without revealing eligibility', async (value) => {
-    process.env.FRONTEND_BASE_URL = value; const controller = new AuthController(service);
+    process.env.FRONTEND_BASE_URL = value; const controller = new AuthController(service, new AuthResetEmailLimiter());
     const pending = await controller.resendVerification({ email: user.email }); users.findOne.mockResolvedValue(null);
     expect(await controller.resendVerification({ email: user.email })).toEqual(pending); expect(sendEmail).not.toHaveBeenCalled();
   });
   it.each(['accepted', 'unavailable', 'rejected', 'timeout', 'failed'])('keeps %s resend response identical for pending, absent and active', async (status) => {
-    sendEmail.mockResolvedValue({ status }); const controller = new AuthController(service);
+    sendEmail.mockResolvedValue({ status }); const controller = new AuthController(service, new AuthResetEmailLimiter());
     const pending = await controller.resendVerification({ email: user.email });
     users.findOne.mockResolvedValue({ ...user, status: UserStatus.ACTIVE }); expect(await controller.resendVerification({ email: user.email })).toEqual(pending);
     users.findOne.mockResolvedValue(null); expect(await controller.resendVerification({ email: user.email })).toEqual(pending);
@@ -124,18 +190,18 @@ describe('Activation recovery with synthetic repositories only', () => {
   });
   it('contains signing failure in generic resend response', async () => {
     jwt.signAsync.mockRejectedValue(new Error('PRIVATE_TOKEN'));
-    expect(await new AuthController(service).resendVerification({ email: user.email })).toEqual({ status: 'success', message: 'If an account needs verification, a verification email has been requested.', data: null });
+    expect(await new AuthController(service, new AuthResetEmailLimiter()).resendVerification({ email: user.email })).toEqual({ status: 'success', message: 'If an account needs verification, a verification email has been requested.', data: null });
   });
   it('returns account with sanitized delivery failure without undoing registration', async () => {
     users.findOne.mockImplementation(async ({ where }: { where: { email?: string; id?: string } }) => where.email ? null : { ...user }); sendEmail.mockResolvedValue({ status: 'rejected' });
-    const result = await new AuthController(service).register({ email: user.email, password: 'synthetic-only', first_name: 'Synthetic', last_name: 'User' });
+    const result = await new AuthController(service, new AuthResetEmailLimiter()).register({ email: user.email, password: 'synthetic-only', first_name: 'Synthetic', last_name: 'User' });
     expect(result.data.verificationDelivery).toEqual({ status: 'rejected' }); expect(result.data.user.status).toBe(UserStatus.PENDING); expect(JSON.stringify(result)).not.toContain('SYNTHETIC_TOKEN');
   });
   it('activates pending once and makes still-valid repeated links idempotent', async () => {
     const pending = { ...user }; users.findOne.mockResolvedValue(pending); await service.verifyUser('synthetic'); await service.verifyUser('synthetic');
     expect(users.save).toHaveBeenCalledTimes(1); expect(pending.status).toBe(UserStatus.ACTIVE);
     expect(sessions.create).not.toHaveBeenCalled();
-    expect(await new AuthController(service).verify({ token: 'synthetic' })).toEqual({ status: 'success', message: 'Email verified. Sign in to continue.', data: { verified: true } });
+    expect(await new AuthController(service, new AuthResetEmailLimiter()).verify({ token: 'synthetic' })).toEqual({ status: 'success', message: 'Email verified. Sign in to continue.', data: { verified: true } });
     expect(users.findOne).toHaveBeenCalledWith({ where: { id: user.id }, loadEagerRelations: false, lock: { mode: 'pessimistic_write' } });
   });
   it.each([undefined, '', 'other@example.invalid', 1])('rejects absent or mismatched verification email %s without activation', async email => {

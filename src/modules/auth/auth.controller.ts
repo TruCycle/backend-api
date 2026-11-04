@@ -1,10 +1,11 @@
-import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
-import { LimitAuthOperation } from './auth-rate-limit.guard';
+import { AuthResetEmailLimiter, LimitAuthOperation } from './auth-rate-limit.guard';
 import { AuthService } from './auth.service';
 import { ForgetPasswordDto } from './dto/forget-password.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
@@ -21,7 +22,7 @@ import { LogoutDto } from './dto/logout.dto';
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(private readonly auth: AuthService, private readonly resetEmailLimiter: AuthResetEmailLimiter) {}
 
   @Get('health')
   @ApiOperation({ summary: 'Auth service health check' })
@@ -246,7 +247,8 @@ export class AuthController {
   @ApiBody({ description: 'Email to send reset OTP to', type: ForgetPasswordDto })
   @ApiOkResponse({ description: 'Generic acknowledgement', schema: { example: { status: 'success', message: 'If the account is eligible, a reset code has been requested.', data: null } } })
   @LimitAuthOperation('reset_request')
-  async forgetPassword(@Body() dto: ForgetPasswordDto) {
+  async forgetPassword(@Body() dto: ForgetPasswordDto, @Res({ passthrough: true }) response: Response) {
+    await this.resetEmailLimiter.consume('reset_request', dto.email, response);
     await this.auth.requestPasswordReset(dto.email);
     // Always return success to avoid email enumeration
     return { status: 'success', message: 'If the account is eligible, a reset code has been requested.', data: null };
@@ -280,7 +282,8 @@ export class AuthController {
   @ApiBody({ description: 'Email, OTP, and new password', type: ResetPasswordDto })
   @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Password changed successfully.', data: null } } })
   @LimitAuthOperation('reset_attempt')
-  async resetPassword(@Body() dto: ResetPasswordDto) {
+  async resetPassword(@Body() dto: ResetPasswordDto, @Res({ passthrough: true }) response: Response) {
+    await this.resetEmailLimiter.consume('reset_attempt', dto.email, response);
     await this.auth.resetPassword(dto.email, dto.otp, dto.new_password);
     return { status: 'success', message: 'Password changed successfully.', data: null };
   }
