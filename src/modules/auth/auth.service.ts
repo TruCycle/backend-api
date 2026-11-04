@@ -381,19 +381,25 @@ export class AuthService {
     const expiresInMinutes = this.getPasswordResetOtpExpiryMinutes();
     const otp = this.generatePasswordResetOtp();
     const otpHash = await this.passwordService.hash(otp);
-    const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
-
-    user.resetOtpHash = otpHash;
-    user.resetOtpExpiresAt = expiresAt;
-    await this.users.save(user);
+    const recipient = await this.users.manager.transaction(async manager => {
+      const users = manager.getRepository(User);
+      const locked = await users.findOne({ where: { id: user.id }, loadEagerRelations: false, lock: { mode: 'pessimistic_write' } });
+      if (!locked || locked.email !== user.email || locked.status === UserStatus.DELETED || locked.status === UserStatus.SUSPENDED) return null;
+      await users.update(locked.id, {
+        resetOtpHash: otpHash,
+        resetOtpExpiresAt: new Date(Date.now() + expiresInMinutes * 60 * 1000),
+      });
+      return { email: locked.email, firstName: locked.firstName };
+    });
+    if (!recipient) return;
 
     const html = buildPasswordResetOtpEmailTemplate({
-      firstName: user.firstName,
+      firstName: recipient.firstName,
       otp,
       expiresInMinutes,
       supportEmail: process.env.SUPPORT_EMAIL,
     });
-    await this.email.sendEmail({ to: user.email, subject: 'Your password reset OTP', html });
+    await this.email.sendEmail({ to: recipient.email, subject: 'Your password reset OTP', html });
   }
 
   async resetPassword(email: string, otp: string, newPassword: string): Promise<void> {
@@ -404,15 +410,12 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired OTP');
     }
     if (user.status === UserStatus.DELETED || user.status === UserStatus.SUSPENDED) {
-      throw new BadRequestException('Account not eligible for password reset');
+      throw new UnauthorizedException('Invalid or expired OTP');
     }
     if (!user.resetOtpHash || !user.resetOtpExpiresAt) {
       throw new UnauthorizedException('Invalid or expired OTP');
     }
     if (new Date(user.resetOtpExpiresAt).getTime() <= Date.now()) {
-      user.resetOtpHash = null;
-      user.resetOtpExpiresAt = null;
-      await this.users.save(user);
       throw new UnauthorizedException('Invalid or expired OTP');
     }
     const acceptedOtpHash = user.resetOtpHash;
@@ -425,7 +428,7 @@ export class AuthService {
     await this.users.manager.transaction(async manager => {
       const users = manager.getRepository(User);
       const locked = await users.findOne({ where: { id: user.id }, loadEagerRelations: false, lock: { mode: 'pessimistic_write' } });
-      if (!locked || locked.status === UserStatus.DELETED || locked.status === UserStatus.SUSPENDED || locked.resetOtpHash !== acceptedOtpHash ||
+      if (!locked || locked.email !== normalizedEmail || locked.status === UserStatus.DELETED || locked.status === UserStatus.SUSPENDED || locked.resetOtpHash !== acceptedOtpHash ||
           !locked.resetOtpExpiresAt || new Date(locked.resetOtpExpiresAt).getTime() <= Date.now()) throw new UnauthorizedException('Invalid or expired OTP');
       locked.passwordHash = hash; locked.resetOtpHash = null; locked.resetOtpExpiresAt = null;
       await users.save(locked);

@@ -59,7 +59,7 @@ describe('Activation email outcomes without provider access', () => {
 describe('Activation recovery with synthetic repositories only', () => {
   let original: NodeJS.ProcessEnv;
   const user = { id: 'synthetic-user', email: 'synthetic@example.invalid', status: UserStatus.PENDING, createdAt: new Date(0) };
-  const users = { findOne: jest.fn(), create: jest.fn(), save: jest.fn() };
+  const users = { findOne: jest.fn(), create: jest.fn(), save: jest.fn(), update: jest.fn() };
   const roles = { findOne: jest.fn() }; const links = { find: jest.fn(), create: jest.fn(), save: jest.fn() };
   const jwt = { signAsync: jest.fn(), verifyAsync: jest.fn(), decode: jest.fn() }; const sendEmail = jest.fn();
   let service: AuthService;
@@ -76,6 +76,26 @@ describe('Activation recovery with synthetic repositories only', () => {
     service = new AuthService(users as unknown as Repository<User>, roles as unknown as Repository<Role>, links as unknown as Repository<UserRole>, {} as Repository<Shop>, {} as Repository<KycProfile>, { hash: jest.fn().mockResolvedValue('synthetic-hash') } as unknown as PasswordService, jwt as unknown as JwtService, { sendEmail } as unknown as EmailService, sessions as unknown as AuthSessionsService, {} as ItemGeocodingService);
   });
   afterEach(() => { process.env = original; jest.restoreAllMocks(); });
+  it('does not issue a code if the account changes email before the issuance lock', async () => {
+    users.findOne.mockResolvedValueOnce({ ...user, status: UserStatus.ACTIVE });
+    users.findOne.mockResolvedValueOnce({ ...user, email: 'changed@example.invalid', status: UserStatus.ACTIVE });
+    await service.requestPasswordReset(user.email);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(users.update).not.toHaveBeenCalled();
+  });
+  it('issues only the reset fields under lock and sends to the rechecked address', async () => {
+    users.findOne.mockResolvedValue({ ...user, status: UserStatus.ACTIVE });
+    await service.requestPasswordReset(user.email.toUpperCase());
+    expect(users.findOne).toHaveBeenLastCalledWith(expect.objectContaining({ where: { id: user.id }, lock: { mode: 'pessimistic_write' } }));
+    expect(users.update).toHaveBeenCalledWith(user.id, { resetOtpHash: 'synthetic-hash', resetOtpExpiresAt: expect.any(Date) });
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: user.email }));
+    expect(users.update.mock.invocationCallOrder[0]).toBeLessThan(sendEmail.mock.invocationCallOrder[0]);
+  });
+  it('an expired code fails without writing a stale user snapshot', async () => {
+    users.findOne.mockResolvedValueOnce({ ...user, resetOtpHash: 'old-hash', resetOtpExpiresAt: new Date(0) });
+    await expect(service.resetPassword(user.email, '000000', 'new-password')).rejects.toThrow('Invalid or expired OTP');
+    expect(users.save).not.toHaveBeenCalled();
+  });
   it('uses canonical frontend URL rather than API base and retains 24h expiry', async () => {
     process.env.APP_BASE_URL = 'https://api.example.invalid'; await service.resendVerification(user.email);
     expect(sendEmail.mock.calls[0][0].html).toContain('https://trucycle.co.uk/auth/verify-email?token=SYNTHETIC_TOKEN');

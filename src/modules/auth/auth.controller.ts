@@ -244,12 +244,12 @@ export class AuthController {
   @Post('forget-password')
   @ApiOperation({ summary: 'Request a password reset OTP' })
   @ApiBody({ description: 'Email to send reset OTP to', type: ForgetPasswordDto })
-  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Reset OTP sent successfully.', data: null } } })
+  @ApiOkResponse({ description: 'Generic acknowledgement', schema: { example: { status: 'success', message: 'If the account is eligible, a reset code has been requested.', data: null } } })
   @LimitAuthOperation('reset_request')
   async forgetPassword(@Body() dto: ForgetPasswordDto) {
     await this.auth.requestPasswordReset(dto.email);
     // Always return success to avoid email enumeration
-    return { status: 'success', message: 'Reset OTP sent successfully.', data: null };
+    return { status: 'success', message: 'If the account is eligible, a reset code has been requested.', data: null };
   }
 
   @Post('verify')
