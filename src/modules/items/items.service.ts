@@ -1145,6 +1145,9 @@ export class ItemsService {
 
   async searchPublicListings(dto: SearchItemsDto, currentUserId?: string) {
     // If postcode is provided, it has priority over lat/lng
+    if (dto.postcode !== undefined && typeof dto.postcode !== 'string') {
+      throw new BadRequestException('Valid postcode is required');
+    }
     const pc = (dto.postcode ?? '').trim();
     let originLat: number | undefined = undefined;
     let originLng: number | undefined = undefined;
@@ -1160,17 +1163,19 @@ export class ItemsService {
     } else {
       originLat = typeof dto.lat === 'number' && Number.isFinite(dto.lat) ? dto.lat : undefined;
       originLng = typeof dto.lng === 'number' && Number.isFinite(dto.lng) ? dto.lng : undefined;
-      if (originLat === undefined || originLng === undefined) {
+      if ((dto.lat !== undefined || dto.lng !== undefined) && (originLat === undefined || originLng === undefined)) {
         throw new BadRequestException('Provide either lat/lng or postcode to search items');
       }
     }
 
-    if (
+    const hasOrigin = pc.length > 0 || dto.lat !== undefined || dto.lng !== undefined;
+    if (hasOrigin && (
       typeof originLat !== 'number' ||
       typeof originLng !== 'number' ||
       !Number.isFinite(originLat) ||
-      !Number.isFinite(originLng)
-    ) {
+      !Number.isFinite(originLng) ||
+      originLat < -90 || originLat > 90 || originLng < -180 || originLng > 180
+    )) {
       throw new BadRequestException('Valid latitude and longitude are required');
     }
 
@@ -1214,18 +1219,21 @@ export class ItemsService {
       .addSelect('item.estimated_co2_saved_kg', 'estimated_co2_saved_kg')
       .addSelect('item.images', 'images')
       .addSelect('item.created_at', 'created_at')
-      .addSelect(`ST_Distance(item.location::geography, ${geographyPoint})`, 'distance_meters')
       .where('item.status IN (:...statuses)', { statuses: statusFilters })
-      .andWhere(`ST_DWithin(item.location::geography, ${geographyPoint}, :radiusMeters)`)
-      .orderBy('distance_meters', 'ASC')
-      .addOrderBy('item.created_at', 'DESC')
       .offset(offset)
-      .limit(limit)
-      .setParameters({
-        originLat,
-        originLng,
-        radiusMeters,
-      });
+      .limit(limit);
+    if (hasOrigin) {
+      qb.addSelect(`ST_Distance(item.location::geography, ${geographyPoint})`, 'distance_meters')
+        .andWhere(`ST_DWithin(item.location::geography, ${geographyPoint}, :radiusMeters)`)
+        .orderBy('distance_meters', 'ASC')
+        .addOrderBy('item.created_at', 'DESC')
+        .addOrderBy('item.id', 'ASC')
+        .setParameters({ originLat, originLng, radiusMeters });
+    } else {
+      qb.addSelect('NULL', 'distance_meters')
+        .orderBy('item.created_at', 'DESC')
+        .addOrderBy('item.id', 'ASC');
+    }
 
     if (dto.category) {
       const normalizedCategory = dto.category.trim().toLowerCase();
@@ -1295,7 +1303,8 @@ export class ItemsService {
     }
 
     const items = rows.map((row: any) => {
-      const rawDistance = Number(row.distance_meters);
+      const rawDistance = hasOrigin && row.distance_meters !== null && row.distance_meters !== undefined
+        ? Number(row.distance_meters) : NaN;
       const distanceKm = Number.isFinite(rawDistance)
         ? Math.round((Math.max(rawDistance, 0) / 1000) * 10) / 10
         : null;
@@ -1384,11 +1393,11 @@ export class ItemsService {
     });
 
     return {
-      search_origin: {
-        lat: Number(originLat.toFixed(6)),
-        lng: Number(originLng.toFixed(6)),
+      search_origin: hasOrigin ? {
+        lat: Number(originLat!.toFixed(6)),
+        lng: Number(originLng!.toFixed(6)),
         radius_km: Math.round(radiusKm * 10) / 10,
-      },
+      } : null,
       items,
     };
   }

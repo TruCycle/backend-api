@@ -14,31 +14,17 @@ import {
 
 import { ItemStatus } from '../item.entity';
 
-function toNumber(value: any): number | undefined {
-  if (value === null || value === undefined || value === '') {
-    return undefined;
-  }
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : undefined;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return undefined;
-    }
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  return undefined;
+// Missing query parameters stay optional; supplied malformed values must reach
+// validation rather than disappearing and widening an intended nearby search.
+function toNumber(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())) return Number(value.trim());
+  return NaN;
 }
 
-function toInteger(value: any): number | undefined {
-  const num = toNumber(value);
-  if (num === undefined) {
-    return undefined;
-  }
-  const intVal = Math.trunc(num);
-  return Number.isFinite(intVal) ? intVal : undefined;
+function toInteger(value: unknown): number | undefined {
+  return toNumber(value);
 }
 
 export class SearchItemsDto {
