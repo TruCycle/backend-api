@@ -133,7 +133,7 @@ describe('Activation recovery with synthetic repositories only', () => {
       .rejects.toMatchObject({ status: 429 });
     expect(setHeader).toHaveBeenCalledWith('Retry-After', '20');
     expect(users.findOne).not.toHaveBeenCalled();
-    expect(warn.mock.calls).toEqual([
+    expect(warn.mock.calls.map(([message]) => [JSON.parse(message)])).toEqual([
       [{ event: 'auth_rate_limit', scope: 'reset_email', operation: 'reset_request', outcome: 'limited', release: 'a'.repeat(40) }],
       [{ event: 'auth_rate_limit', scope: 'reset_email', operation: 'reset_attempt', outcome: 'limited', release: 'a'.repeat(40) }],
     ]);
@@ -150,7 +150,8 @@ describe('Activation recovery with synthetic repositories only', () => {
     const response = { setHeader: jest.fn() } as unknown as ExpressResponse;
     await expect(limiter.consume('reset_request', 'PRIVATE_SYNTHETIC_EMAIL@example.invalid', response))
       .rejects.toMatchObject({ status: 429 });
-    expect(warn.mock.calls).toEqual([
+    expect(warn.mock.calls.every(([message]) => typeof message === 'string' && !message.includes('\n'))).toBe(true);
+    expect(warn.mock.calls.map(([message]) => [JSON.parse(message)])).toEqual([
       [{ event: 'auth_rate_limit', scope: 'reset_email', operation: 'reset_request', outcome: 'limited', release: 'b'.repeat(40) }],
     ]);
   });
@@ -165,7 +166,7 @@ describe('Activation recovery with synthetic repositories only', () => {
       status: 503,
       message: 'Authentication is temporarily unavailable',
     });
-    expect(warn.mock.calls).toEqual([
+    expect(warn.mock.calls.map(([message]) => [JSON.parse(message)])).toEqual([
       [{ event: 'auth_rate_limit', scope: 'reset_email', operation: 'reset_attempt', outcome: 'unavailable' }],
     ]);
   });

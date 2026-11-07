@@ -82,13 +82,14 @@ function reportBudgetEvent(operation: Operation, scope: 'global' | 'reset_email'
   if (last !== undefined && now >= last && now - last < 60_000) return;
   lastBudgetEvent.set(key, now);
   const release = process.env.APP_RELEASE_SHA || process.env.RAILWAY_GIT_COMMIT_SHA;
-  budgetLogger.warn({
+  // Keep each event atomic in log streams that ingest one line at a time.
+  budgetLogger.warn(JSON.stringify({
     event: 'auth_rate_limit',
     operation,
     scope,
     outcome,
     ...(release && /^[0-9a-f]{40}$/i.test(release) ? { release } : {}),
-  });
+  }));
 }
 
 async function enforceBudget(
