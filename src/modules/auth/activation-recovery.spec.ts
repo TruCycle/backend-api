@@ -139,6 +139,22 @@ describe('Activation recovery with synthetic repositories only', () => {
     ]);
   });
 
+  it('attributes hosted budget events to the Railway release without exposing identity', async () => {
+    configureResetEmailLimits();
+    delete process.env.APP_RELEASE_SHA;
+    process.env.RAILWAY_GIT_COMMIT_SHA = 'b'.repeat(40);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000);
+    const query = jest.fn().mockResolvedValue([{ allowed: false, retry_after: 15 }]);
+    const limiter = new AuthResetEmailLimiter({ query } as unknown as DataSource);
+    const response = { setHeader: jest.fn() } as unknown as ExpressResponse;
+    await expect(limiter.consume('reset_request', 'PRIVATE_SYNTHETIC_EMAIL@example.invalid', response))
+      .rejects.toMatchObject({ status: 429 });
+    expect(warn.mock.calls).toEqual([
+      [{ event: 'auth_rate_limit', scope: 'reset_email', operation: 'reset_request', outcome: 'limited', release: 'b'.repeat(40) }],
+    ]);
+  });
+
   it('fails closed without exposing counter-store diagnostics', async () => {
     configureResetEmailLimits();
     process.env.APP_RELEASE_SHA = 'PRIVATE_INVALID_RELEASE';

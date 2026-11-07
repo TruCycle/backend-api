@@ -81,7 +81,7 @@ function reportBudgetEvent(operation: Operation, scope: 'global' | 'reset_email'
   const last = lastBudgetEvent.get(key);
   if (last !== undefined && now >= last && now - last < 60_000) return;
   lastBudgetEvent.set(key, now);
-  const release = process.env.APP_RELEASE_SHA;
+  const release = process.env.APP_RELEASE_SHA || process.env.RAILWAY_GIT_COMMIT_SHA;
   budgetLogger.warn({
     event: 'auth_rate_limit',
     operation,
