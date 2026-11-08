@@ -215,7 +215,17 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   private async broadcastPresence(userId: string, online: boolean): Promise<void> {
-    const ids = await this.access.authorizedIds();
-    if (ids.length) this.server.to(ids).emit('presence:update', { userId, online });
+    try {
+      const recipients = await this.messages.presenceRecipientIds(userId);
+      const ids = new Set<string>();
+      for (const recipient of recipients) {
+        for (const id of await this.access.authorizedIds(recipient)) ids.add(id);
+      }
+      if (ids.size) this.server.to([...ids]).emit('presence:update', { userId, online });
+    } catch (error) {
+      // Presence is optional; an audience lookup failure must never fall back
+      // to a namespace-wide broadcast or reject an authenticated connection.
+      this.logger.warn(safeFailure('messages_presence_delivery', error));
+    }
   }
 }

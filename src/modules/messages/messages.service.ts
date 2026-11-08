@@ -129,6 +129,23 @@ export class MessagesService {
     return results;
   }
 
+  async presenceRecipientIds(userId: string): Promise<string[]> {
+    // Presence is private to existing conversation participants. Select only
+    // the two account IDs; eager account profiles are unnecessary here.
+    const rooms = await this.rooms.createQueryBuilder('room')
+      .select('room.userOne', 'userOneId')
+      .addSelect('room.userTwo', 'userTwoId')
+      .where('room.deleted = :deleted', { deleted: false })
+      .andWhere('(room.userOne = :userId OR room.userTwo = :userId)', { userId })
+      .getRawMany<{ userOneId: string; userTwoId: string }>();
+    const recipients = new Set([userId]);
+    for (const room of rooms) {
+      if (room.userOneId === userId) recipients.add(room.userTwoId);
+      if (room.userTwoId === userId) recipients.add(room.userOneId);
+    }
+    return [...recipients];
+  }
+
   async sendImageMessage(
     roomId: string,
     senderId: string,
