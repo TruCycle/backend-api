@@ -30,6 +30,7 @@ import { CreateRoomDto } from './dto/create-room.dto';
 import { DirectMessageDto } from './dto/direct-message.dto';
 import { GeneralMessageDto } from './dto/general-message.dto';
 import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
+import { ReadMessagesDto } from './dto/read-messages.dto';
 import { SearchMessagesQueryDto } from './dto/search-messages-query.dto';
 import { SendImageMessageDto } from './dto/send-image-message.dto';
 import { MessagesService } from './messages.service';
@@ -318,6 +319,13 @@ export class MessagesController {
     const userId = this.getUserId(req);
     await this.messages.deleteRoom(roomId, userId);
     return { success: true };
+  }
+
+  @Post('rooms/:roomId/read')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Acknowledge explicitly viewed incoming messages' })
+  async acknowledgeRead(@Req() req: any, @Param('roomId', ParseUUIDPipe) roomId: string, @Body() dto: ReadMessagesDto) {
+    return this.messages.acknowledgeRead(roomId, this.getUserId(req), dto.messageIds);
   }
 
   private getUserId(req: any): string {

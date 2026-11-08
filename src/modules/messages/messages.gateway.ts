@@ -189,6 +189,11 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (ids.length) this.server.to(ids).emit('room:cleared', { roomId });
   }
 
+  async emitReadState(userId: string, roomId: string, unreadCount: number): Promise<void> {
+    const ids = await this.access.authorizedIds(userId);
+    if (ids.length) this.server.to(ids).emit('messages:read', { roomId, unreadCount });
+  }
+
   async emitRoomDeleted(roomId: string): Promise<void> {
     const ids = await this.access.authorizedIds(undefined, roomId);
     if (ids.length) this.server.to(ids).emit('room:deleted', { roomId });

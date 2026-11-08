@@ -27,7 +27,7 @@ describe.each(['named', 'email-only'])('Chat identity privacy: %s accounts', (pr
   let people: User[];
   let query: ReturnType<typeof queryMock>;
   const rooms = { findOne: jest.fn(), find: jest.fn(), create: jest.fn(), save: jest.fn(), update: jest.fn() };
-  const messages = { createQueryBuilder: jest.fn(), create: jest.fn(), save: jest.fn(), findOneOrFail: jest.fn(), findOne: jest.fn() };
+  const messages = { query: jest.fn().mockResolvedValue([]), createQueryBuilder: jest.fn(), create: jest.fn(), save: jest.fn(), findOneOrFail: jest.fn(), findOne: jest.fn() };
   const users = { findBy: jest.fn() };
   const gateway = { broadcastMessage: jest.fn() };
   const media = { uploadImage: jest.fn() };
@@ -54,6 +54,7 @@ describe.each(['named', 'email-only'])('Chat identity privacy: %s accounts', (pr
       category: MessageCategory.DIRECT, text: 'Synthetic private conversation', caption: null,
       imageUrl: null, createdAt: new Date('2026-11-03T00:01:00Z') });
     rooms.findOne.mockResolvedValue(room); rooms.find.mockResolvedValue([room]);
+    messages.query.mockResolvedValue([]);
     rooms.create.mockImplementation((value: Partial<MessageRoom>) => value);
     rooms.save.mockResolvedValue(room); rooms.update.mockResolvedValue({ affected: 1 });
     users.findBy.mockResolvedValue(people);

@@ -9,6 +9,7 @@ const rootDirectory = path.resolve(__dirname, '..');
 const reviewedTests = [
   'src/modules/messages/messages-delivery.spec.ts',
   'src/modules/messages/messages-presence-privacy.spec.ts',
+  'src/modules/messages/message-read-state.spec.ts',
   'src/modules/notifications/notification-authorization.spec.ts',
   'src/modules/notifications/notification-wiring.spec.ts',
   'src/modules/shops/shops-validation.spec.ts',

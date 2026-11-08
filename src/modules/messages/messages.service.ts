@@ -10,7 +10,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { safeFailure } from '../../common/utils/safe-log';
 
@@ -23,6 +23,7 @@ import { SendImageMessageDto } from './dto/send-image-message.dto';
 import { GeneralMessageDto } from './dto/general-message.dto';
 import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
 import { User } from '../users/user.entity';
+import { INSERT_READ_RECEIPTS_SQL, UNREAD_COUNTS_SQL } from './message-read-state';
 
 export type MessageDirection = 'incoming' | 'outgoing' | 'general';
 
@@ -49,6 +50,7 @@ export interface MessageViewModel {
 
 export interface ActiveRoomViewModel {
   id: string;
+  unreadCount: number;
   participants: Array<{
     id: string;
     firstName: string | null;
@@ -110,7 +112,8 @@ export class MessagesService {
       room = await this.rooms.save(room);
     }
 
-    return this.mapRoom(room, currentUserId);
+    const counts = await this.unreadCounts(currentUserId, [room.id]);
+    return this.mapRoom(room, currentUserId, counts.get(room.id) ?? 0);
   }
 
   async listActiveRooms(userId: string): Promise<ActiveRoomViewModel[]> {
@@ -122,11 +125,38 @@ export class MessagesService {
       order: { updatedAt: 'DESC' },
     });
 
+    const counts = await this.unreadCounts(userId, rooms.map(room => room.id));
     const results: ActiveRoomViewModel[] = [];
     for (const room of rooms) {
-      results.push(await this.mapRoom(room, userId));
+      results.push(await this.mapRoom(room, userId, counts.get(room.id) ?? 0));
     }
     return results;
+  }
+
+  private async unreadCounts(userId: string, roomIds: string[]): Promise<Map<string, number>> {
+    if (!roomIds.length) return new Map();
+    const rows: Array<{ roomId: string; count: number }> = await this.messages.query(UNREAD_COUNTS_SQL, [userId, roomIds]);
+    return new Map(rows.map(row => [row.roomId, Number(row.count)]));
+  }
+
+  async acknowledgeRead(roomId: string, userId: string, requestedIds: string[]): Promise<{ readMessageIds: string[]; unreadCount: number }> {
+    const validUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!Array.isArray(requestedIds) || requestedIds.length < 1 || requestedIds.length > 100 ||
+      requestedIds.some(id => typeof id !== 'string' || !validUuid.test(id))) throw new BadRequestException('Invalid viewed message IDs');
+    const messageIds = [...new Set(requestedIds.map(id => id.toLowerCase()))];
+    const result = await this.messages.manager.transaction(async manager => {
+      await this.lockReadableRoom(manager, roomId, userId);
+      const rows: Array<{ id: string; incoming: boolean }> = await manager.query(`SELECT id,
+        (category='direct' AND "senderId" IS NOT NULL AND "senderId"<>$1::uuid) AS incoming
+        FROM public.message WHERE "roomId"=$2::uuid AND id=ANY($3::uuid[])`, [userId, roomId, messageIds]);
+      if (rows.length !== messageIds.length) throw new BadRequestException('Viewed messages must belong to this room');
+      await manager.query(INSERT_READ_RECEIPTS_SQL, [userId, roomId, messageIds]);
+      const counts: Array<{ roomId: string; count: number }> = await manager.query(UNREAD_COUNTS_SQL, [userId, [roomId]]);
+      return { readMessageIds: rows.filter(row => row.incoming).map(row => row.id), unreadCount: Number(counts[0]?.count ?? 0) };
+    });
+    if (this.gateway) void this.gateway.emitReadState(userId, roomId, result.unreadCount)
+      .catch(error => this.logger.warn(safeFailure('message_read_delivery', error)));
+    return result;
   }
 
   async presenceRecipientIds(userId: string): Promise<string[]> {
@@ -323,20 +353,31 @@ export class MessagesService {
   }
 
   async deleteRoomMessages(roomId: string, userId: string): Promise<void> {
-    await this.getRoomOrFail(roomId, userId);
-    await this.messages.delete({ room: { id: roomId } });
+    await this.messages.manager.transaction(async manager => {
+      await this.lockReadableRoom(manager, roomId, userId);
+      await manager.getRepository(Message).delete({ room: { id: roomId } });
+    });
     if (this.gateway) {
       await this.gateway.emitRoomCleared(roomId);
     }
   }
 
   async deleteRoom(roomId: string, userId: string): Promise<void> {
-    const room = await this.getRoomOrFail(roomId, userId);
-    await this.messages.delete({ room: { id: room.id } });
-    await this.rooms.delete({ id: room.id });
+    await this.messages.manager.transaction(async manager => {
+      await this.lockReadableRoom(manager, roomId, userId);
+      await manager.getRepository(MessageRoom).delete({ id: roomId });
+    });
     if (this.gateway) {
       await this.gateway.emitRoomDeleted(roomId);
     }
+  }
+
+  private async lockReadableRoom(manager: EntityManager, roomId: string, userId: string): Promise<MessageRoom> {
+    const room = await manager.getRepository(MessageRoom).findOne({ where: { id: roomId }, loadEagerRelations: false,
+      loadRelationIds: { relations: ['userOne', 'userTwo'], disableMixedMap: true }, lock: { mode: 'pessimistic_write' } });
+    if (!room || room.deleted) throw new NotFoundException('Room not found');
+    if (room.userOne.id !== userId && room.userTwo.id !== userId) throw new ForbiddenException('You do not have access to this room');
+    return room;
   }
 
   async getRoomOrFail(roomId: string, userId: string): Promise<MessageRoom> {
@@ -350,7 +391,7 @@ export class MessagesService {
     return room;
   }
 
-  private async mapRoom(room: MessageRoom, viewerId?: string): Promise<ActiveRoomViewModel> {
+  private async mapRoom(room: MessageRoom, viewerId?: string, unreadCount = 0): Promise<ActiveRoomViewModel> {
     const participants = [room.userOne, room.userTwo].map((user) => ({
       id: user.id,
       firstName: MESSAGE_MEMBER_LABEL,
@@ -372,6 +413,7 @@ export class MessagesService {
 
     return {
       id: room.id,
+      unreadCount,
       participants,
       lastMessage: lastMessage
         ? this.mapMessageForUser(
