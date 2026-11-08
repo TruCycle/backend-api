@@ -107,6 +107,9 @@ export class NotificationsController {
       throw new ForbiddenException('Cannot send notifications to another account');
     }
     const view = await this.notifications.createAndEmit(userId, 'general', body.template, null, body.params ?? {});
-    return view;
+    // The view has its own business-data field. Return an explicit envelope so
+    // the global interceptor preserves the whole notification rather than
+    // interpreting its params as the response payload.
+    return { status: 'success', message: 'OK', data: view };
   }
 }

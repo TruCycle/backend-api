@@ -10,6 +10,7 @@ const reviewedTests = [
   'src/modules/messages/messages-delivery.spec.ts',
   'src/modules/messages/messages-presence-privacy.spec.ts',
   'src/modules/notifications/notification-authorization.spec.ts',
+  'src/modules/notifications/notification-wiring.spec.ts',
   'src/modules/shops/shops-validation.spec.ts',
   'src/modules/auth/auth-sessions.spec.ts',
   'src/common/security/socket-access.spec.ts',

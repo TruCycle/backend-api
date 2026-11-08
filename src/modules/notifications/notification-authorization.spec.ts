@@ -1,6 +1,10 @@
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
+import { firstValueFrom, of } from 'rxjs';
+
+import { ResponseInterceptor } from '../../common/interceptors/response.interceptor';
 
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { EmailService } from './email.service';
@@ -19,8 +23,20 @@ describe('Notification recipient authorization', () => {
   it('allows self delivery using the authenticated recipient ID', async () => {
     const f = fixture();
     expect(await f.controller.send({ user: { sub: actorId } }, { userId: actorId, template: 'Synthetic notice', params: { source: 'qa' } }))
-      .toEqual({ id: 'synthetic-notification' });
+      .toEqual({ status: 'success', message: 'OK', data: { id: 'synthetic-notification' } });
     expect(f.notifications.createAndEmit).toHaveBeenCalledWith(actorId, 'general', 'Synthetic notice', null, { source: 'qa' });
+  });
+  it('preserves notice identity and business data through the actual response interceptor', async () => {
+    const f = fixture();
+    const view = { id: 'synthetic-notification', userId: actorId, type: 'general', title: 'Synthetic notice',
+      data: { source: 'qa', itemId: 'synthetic-item' }, read: false };
+    f.notifications.createAndEmit.mockResolvedValue(view);
+    const result = await f.controller.send({ user: { sub: actorId } }, { userId: actorId, template: 'Synthetic notice', params: view.data });
+    const context = { switchToHttp: () => ({ getResponse: () => ({ statusCode: 201 }) }),
+      getHandler: () => f.controller.send, getClass: () => NotificationsController } as unknown as ExecutionContext;
+    const response = await firstValueFrom(new ResponseInterceptor(new Reflector()).intercept(context, { handle: () => of(result) }));
+    expect(response).toEqual({ status: 'success', message: 'OK', data: view });
+    expect(response.data.id).toBe(view.id); expect(response.data.data).toEqual(view.data);
   });
   it.each([{}, { roles: ['admin'] }, { userRoles: [{ role: { code: 'admin' } }] }])('rejects another recipient without an inferred role bypass %j', async claims => {
     const f = fixture();
