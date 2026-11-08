@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Post, Query, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Post, Query, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { NotificationsService } from './notifications.service';
+
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
+import { SendNotificationDto } from './dto/send-notification.dto';
 import { EmailService } from './email.service';
+import { NotificationsService } from './notifications.service';
 
 @ApiTags('notifications')
 @Controller('notifications')
@@ -83,26 +85,28 @@ export class NotificationsController {
   @Post('send')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Queue a notification to be sent' })
+  @ApiOperation({ summary: 'Create a notification for the authenticated account' })
   @ApiBody({
-    description: 'Notification job payload',
+    description: 'Self-notification payload; userId must match the authenticated account',
     schema: {
       type: 'object',
       required: ['userId', 'template'],
       properties: {
         userId: { type: 'string', format: 'uuid', example: 'c7f2c3a1-45b6-4ad4-9d8a-8f5b8c9a4d12' },
-        template: { type: 'string', example: 'WELCOME' },
+        template: { type: 'string', minLength: 1, maxLength: 120, example: 'WELCOME' },
         params: { type: 'object', additionalProperties: true, example: { name: 'Jane' } },
       },
     },
   })
   @ApiOkResponse({ description: 'Immediate in-app notification created and emitted if online' })
-  async send(@Body() body: { userId: string; template: string; params?: any }) {
-    // For now, treat this as a simple in-app notification for testing
-    const type = 'general';
-    const title = body.template || 'Notification';
-    const data = body.params || {};
-    const view = await this.notifications.createAndEmit(body.userId, type as any, title, null, data);
+  async send(@Req() req: any, @Body() body: SendNotificationDto) {
+    const userId = this.getUserId(req);
+    // System-generated notifications use the internal service. This public
+    // authenticated route must never let a caller target another account.
+    if (body.userId.toLowerCase() !== userId.toLowerCase()) {
+      throw new ForbiddenException('Cannot send notifications to another account');
+    }
+    const view = await this.notifications.createAndEmit(userId, 'general', body.template, null, body.params ?? {});
     return view;
   }
 }
