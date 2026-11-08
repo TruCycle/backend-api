@@ -169,7 +169,7 @@ describe.each(['real names', 'email fallback'])('Public donor privacy with %s', 
       loadEagerRelations: false,
     });
     expect(kycs.findOne).toHaveBeenCalledWith({
-      where: { user: { id: donor.id } }, select: { status: true },
+      where: { user: { id: donor.id } }, select: { id: true, status: true },
       loadEagerRelations: false,
     });
     if (viewerId === donor.id) {

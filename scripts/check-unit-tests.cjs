@@ -26,6 +26,7 @@ const reviewedTests = [
   'src/modules/gamification/gamification-identity-privacy.spec.ts',
   'src/modules/items/items-claims-privacy.spec.ts',
   'src/modules/items/items-donor-privacy.spec.ts',
+  'src/modules/claims/claims-completion.spec.ts',
   'src/modules/items/dto/search-items.dto.spec.ts',
   'src/modules/notifications/nearby-item-privacy.spec.ts',
   'src/modules/items/item-geocoding.service.spec.ts',

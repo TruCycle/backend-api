@@ -42,7 +42,11 @@ export class RewardsService {
     const walletRepo = manager.getRepository(Wallet);
 
     // Serialize first-wallet creation on the stable owner row.
-    const user = await userRepo.findOne({ where: { id: userId }, lock: { mode: 'pessimistic_write' } });
+    const user = await userRepo.findOne({
+      where: { id: userId },
+      lock: { mode: 'pessimistic_write' },
+      loadEagerRelations: false,
+    });
     if (!user) throw new Error('User not found for wallet');
 
     let wallet = await walletRepo.findOne({ where: { owner: { id: userId }, currency: this.currency } });

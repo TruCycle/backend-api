@@ -404,6 +404,7 @@ export class ClaimsService {
         .leftJoinAndSelect('item.donor', 'donor')
         .leftJoinAndSelect('claim.collector', 'collector')
         .where('item.id = :itemId', { itemId })
+        .andWhere('(item.approvedCollectorId IS NULL OR collector.id = item.approvedCollectorId)')
         .orderBy(
           `CASE WHEN claim.status = :approved THEN 0 WHEN claim.status = :complete THEN 1 WHEN claim.status = :pending THEN 2 ELSE 3 END`,
           'ASC',
@@ -424,18 +425,17 @@ export class ClaimsService {
       }
 
       const donorId = claim.item?.donor?.id;
+      const isDonor = donorId === actor.id;
+      const isStaff = isAdmin || isFacility || isPartner;
+      const approvedCollectorId = claim.item?.approvedCollectorId;
 
-      // Prevent collection if item is locked for another collector
-      if (claim.item?.approvedCollectorId && claim.item.approvedCollectorId !== actor.id && !isAdmin && !isFacility && !isPartner) {
+      // The collector lock does not prevent the donor from recording the handoff.
+      if (!isStaff && !isDonor && approvedCollectorId && approvedCollectorId !== actor.id) {
         throw new ForbiddenException('This item is locked for another collector');
       }
 
-      if (!isAdmin && !isFacility && !isPartner) {
-        const asCollector = !!(claim.collector && claim.collector.id === actor.id);
-        const asDonor = !!(donorId && donorId === actor.id);
-        if (!asCollector && !asDonor) {
-          throw new ForbiddenException('Only the donor or assigned collector may complete this claim');
-        }
+      if (!isStaff && !isDonor && claim.collector?.id !== actor.id) {
+        throw new ForbiddenException('Only the donor or assigned collector may complete this claim');
       }
 
       // If donation flow has a drop-off location, require a matching shop id

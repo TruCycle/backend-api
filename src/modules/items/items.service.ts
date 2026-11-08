@@ -850,8 +850,9 @@ export class ItemsService {
       loadEagerRelations: false,
     });
     if (!user) return null;
+    // TypeORM needs the primary key in the joined findOne projection.
     const kyc = await this.kycs.findOne({
-      where: { user: { id: userId } }, select: { status: true },
+      where: { user: { id: userId } }, select: { id: true, status: true },
       loadEagerRelations: false,
     });
     const agg = await this.reviews
