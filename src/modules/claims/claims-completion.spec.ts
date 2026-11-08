@@ -17,7 +17,7 @@ function approvedExchange() {
   const collector = { id: 'collector', status: UserStatus.ACTIVE };
   const outsider = { id: 'outsider', status: UserStatus.ACTIVE };
   const item = Object.assign(new Item(), {
-    id: 'item', donor, approvedCollectorId: collector.id, status: ItemStatus.ACTIVE,
+    id: 'item', title: 'Bicycle', donor, approvedCollectorId: collector.id, status: ItemStatus.ACTIVE,
   });
   const claim = Object.assign(new Claim(), { id: 'claim', item, collector, status: ClaimStatus.APPROVED });
   const builder = {
@@ -34,11 +34,16 @@ function approvedExchange() {
   const itemRepo = {
     update: jest.fn(async (_id: string, changes: Partial<Item>) => Object.assign(item, changes)),
   };
+  const commit = jest.fn<Promise<void>, []>().mockResolvedValue(undefined);
   const claimRepo = {
     createQueryBuilder: jest.fn(() => builder),
     save: jest.fn(async (row: Claim) => row),
     manager: {
-      transaction: async (complete: (transaction: EntityManager) => Promise<unknown>) => complete(manager),
+      transaction: async (complete: (transaction: EntityManager) => Promise<unknown>) => {
+        const result = await complete(manager);
+        await commit();
+        return result;
+      },
     },
   };
   const manager = {
@@ -61,16 +66,21 @@ function approvedExchange() {
     findOne: jest.fn(async ({ where }: { where: { id: string } }) =>
       [donor, collector, outsider].find(actor => actor.id === where.id)),
   };
-  const notifications = { notifyItemCollected: jest.fn() };
+  const shops = { findOne: jest.fn().mockResolvedValue({ owner: { id: 'shop-owner' } }) };
+  const notifications = {
+    notifyItemCollected: jest.fn(),
+    notifyDropOff: jest.fn(),
+    notifyDropIn: jest.fn(),
+  };
   const rewards = { awardOnClaimComplete: jest.fn() };
   const gamification = { recordExchangeCompleted: jest.fn() };
   const service = new ClaimsService(
     claimRepo as unknown as Repository<Claim>, itemRepo as unknown as Repository<Item>,
-    users as unknown as Repository<User>, {} as Repository<Shop>,
+    users as unknown as Repository<User>, shops as unknown as Repository<Shop>,
     notifications as unknown as NotificationsService, rewards as unknown as RewardsService,
     gamification as unknown as GamificationService,
   );
-  return { service, item, claim, claimRepo, itemRepo, scanEvents, rewards, notifications, gamification };
+  return { service, item, claim, claimRepo, itemRepo, scanEvents, rewards, notifications, gamification, commit, shops };
 }
 
 const auth = (sub: string) => ({ sub, roles: [RoleCode.CUSTOMER] });
@@ -109,5 +119,50 @@ describe('Manual completion of an assigned claim', () => {
     expect(rewards.awardOnClaimComplete).not.toHaveBeenCalled();
     expect(gamification.recordExchangeCompleted).not.toHaveBeenCalled();
     expect(notifications.notifyItemCollected).not.toHaveBeenCalled();
+  });
+});
+
+describe.each(['completeClaimOutManual', 'completeClaimOut'] as const)('%s notifications', method => {
+  it('notifies the parties after commit and skips notification on retry', async () => {
+    const { service, item, commit, notifications, shops } = approvedExchange();
+    item.dropoffLocationId = 'shop';
+    commit.mockImplementationOnce(async () => {
+      expect(notifications.notifyItemCollected).not.toHaveBeenCalled();
+      expect(notifications.notifyDropOff).not.toHaveBeenCalled();
+      expect(notifications.notifyDropIn).not.toHaveBeenCalled();
+      expect(shops.findOne).not.toHaveBeenCalled();
+    });
+
+    const completed = await service[method](auth('collector'), item.id, 'shop');
+    const retry = await service[method](auth('collector'), item.id, 'shop');
+
+    expect(completed.scan_result).toBe('completed');
+    expect(retry.scan_result).toBe('already_completed');
+    expect(completed).not.toHaveProperty('completedClaim');
+    expect(notifications.notifyItemCollected.mock.calls).toEqual([['donor', 'collector', item.id, item.title]]);
+    expect(notifications.notifyDropOff.mock.calls).toEqual([['donor', item.id, item.title]]);
+    expect(notifications.notifyDropIn.mock.calls).toEqual([['shop-owner', 'donor', item.id, item.title]]);
+  });
+
+  it('sends no notification when the transaction fails to commit', async () => {
+    const { service, item, commit, notifications, shops } = approvedExchange();
+    const commitError = new Error('commit failed');
+    commit.mockRejectedValueOnce(commitError);
+
+    await expect(service[method](auth('collector'), item.id, 'shop')).rejects.toBe(commitError);
+
+    expect(notifications.notifyItemCollected).not.toHaveBeenCalled();
+    expect(notifications.notifyDropOff).not.toHaveBeenCalled();
+    expect(notifications.notifyDropIn).not.toHaveBeenCalled();
+    expect(shops.findOne).not.toHaveBeenCalled();
+  });
+
+  it('returns the committed collection when the notification fails', async () => {
+    const { service, item, notifications } = approvedExchange();
+    notifications.notifyItemCollected.mockRejectedValueOnce(new Error('notification unavailable'));
+
+    await expect(service[method](auth('collector'), item.id, 'shop')).resolves.toMatchObject({
+      status: ClaimStatus.COMPLETE, scan_result: 'completed',
+    });
   });
 });

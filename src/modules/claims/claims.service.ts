@@ -217,7 +217,7 @@ export class ClaimsService {
       throw new BadRequestException('shop_id is required');
     }
 
-    return this.claims.manager.transaction(async (manager) => {
+    const { completedClaim, ...result } = await this.claims.manager.transaction(async (manager) => {
       const claimRepo = manager.getRepository(Claim);
       const itemRepo = manager.getRepository(Item);
 
@@ -228,7 +228,8 @@ export class ClaimsService {
         .leftJoinAndSelect('claim.item', 'item')
         .leftJoinAndSelect('item.donor', 'donor')
         .leftJoinAndSelect('claim.collector', 'collector')
-        .where('item.id = :itemId', { itemId });
+        .where('item.id = :itemId', { itemId })
+        .andWhere('(item.approvedCollectorId IS NULL OR collector.id = item.approvedCollectorId)');
 
       if (!isAdmin && !isFacility && !isPartner && isCollector) {
         qb.andWhere('collector.id = :actorId', { actorId: actor.id });
@@ -288,6 +289,7 @@ export class ClaimsService {
           scan_result: 'already_completed',
           completed_at: completedAt.toISOString(),
           scan_events: events,
+          completedClaim: null,
         };
       }
 
@@ -334,26 +336,6 @@ export class ClaimsService {
         // Progress-update failures are tolerated by the existing completion flow.
       }
 
-      // Notifications: collection + drop-off
-      try {
-        const donorId = claim.item?.donor?.id;
-        const collectorId = claim.collector?.id;
-        if (donorId && collectorId) {
-          await this.notifications.notifyItemCollected(donorId, collectorId, claim.item.id, claim.item.title ?? undefined);
-        }
-        if (shopId) {
-          // Notify donor of drop-off
-          if (donorId) await this.notifications.notifyDropOff(donorId, claim.item.id, claim.item.title ?? undefined);
-          // Notify shop owner of drop-in
-          const shop = await this.shops.findOne({ where: { id: shopId }, relations: { owner: true } });
-          if (shop?.owner?.id && donorId) {
-            await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
-          }
-        }
-      } catch {
-        // Notification failures are tolerated by the existing collection flow.
-      }
-
       const events = await fetchScanEvents(manager, claim.item.id);
 
       return {
@@ -363,8 +345,12 @@ export class ClaimsService {
         scan_result: 'completed',
         completed_at: completionDate.toISOString(),
         scan_events: events,
+        completedClaim: claim,
       };
     });
+
+    if (completedClaim) await this.notifyClaimCollection(completedClaim, shopId);
+    return result;
   }
 
   // Manual completion without QR; allows donor or collector (and admin/facility/partner)
@@ -392,7 +378,7 @@ export class ClaimsService {
 
     const providedShopId = sanitizeShopId(rawShopId);
 
-    return this.claims.manager.transaction(async (manager) => {
+    const { completedClaim, ...result } = await this.claims.manager.transaction(async (manager) => {
       const claimRepo = manager.getRepository(Claim);
       const itemRepo = manager.getRepository(Item);
 
@@ -472,6 +458,7 @@ export class ClaimsService {
           scan_result: 'already_completed',
           completed_at: completedAt.toISOString(),
           scan_events: events,
+          completedClaim: null,
         };
       }
 
@@ -518,24 +505,6 @@ export class ClaimsService {
         // Progress-update failures are tolerated by the existing completion flow.
       }
 
-      // Notifications: collection + drop-off
-      try {
-        const donorId = claim.item?.donor?.id;
-        const collectorId = claim.collector?.id;
-        if (donorId && collectorId) {
-          await this.notifications.notifyItemCollected(donorId, collectorId, claim.item.id, claim.item.title ?? undefined);
-        }
-        if (providedShopId) {
-          if (donorId) await this.notifications.notifyDropOff(donorId, claim.item.id, claim.item.title ?? undefined);
-          const shop = await this.shops.findOne({ where: { id: providedShopId }, relations: { owner: true } });
-          if (shop?.owner?.id && donorId) {
-            await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
-          }
-        }
-      } catch {
-        // Notification failures are tolerated by the existing collection flow.
-      }
-
       const events = await fetchScanEvents(manager, claim.item.id);
       return {
         id: claim.id,
@@ -544,7 +513,34 @@ export class ClaimsService {
         scan_result: 'completed',
         completed_at: completionDate.toISOString(),
         scan_events: events,
+        completedClaim: claim,
       };
     });
+
+    if (completedClaim) await this.notifyClaimCollection(completedClaim, providedShopId);
+    return result;
+  }
+
+  private async notifyClaimCollection(claim: Claim, shopId: string): Promise<void> {
+    const donorId = claim.item.donor?.id;
+    if (!donorId) return;
+
+    const { id: itemId, title } = claim.item;
+    const collectorId = claim.collector?.id;
+    // Notification inserts use a separate connection and need the user locks released by commit.
+    try {
+      if (collectorId) {
+        await this.notifications.notifyItemCollected(donorId, collectorId, itemId, title ?? undefined);
+      }
+      if (shopId) {
+        await this.notifications.notifyDropOff(donorId, itemId, title ?? undefined);
+        const shop = await this.shops.findOne({ where: { id: shopId }, relations: { owner: true } });
+        if (shop?.owner?.id) {
+          await this.notifications.notifyDropIn(shop.owner.id, donorId, itemId, title ?? undefined);
+        }
+      }
+    } catch {
+      // Notification failures do not change an already committed collection.
+    }
   }
 }
