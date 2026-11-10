@@ -56,7 +56,7 @@ function fixture() {
       tail = task.then(() => undefined, () => undefined); return task;
     } };
   const gateway = { emitReadState: jest.fn().mockImplementation(async () => { expect(committed.length).toBeGreaterThan(0); }),
-    emitRoomCleared: jest.fn(), emitRoomDeleted: jest.fn() };
+    emitRoomCleared: jest.fn().mockResolvedValue(undefined), emitRoomDeleted: jest.fn().mockResolvedValue(undefined) };
   const service = new MessagesService(rooms as unknown as Repository<MessageRoom>, { manager, query } as unknown as Repository<Message>,
     {} as Repository<User>, {} as MessagesMediaService, {} as MessagesPresenceService, gateway as unknown as MessagesGateway);
   return { service, query, rooms, room, gateway, messages, receipts: () => receipts, failCommit: () => { failCommit = true; } };
@@ -99,6 +99,21 @@ describe('Explicit durable read acknowledgements', () => {
     const f = fixture(); await f.service.deleteRoomMessages(roomId, a); await f.service.deleteRoom(roomId, a);
     expect(f.rooms.findOne).toHaveBeenCalledTimes(2);
     for (const [options] of f.rooms.findOne.mock.calls) expect(options.lock.mode).toBe('pessimistic_write');
+    expect(f.gateway.emitRoomCleared).toHaveBeenCalledWith(roomId, [a, b]);
+    expect(f.gateway.emitRoomDeleted).toHaveBeenCalledWith(roomId, [a, b]);
+  });
+  it.each(['deleteRoomMessages', 'deleteRoom'] as const)('%s does not broadcast on denied access or a failed commit', async method => {
+    const f = fixture();
+    await expect(f.service[method](roomId, outsider)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(f.gateway.emitRoomCleared).not.toHaveBeenCalled(); expect(f.gateway.emitRoomDeleted).not.toHaveBeenCalled();
+    f.failCommit(); await expect(f.service[method](roomId, a)).rejects.toThrow('Synthetic commit failure');
+    expect(f.gateway.emitRoomCleared).not.toHaveBeenCalled(); expect(f.gateway.emitRoomDeleted).not.toHaveBeenCalled();
+  });
+  it.each(['deleteRoomMessages', 'deleteRoom'] as const)('%s keeps committed success when live delivery fails', async method => {
+    const f = fixture();
+    f.gateway.emitRoomCleared.mockRejectedValue(new Error('Synthetic delivery failure'));
+    f.gateway.emitRoomDeleted.mockRejectedValue(new Error('Synthetic delivery failure'));
+    await expect(f.service[method](roomId, a)).resolves.toBeUndefined();
   });
   it.each([{ values: [] }, { values: ['bad'] }, { values: Array.from({ length: 101 }, () => id(10)) }])('rejects bounded invalid input before opening a transaction', async ({ values }) => {
     const f = fixture(); await expect(f.service.acknowledgeRead(roomId, a, values)).rejects.toBeInstanceOf(BadRequestException);

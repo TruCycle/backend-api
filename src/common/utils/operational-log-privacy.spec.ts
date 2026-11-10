@@ -74,9 +74,10 @@ describe('Operational failure log containment (isolated mocks)', () => {
     await service.listForUser(secret); await service.createAndEmit(secret, 'general', secret, secret);
     expect(gateway.emitToUser).toHaveBeenCalled(); expectCleanLogs();
   });
-  it('contains asynchronous message upload failure and returns generic provider error', async () => {
-    jest.spyOn(cloudinary.uploader, 'upload_stream').mockImplementation(((_options: unknown, callback: unknown) => ({ end: () => (callback as (error: unknown) => void)(new Error(secret)) })) as never);
-    await expect(new MessagesMediaService().uploadImage(Buffer.from('synthetic'), secret)).rejects.toThrow('Failed to upload message image');
+  it('rejects unavailable attachments without sending or logging the private filename', async () => {
+    const upload = jest.spyOn(cloudinary.uploader, 'upload_stream');
+    await expect(new MessagesMediaService().uploadImage(Buffer.from('synthetic'), secret)).rejects.toThrow('Image attachments are unavailable');
+    expect(upload).not.toHaveBeenCalled();
     expectCleanLogs();
   });
   it('contains QR generation failure without content or stack', async () => {

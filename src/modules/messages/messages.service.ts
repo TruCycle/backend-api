@@ -215,22 +215,26 @@ export class MessagesService {
     authorId: string,
     dto: GeneralMessageDto,
   ): Promise<MessageViewModel> {
-    const room = await this.getRoomOrFail(roomId, authorId);
-    let message = this.messages.create({
-      room,
-      sender: { id: authorId } as User,
-      category: MessageCategory.GENERAL,
-      text: dto.text,
-      caption: dto.title ?? null,
-    });
-    message = await this.messages.save(message);
-    message = await this.messages.findOneOrFail({
-      where: { id: message.id },
-      relations: ['room', 'room.userOne', 'room.userTwo', 'sender'],
+    // General messages share the room lock with text/read/clear/delete. A
+    // pre-upload or pre-transaction membership check is not a write barrier.
+    const message = await this.messages.manager.transaction(async manager => {
+      const room = await this.lockReadableRoom(manager, roomId, authorId);
+      const messages = manager.getRepository(Message);
+      const saved = await messages.save(messages.create({
+        room, sender: { id: authorId } as User, category: MessageCategory.GENERAL,
+        text: dto.text, caption: dto.title ?? null,
+      }));
+      const persisted = await messages.findOneOrFail({
+        where: { id: saved.id }, loadEagerRelations: false,
+        loadRelationIds: { relations: ['room', 'sender'], disableMixedMap: true },
+      });
+      persisted.room = room;
+      await manager.getRepository(MessageRoom).update({ id: roomId }, { updatedAt: persisted.createdAt });
+      return persisted;
     });
     const view = this.mapMessageForUser(message, authorId);
-    await this.broadcastRealtimeMessage(message);
-    await this.touchRoom(room.id);
+    void this.broadcastRealtimeMessage(message)
+      .catch(error => this.logger.warn(safeFailure('message_realtime_delivery', error)));
     return view;
   }
 
@@ -353,23 +357,23 @@ export class MessagesService {
   }
 
   async deleteRoomMessages(roomId: string, userId: string): Promise<void> {
-    await this.messages.manager.transaction(async manager => {
-      await this.lockReadableRoom(manager, roomId, userId);
+    const participants = await this.messages.manager.transaction(async manager => {
+      const room = await this.lockReadableRoom(manager, roomId, userId);
       await manager.getRepository(Message).delete({ room: { id: roomId } });
+      return [room.userOne.id, room.userTwo.id];
     });
-    if (this.gateway) {
-      await this.gateway.emitRoomCleared(roomId);
-    }
+    if (this.gateway) void this.gateway.emitRoomCleared(roomId, participants)
+      .catch(error => this.logger.warn(safeFailure('message_clear_delivery', error)));
   }
 
   async deleteRoom(roomId: string, userId: string): Promise<void> {
-    await this.messages.manager.transaction(async manager => {
-      await this.lockReadableRoom(manager, roomId, userId);
+    const participants = await this.messages.manager.transaction(async manager => {
+      const room = await this.lockReadableRoom(manager, roomId, userId);
       await manager.getRepository(MessageRoom).delete({ id: roomId });
+      return [room.userOne.id, room.userTwo.id];
     });
-    if (this.gateway) {
-      await this.gateway.emitRoomDeleted(roomId);
-    }
+    if (this.gateway) void this.gateway.emitRoomDeleted(roomId, participants)
+      .catch(error => this.logger.warn(safeFailure('message_delete_delivery', error)));
   }
 
   private async lockReadableRoom(manager: EntityManager, roomId: string, userId: string): Promise<MessageRoom> {

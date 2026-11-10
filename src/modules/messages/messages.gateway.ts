@@ -9,14 +9,15 @@ import {
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
+  WsException,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Repository } from 'typeorm';
 
 import { SocketAccess } from '../../common/security/socket-access';
 import { safeFailure } from '../../common/utils/safe-log';
-import { User } from '../users/user.entity';
 import { AuthSessionsService } from '../auth/auth-sessions.service';
+import { User } from '../users/user.entity';
 
 import { MessagesPresenceService } from './messages-presence.service';
 import { MessagesService, MessageViewModel } from './messages.service';
@@ -140,52 +141,27 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (!payload?.roomId) {
       throw new BadRequestException('roomId is required');
     }
+    // Reject before decoding, provider work, or a partial text write.
+    // Legacy text-only clients include files: [], which remains supported.
+    if (payload.files !== undefined && (!Array.isArray(payload.files) || payload.files.length > 0)) {
+      throw new WsException({ status: 503, message: 'Image attachments are unavailable' });
+    }
 
     // Ensure the sender socket is in the room to receive room-scoped broadcasts
     await this.messages.getRoomOrFail(payload.roomId, userId);
     client.join(payload.roomId);
 
-    let primaryMessage: MessageViewModel | null = null;
-
-    // Optional direct text message (only when no files are attached)
-    if (payload.text && payload.text.trim() && !(Array.isArray(payload.files) && payload.files.length > 0)) {
-      primaryMessage = await this.messages.createDirectTextMessage(
-        payload.roomId,
-        userId,
-        payload.text,
-        payload.clientMessageId,
-      );
+    if (typeof payload.text !== 'string' || !payload.text.trim()) {
+      throw new BadRequestException('Message text is required');
     }
-
-    // Optional image attachments (multiple). Each attachment is emitted as its own message.
-    if (Array.isArray(payload.files) && payload.files.length > 0) {
-      let first = true;
-      for (const f of payload.files) {
-        if (!f?.data || !f?.type || !f?.name) continue;
-        if (!f.type.toLowerCase().startsWith('image/')) {
-          throw new BadRequestException('Only image files are permitted');
-        }
-        const buffer = Buffer.from(f.data, 'base64');
-        const view = await this.messages.sendImageMessage(payload.roomId, userId, {
-          buffer,
-          originalname: f.name,
-          mimetype: f.type,
-        } as any, { caption: first && payload.text ? payload.text.trim() : null } as any);
-        if (first && !primaryMessage) {
-          primaryMessage = view;
-        }
-        first = false;
-      }
-    }
-
-    if (!primaryMessage) {
-      throw new BadRequestException('Message text or an image is required');
-    }
+    const primaryMessage = await this.messages.createDirectTextMessage(
+      payload.roomId, userId, payload.text, payload.clientMessageId,
+    );
     return { event: 'message:sent', data: primaryMessage };
   }
 
-  async emitRoomCleared(roomId: string): Promise<void> {
-    const ids = await this.access.authorizedIds(undefined, roomId);
+  async emitRoomCleared(roomId: string, participantIds: string[]): Promise<void> {
+    const ids = await this.participantSocketIds(participantIds);
     if (ids.length) this.server.to(ids).emit('room:cleared', { roomId });
   }
 
@@ -194,9 +170,16 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (ids.length) this.server.to(ids).emit('messages:read', { roomId, unreadCount });
   }
 
-  async emitRoomDeleted(roomId: string): Promise<void> {
-    const ids = await this.access.authorizedIds(undefined, roomId);
+  async emitRoomDeleted(roomId: string, participantIds: string[]): Promise<void> {
+    const ids = await this.participantSocketIds(participantIds);
     if (ids.length) this.server.to(ids).emit('room:deleted', { roomId });
+  }
+
+  private async participantSocketIds(participantIds: string[]): Promise<string[]> {
+    // Account sockets need not have previously joined this conversation.
+    // Recheck current authorization before private outbound delivery.
+    const ids = await Promise.all([...new Set(participantIds)].map(userId => this.access.authorizedIds(userId)));
+    return [...new Set(ids.flat())];
   }
 
   private extractToken(client: Socket): string {

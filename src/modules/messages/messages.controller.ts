@@ -1,14 +1,17 @@
 import {
   Body,
+  CanActivate,
   Controller,
   Delete,
   Get,
   HttpCode,
+  Injectable,
   Param,
   ParseUUIDPipe,
   Post,
   Query,
   Req,
+  ServiceUnavailableException,
   UnauthorizedException,
   UploadedFile,
   UseGuards,
@@ -74,6 +77,15 @@ const roomExample = {
   createdAt: '2024-05-30T09:12:00.000Z',
   updatedAt: '2024-06-01T13:45:00.000Z',
 };
+
+// Runs after controller authentication and before multipart parsing.
+// Keep image ingress closed until private media delivery and cleanup exist.
+@Injectable()
+export class MessageAttachmentsUnavailableGuard implements CanActivate {
+  canActivate(): boolean {
+    throw new ServiceUnavailableException('Image attachments are unavailable');
+  }
+}
 
 @ApiTags('messages')
 @ApiBearerAuth()
@@ -176,6 +188,7 @@ export class MessagesController {
   }
 
   @Post('rooms/:roomId/messages/image')
+  @UseGuards(MessageAttachmentsUnavailableGuard)
   @UseInterceptors(FileInterceptor('image'))
   @ApiOperation({ summary: 'Send an image message to the room', operationId: 'sendImageMessage' })
   @ApiConsumes('multipart/form-data')
