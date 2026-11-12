@@ -227,7 +227,7 @@ describe('Migration release boundary (no database or migration imports)', () => 
     });
     const tracked = readdirSync(path.join(repoRoot, 'src/database/migrations')).filter((file) => /^\d{13}-.+\.ts$/.test(file)).sort();
     expect(paths).toEqual(tracked);
-    expect(paths).toHaveLength(32);
+    expect(paths).toHaveLength(33);
     const app = readFileSync(path.join(repoRoot, 'src/app.module.ts'), 'utf8');
     const runner = readFileSync(path.join(repoRoot, 'src/scripts/run-migrations.ts'), 'utf8');
     expect(app).toContain('migrations: migrationRegistry');

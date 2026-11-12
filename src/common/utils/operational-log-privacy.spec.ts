@@ -74,9 +74,9 @@ describe('Operational failure log containment (isolated mocks)', () => {
     await service.listForUser(secret); await service.createAndEmit(secret, 'general', secret, secret);
     expect(gateway.emitToUser).toHaveBeenCalled(); expectCleanLogs();
   });
-  it('rejects unavailable attachments without sending or logging the private filename', async () => {
+  it('rejects malformed attachments without sending or logging their contents', async () => {
     const upload = jest.spyOn(cloudinary.uploader, 'upload_stream');
-    await expect(new MessagesMediaService().uploadImage(Buffer.from('synthetic'), secret)).rejects.toThrow('Image attachments are unavailable');
+    await expect(new MessagesMediaService().prepareImage(Buffer.from(secret))).rejects.toThrow('Only JPEG, PNG and WebP images are accepted');
     expect(upload).not.toHaveBeenCalled();
     expectCleanLogs();
   });

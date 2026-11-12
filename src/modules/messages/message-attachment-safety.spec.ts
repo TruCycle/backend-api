@@ -1,7 +1,8 @@
 import 'reflect-metadata';
 import { v2 as cloudinary } from 'cloudinary';
+import sharp from 'sharp';
 
-import { CanActivate, HttpServer, NestInterceptor, RequestMethod, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { CanActivate, HttpServer, NestInterceptor, RequestMethod, UnauthorizedException } from '@nestjs/common';
 import { GUARDS_METADATA, INTERCEPTORS_METADATA } from '@nestjs/common/constants';
 import { GuardsConsumer } from '@nestjs/core/guards/guards-consumer';
 import { InterceptorsConsumer } from '@nestjs/core/interceptors/interceptors-consumer';
@@ -17,7 +18,7 @@ import { SocketAccess } from '../../common/security/socket-access';
 import { sessionAccessStub, syntheticSessionId } from '../../testing/session-access-stub.test-support';
 import { User, UserStatus } from '../users/user.entity';
 
-import { MessagesMediaService } from './messages-media.service';
+import { MAX_MESSAGE_IMAGE_BYTES, MessagesMediaService } from './messages-media.service';
 import { MessagesPresenceService } from './messages-presence.service';
 import { MessageAttachmentsUnavailableGuard, MessagesController } from './messages.controller';
 import { MessagesGateway } from './messages.gateway';
@@ -50,7 +51,14 @@ function restPipeline(authenticate: CanActivate) {
   return { route: execution.create(controller, callback, 'sendImageMessage', 'synthetic-module', RequestMethod.POST), parser, guardCall };
 }
 
-describe('Attachment ingress remains unavailable without private media delivery', () => {
+describe('Private attachment safety', () => {
+  const previous = process.env.MESSAGE_ATTACHMENTS_ENABLED;
+  beforeEach(() => { delete process.env.MESSAGE_ATTACHMENTS_ENABLED; });
+  afterEach(() => {
+    if (previous === undefined) delete process.env.MESSAGE_ATTACHMENTS_ENABLED;
+    else process.env.MESSAGE_ATTACHMENTS_ENABLED = previous;
+  });
+
   it('rejects authenticated REST image requests before the real multipart interceptor executes', async () => {
     const authenticate = { canActivate: jest.fn().mockReturnValue(true) };
     const { route, parser, guardCall } = restPipeline(authenticate);
@@ -68,11 +76,33 @@ describe('Attachment ingress remains unavailable without private media delivery'
     expect(guardCall).not.toHaveBeenCalled(); expect(parser).not.toHaveBeenCalled();
   });
 
-  it('never configures or contacts Cloudinary, even when called beneath transport guards', async () => {
+  it('opens authenticated multipart only when the pilot is explicitly enabled', () => {
+    process.env.MESSAGE_ATTACHMENTS_ENABLED = 'true';
+    expect(new MessageAttachmentsUnavailableGuard().canActivate()).toBe(true);
+  });
+
+  it('re-encodes a valid image without metadata or public storage', async () => {
     const media = new MessagesMediaService();
-    await expect(media.uploadImage(Buffer.from('synthetic-image'), 'synthetic.png')).rejects.toBeInstanceOf(ServiceUnavailableException);
+    const source = await sharp({ create: { width: 10, height: 12, channels: 3, background: '#123456' } })
+      .jpeg().withMetadata({ orientation: 6 }).toBuffer();
+    const prepared = await media.prepareImage(source);
+    expect(prepared.contentType).toBe('image/webp');
+    expect(prepared.sourceDigest).toHaveLength(32);
+    const output = await sharp(prepared.payload).metadata();
+    expect(output).toMatchObject({ format: 'webp', width: 12, height: 10 });
+    expect(output.exif).toBeUndefined();
     expect(cloudinary.config).not.toHaveBeenCalled();
     expect(cloudinary.uploader.upload_stream).not.toHaveBeenCalled();
+  });
+
+  it('rejects spoofed, malformed, oversized and excessive-dimension input', async () => {
+    const media = new MessagesMediaService();
+    const tooWide = await sharp({ create: { width: 2049, height: 1, channels: 3, background: '#123456' } })
+      .png().toBuffer();
+    await expect(media.prepareImage(Buffer.from('<svg/>'))).rejects.toMatchObject({ status: 400 });
+    await expect(media.prepareImage(Buffer.from([255, 216, 255]))).rejects.toMatchObject({ status: 400 });
+    await expect(media.prepareImage(Buffer.alloc(MAX_MESSAGE_IMAGE_BYTES + 1))).rejects.toMatchObject({ status: 413 });
+    await expect(media.prepareImage(tooWide)).rejects.toMatchObject({ status: 400 });
   });
 
   function socketFixture() {

@@ -7,6 +7,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  PayloadTooLargeException,
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -22,7 +23,7 @@ import { MessagesGateway } from './messages.gateway';
 import { SendImageMessageDto } from './dto/send-image-message.dto';
 import { GeneralMessageDto } from './dto/general-message.dto';
 import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
-import { User } from '../users/user.entity';
+import { User, UserStatus } from '../users/user.entity';
 import { INSERT_READ_RECEIPTS_SQL, UNREAD_COUNTS_SQL } from './message-read-state';
 
 export type MessageDirection = 'incoming' | 'outgoing' | 'general';
@@ -37,6 +38,7 @@ export interface MessageViewModel {
   direction: MessageDirection;
   category: MessageCategory;
   imageUrl: string | null;
+  hasAttachment: boolean;
   caption: string | null;
   text: string | null;
   createdAt: Date;
@@ -182,32 +184,77 @@ export class MessagesService {
     file: Express.Multer.File | undefined,
     dto: SendImageMessageDto,
   ): Promise<MessageViewModel> {
-    const room = await this.getRoomOrFail(roomId, senderId);
-    if (!file) {
-      throw new BadRequestException('An image file is required');
-    }
-    if (!file.mimetype.startsWith('image/')) {
-      throw new BadRequestException('Only image files are permitted');
-    }
+    await this.getRoomOrFail(roomId, senderId);
+    if (!file) throw new BadRequestException('An image file is required');
+    const { payload, contentType, sourceDigest } = await this.media.prepareImage(file.buffer);
+    const id = dto.clientMessageId.toLowerCase();
+    const caption = dto.caption ?? null;
+    const result = await this.messages.manager.transaction(async manager => {
+      const room = await this.lockReadableRoom(manager, roomId, senderId);
+      await this.requireActiveAttachmentAccount(manager, senderId);
+      const messages = manager.getRepository(Message);
+      const inserted = await messages.createQueryBuilder().insert().values({
+        id, room: { id: roomId }, sender: { id: senderId }, category: MessageCategory.DIRECT,
+        text: null, caption, imageUrl: null, hasAttachment: true, createdAt: () => 'clock_timestamp()',
+      }).orIgnore().returning(['id']).execute();
+      const created = inserted.raw.length > 0;
+      const message = await messages.findOneOrFail({
+        where: { id }, loadEagerRelations: false,
+        loadRelationIds: { relations: ['room', 'sender'], disableMixedMap: true },
+      });
+      if (message.room.id !== roomId || message.sender?.id !== senderId ||
+          !message.hasAttachment || message.caption !== caption) {
+        throw new ConflictException('Message request conflicts with an existing message');
+      }
+      message.room = room;
 
-    const url = await this.media.uploadImage(file.buffer, file.originalname);
-    let message = this.messages.create({
-      room,
-      sender: { id: senderId } as User,
-      category: MessageCategory.DIRECT,
-      imageUrl: url,
-      caption: dto.caption ?? null,
-    });
-    message = await this.messages.save(message);
-    message = await this.messages.findOneOrFail({
-      where: { id: message.id },
-      relations: ['room', 'room.userOne', 'room.userTwo', 'sender'],
-    });
+      if (!created) {
+        const previous: Array<{ matches: boolean }> = await manager.query(
+          'SELECT source_digest = $2 AS matches FROM public.message_attachment WHERE message_id = $1',
+          [id, sourceDigest],
+        );
+        if (!previous[0]?.matches) throw new ConflictException('Message request conflicts with an existing message');
+        return { message, created };
+      }
 
-    const senderView = this.mapMessageForUser(message, senderId);
-    await this.broadcastRealtimeMessage(message);
-    await this.touchRoom(room.id);
-    return senderView;
+      // Every attachment writer takes the same transaction lock. Use a separate
+      // statement for totals so READ COMMITTED sees earlier committed writers.
+      await manager.query("SELECT pg_advisory_xact_lock(hashtext('trucycle'), hashtext('message-attachment-quota'))");
+      const [usage]: Array<{ total: string; uploader: string }> = await manager.query(`SELECT
+        coalesce(sum(byte_count), 0) AS total,
+        coalesce(sum(byte_count) FILTER (WHERE uploader_id = $1), 0) AS uploader
+        FROM public.message_attachment`, [senderId]);
+      if (Number(usage.total) + payload.length > 256 * 1024 * 1024 ||
+          Number(usage.uploader) + payload.length > 8 * 1024 * 1024) {
+        throw new PayloadTooLargeException('Image storage limit reached');
+      }
+      await manager.query(`INSERT INTO public.message_attachment
+        (message_id, uploader_id, content_type, payload, byte_count, source_digest)
+        VALUES ($1, $2, $3, $4, $5, $6)`, [id, senderId, contentType, payload, payload.length, sourceDigest]);
+      await manager.getRepository(MessageRoom).update({ id: roomId }, { updatedAt: message.createdAt });
+      return { message, created };
+    });
+    if (result.created) void this.broadcastRealtimeMessage(result.message)
+      .catch(error => this.logger.warn(safeFailure('message_realtime_delivery', error)));
+    return this.mapMessageForUser(result.message, senderId);
+  }
+
+  async getImageAttachment(roomId: string, messageId: string, userId: string) {
+    return this.messages.manager.transaction(async manager => {
+      await this.lockReadableRoom(manager, roomId, userId);
+      await this.requireActiveAttachmentAccount(manager, userId);
+      const [attachment]: Array<{ payload: Buffer; content_type: string }> = await manager.query(`SELECT a.payload, a.content_type
+        FROM public.message_attachment a JOIN public.message m ON m.id = a.message_id
+        WHERE m."roomId" = $1 AND m.id = $2`, [roomId, messageId]);
+      if (!attachment) throw new NotFoundException('Image attachment not found');
+      return attachment;
+    });
+  }
+
+  private async requireActiveAttachmentAccount(manager: EntityManager, userId: string): Promise<void> {
+    if (!await manager.getRepository(User).existsBy({ id: userId, status: UserStatus.ACTIVE })) {
+      throw new ForbiddenException('You do not have access to this attachment');
+    }
   }
 
   async createGeneralMessage(
@@ -265,7 +312,7 @@ export class MessagesService {
       const message = await messages.findOneOrFail({ where: { id }, loadEagerRelations: false,
         loadRelationIds: { relations: ['room', 'sender'], disableMixedMap: true } });
       if (message.room.id !== roomId || message.sender?.id !== authorId || message.text !== body ||
-          message.category !== MessageCategory.DIRECT || message.imageUrl || message.caption) {
+          message.category !== MessageCategory.DIRECT || message.hasAttachment || message.imageUrl || message.caption) {
         throw new ConflictException('Message request conflicts with an existing message');
       }
       message.room = room;
@@ -444,6 +491,7 @@ export class MessagesService {
       direction,
       category: message.category,
       imageUrl: message.imageUrl ?? null,
+      hasAttachment: message.hasAttachment === true,
       caption: message.caption ?? null,
       text: message.text ?? null,
       createdAt: message.createdAt,
@@ -468,7 +516,4 @@ export class MessagesService {
     await this.gateway.broadcastMessage(message.room.id, payloads);
   }
 
-  private async touchRoom(roomId: string): Promise<void> {
-    await this.rooms.update({ id: roomId }, { updatedAt: new Date() });
-  }
 }

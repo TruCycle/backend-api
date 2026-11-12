@@ -28,9 +28,9 @@ describe.each(['named', 'email-only'])('Chat identity privacy: %s accounts', (pr
   let query: ReturnType<typeof queryMock>;
   const rooms = { findOne: jest.fn(), find: jest.fn(), create: jest.fn(), save: jest.fn(), update: jest.fn() };
   const messages = { query: jest.fn().mockResolvedValue([]), createQueryBuilder: jest.fn(), create: jest.fn(), save: jest.fn(), findOneOrFail: jest.fn(), findOne: jest.fn() };
-  const users = { findBy: jest.fn() };
+  const users = { findBy: jest.fn(), existsBy: jest.fn() };
   const gateway = { broadcastMessage: jest.fn() };
-  const media = { uploadImage: jest.fn() };
+  const media = { prepareImage: jest.fn() };
 
   function assertNoAccountNames(value: unknown) {
     expect(JSON.stringify(value)).not.toMatch(/PRIVATE_FIRST|PRIVATE_LAST|private-email/);
@@ -58,16 +58,23 @@ describe.each(['named', 'email-only'])('Chat identity privacy: %s accounts', (pr
     rooms.create.mockImplementation((value: Partial<MessageRoom>) => value);
     rooms.save.mockResolvedValue(room); rooms.update.mockResolvedValue({ affected: 1 });
     users.findBy.mockResolvedValue(people);
+    users.existsBy.mockResolvedValue(true);
     query = queryMock(); query.getOne.mockResolvedValue(message); query.getMany.mockResolvedValue([message]);
     Object.assign(query, { insert: jest.fn().mockReturnThis(), orIgnore: jest.fn().mockReturnThis(), returning: jest.fn().mockReturnThis(),
-      values: jest.fn().mockImplementation((value: Partial<Message>) => { message.id = value.id!; message.text = value.text; return query; }),
+      values: jest.fn().mockImplementation((value: Partial<Message>) => {
+        Object.assign(message, { id: value.id, text: value.text, caption: value.caption, hasAttachment: value.hasAttachment });
+        return query;
+      }),
       execute: jest.fn().mockImplementation(async () => ({ raw: [{ id: message.id }] })) });
-    const manager = { getRepository: (entity: unknown) => entity === MessageRoom ? rooms : messages };
+    const manager = {
+      getRepository: (entity: unknown) => entity === MessageRoom ? rooms : entity === User ? users : messages,
+      query: jest.fn().mockResolvedValue([{ total: '0', uploader: '0' }]),
+    };
     Object.assign(messages, { manager: { transaction: async (work: (tx: unknown) => Promise<unknown>) => work(manager) } });
     messages.createQueryBuilder.mockReturnValue(query);
     messages.create.mockImplementation((value: Partial<Message>) => value);
     messages.save.mockResolvedValue(message); messages.findOneOrFail.mockResolvedValue(message);
-    media.uploadImage.mockResolvedValue('https://example.test/synthetic-image.png');
+    media.prepareImage.mockResolvedValue({ payload: Buffer.from('synthetic'), contentType: 'image/webp', sourceDigest: Buffer.alloc(32) });
     const moduleRef = await Test.createTestingModule({ providers: [MessagesService,
       { provide: getRepositoryToken(MessageRoom), useValue: rooms },
       { provide: getRepositoryToken(Message), useValue: messages },
@@ -120,7 +127,7 @@ describe.each(['named', 'email-only'])('Chat identity privacy: %s accounts', (pr
         ? await service.createGeneralMessage(room.id, 'member-a', { text: message.text! })
         : await service.sendImageMessage(room.id, 'member-a', {
           buffer: Buffer.from('synthetic'), mimetype: 'image/png', originalname: 'synthetic.png',
-        } as Express.Multer.File, {});
+        } as Express.Multer.File, { clientMessageId: '4558a547-982f-4e9a-bff7-62c08607a0fc' });
     assertLabel(result.sender); assertNoAccountNames(result);
     const [broadcastRoom, payloads] = gateway.broadcastMessage.mock.calls[0] as [string, Array<{
       userId: string; message: typeof result;
@@ -131,6 +138,10 @@ describe.each(['named', 'email-only'])('Chat identity privacy: %s accounts', (pr
       kind === 'general' ? ['general', 'general'] : ['outgoing', 'incoming'],
     );
     payloads.forEach(({ message: view }) => assertLabel(view.sender));
+    if (kind === 'image') {
+      expect(result).toMatchObject({ hasAttachment: true, imageUrl: null });
+      expect(payloads.every(({ message: view }) => view.hasAttachment && view.imageUrl === null)).toBe(true);
+    }
     assertNoAccountNames(payloads);
     expect(rooms.update).toHaveBeenCalledWith({ id: room.id }, { updatedAt: expect.any(Date) });
   });
