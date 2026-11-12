@@ -21,7 +21,7 @@ interface WelcomeEmailTemplateParams {
 interface PasswordResetSuccessTemplateParams {
   firstName?: string | null;
   supportEmail?: string;
-  loginUrl: string;
+  loginUrl?: string;
 }
 
 interface FeedbackEmailTemplateParams {
@@ -194,7 +194,7 @@ export function buildPasswordResetSuccessEmailTemplate({
 }: PasswordResetSuccessTemplateParams): string {
   const safeName = firstName ? escapeHtml(firstName) : '';
   const safeSupportEmail = escapeHtml(supportEmail || 'support@trucycle.co.uk');
-  const safeLoginUrl = escapeHtml(loginUrl);
+  const safeLoginUrl = loginUrl ? escapeHtml(loginUrl) : null;
 
   return buildBrandedEmailLayout({
     bodyHtml: `
@@ -204,9 +204,9 @@ export function buildPasswordResetSuccessEmailTemplate({
         For more information or assistance, send an email to<br />
         <a href="mailto:${safeSupportEmail}" style="color:#22c55e;text-decoration:none">${safeSupportEmail}</a>
       </p>
-      <p style="margin:0 0 40px">
+      ${safeLoginUrl ? `<p style="margin:0 0 40px">
         <a href="${safeLoginUrl}" target="_blank" style="display:inline-block;background:#8be28f;color:#1d2330;text-decoration:none;padding:12px 32px;border-radius:8px;font-size:16px;line-height:1.2;font-weight:600">Login</a>
-      </p>
+      </p>` : ''}
       <p style="margin:0;font-size:16px;line-height:1.5;color:#64748b">Best,<br />TruCycle Team</p>
     `,
   });

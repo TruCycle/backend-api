@@ -267,12 +267,7 @@ export class AuthService {
       user = await this.users.save(created);
       const role = await this.getOrCreateRole(RoleCode.CUSTOMER);
       await this.userRoles.save(this.userRoles.create({ user, role }));
-      // Best-effort welcome; never block sign-in on email delivery.
-      try {
-        await this.sendWelcomeEmail(user);
-      } catch {
-        /* ignore */
-      }
+      await this.sendWelcomeEmail(user);
     }
 
     const tokens = await this.sessions.create(user.id, { googleId });
@@ -299,18 +294,26 @@ export class AuthService {
     // APP_BASE_URL may point to the API; activation links must target the frontend.
     const appBase = frontendOrigin();
     if (!appBase) return { status: 'unavailable' as const };
-    const verifyToken = await this.jwt.signAsync(
-      { sub: user.id, email: user.email, type: 'verify' },
-      { expiresIn: '24h' },
-    );
-    const verifyUrl = `${appBase.replace(/\/$/, '')}/auth/verify-email?token=${encodeURIComponent(verifyToken)}`;
-    const html = buildVerifyEmailTemplate({ firstName: user.firstName, verifyUrl });
-    return this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
+    try {
+      const verifyToken = await this.jwt.signAsync(
+        { sub: user.id, email: user.email, type: 'verify' },
+        { expiresIn: '24h' },
+      );
+      const verifyUrl = `${appBase}/auth/verify-email?token=${encodeURIComponent(verifyToken)}`;
+      const html = buildVerifyEmailTemplate({ firstName: user.firstName, verifyUrl });
+      return await this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
+    } catch {
+      return { status: 'failed' as const };
+    }
   }
 
   private async sendWelcomeEmail(user: User) {
-    const html = buildWelcomeEmailTemplate({ firstName: user.firstName });
-    await this.email.sendEmail({ to: user.email, subject: 'Welcome to TruCycle', html });
+    try {
+      const html = buildWelcomeEmailTemplate({ firstName: user.firstName });
+      await this.email.sendEmail({ to: user.email, subject: 'Welcome to TruCycle', html });
+    } catch {
+      // An optional welcome notice must not turn committed registration into a failure.
+    }
   }
 
   async getBasicProfileById(id: string) {
@@ -348,9 +351,7 @@ export class AuthService {
     // Look up user; avoid leaking existence or state
     const user = await this.users.findOne({ where: { email: normalizedEmail } });
     if (user && user.status === UserStatus.PENDING) {
-      try { await this.sendVerificationEmail(user); } catch {
-        // Keep the public response identical even if token generation is unavailable.
-      }
+      await this.sendVerificationEmail(user);
     }
     // Always return success from controller to prevent user enumeration
   }
@@ -437,20 +438,34 @@ export class AuthService {
 
     // Optional: notify user about password change
     try {
-      const appBase = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
-      const loginUrl = process.env.LOGIN_URL || `${appBase}/login`;
       await this.email.sendEmail({
         to: user.email,
         subject: 'Your password has been reset',
         html: buildPasswordResetSuccessEmailTemplate({
           firstName: user.firstName,
           supportEmail: process.env.SUPPORT_EMAIL,
-          loginUrl,
+          loginUrl: this.passwordResetLoginUrl(),
         }),
       });
     } catch {
       // Non-fatal if email fails
     }
+  }
+
+  private passwordResetLoginUrl(): string | undefined {
+    const origin = frontendOrigin();
+    if (!origin) return undefined;
+    const defaultUrl = `${origin}/login`;
+    const override = process.env.LOGIN_URL;
+    if (override) {
+      try {
+        const url = new URL(override, origin);
+        if (url.protocol === new URL(origin).protocol && url.origin === origin && !url.username && !url.password) return url.href;
+      } catch {
+        // Keep the frontend login link when an override is malformed.
+      }
+    }
+    return defaultUrl;
   }
 
   private viewShop(s: Shop) {

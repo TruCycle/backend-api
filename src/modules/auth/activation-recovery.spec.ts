@@ -65,9 +65,9 @@ describe('Activation recovery with synthetic repositories only', () => {
   const roles = { findOne: jest.fn() }; const links = { find: jest.fn(), create: jest.fn(), save: jest.fn() };
   const jwt = { signAsync: jest.fn(), verifyAsync: jest.fn(), decode: jest.fn() }; const sendEmail = jest.fn();
   let service: AuthService;
-  const sessions = { create: jest.fn().mockResolvedValue({ accessToken: 'ACCESS_SYNTHETIC', refreshToken: 'REFRESH_SYNTHETIC' }) };
+  const sessions = { create: jest.fn().mockResolvedValue({ accessToken: 'ACCESS_SYNTHETIC', refreshToken: 'REFRESH_SYNTHETIC' }), revokeAllInTransaction: jest.fn() };
   beforeEach(() => {
-    original = { ...process.env }; delete process.env.FRONTEND_BASE_URL; delete process.env.AUTH_RESET_EMAIL_LIMITS; jest.resetAllMocks();
+    original = { ...process.env }; delete process.env.FRONTEND_BASE_URL; delete process.env.LOGIN_URL; delete process.env.AUTH_RESET_EMAIL_LIMITS; jest.resetAllMocks();
     users.findOne.mockResolvedValue({ ...user }); users.create.mockImplementation((value) => value); users.save.mockImplementation(async (value) => ({ ...value, id: user.id }));
     roles.findOne.mockResolvedValue({ id: 'role', code: RoleCode.CUSTOMER }); links.find.mockResolvedValue([{ role: { code: RoleCode.CUSTOMER } }]); links.create.mockImplementation((value) => value);
     const manager = { queryRunner: { isTransactionActive: true }, getRepository: (entity: unknown) => entity === User ? users : links };
@@ -75,7 +75,7 @@ describe('Activation recovery with synthetic repositories only', () => {
     sessions.create.mockResolvedValue({ accessToken: 'ACCESS_SYNTHETIC', refreshToken: 'REFRESH_SYNTHETIC' });
     jwt.signAsync.mockResolvedValue('SYNTHETIC_TOKEN'); jwt.decode.mockReturnValue({ exp: 2000000000 }); jwt.verifyAsync.mockResolvedValue({ sub: user.id, email: user.email, type: 'verify', exp: Math.floor(Date.now() / 1000) + 3600 });
     sendEmail.mockResolvedValue({ status: 'accepted' });
-    service = new AuthService(users as unknown as Repository<User>, roles as unknown as Repository<Role>, links as unknown as Repository<UserRole>, {} as Repository<Shop>, {} as Repository<KycProfile>, { hash: jest.fn().mockResolvedValue('synthetic-hash') } as unknown as PasswordService, jwt as unknown as JwtService, { sendEmail } as unknown as EmailService, sessions as unknown as AuthSessionsService, {} as ItemGeocodingService);
+    service = new AuthService(users as unknown as Repository<User>, roles as unknown as Repository<Role>, links as unknown as Repository<UserRole>, {} as Repository<Shop>, {} as Repository<KycProfile>, { hash: jest.fn().mockResolvedValue('synthetic-hash'), compare: jest.fn().mockResolvedValue(true) } as unknown as PasswordService, jwt as unknown as JwtService, { sendEmail } as unknown as EmailService, sessions as unknown as AuthSessionsService, {} as ItemGeocodingService);
   });
   afterEach(() => { process.env = original; jest.restoreAllMocks(); });
   function configureResetEmailLimits() {
@@ -225,6 +225,37 @@ describe('Activation recovery with synthetic repositories only', () => {
     users.findOne.mockImplementation(async ({ where }: { where: { email?: string; id?: string } }) => where.email ? null : { ...user }); sendEmail.mockResolvedValue({ status: 'rejected' });
     const result = await new AuthController(service, new AuthResetEmailLimiter()).register({ email: user.email, password: 'synthetic-only', first_name: 'Synthetic', last_name: 'User' });
     expect(result.data.verificationDelivery).toEqual({ status: 'rejected' }); expect(result.data.user.status).toBe(UserStatus.PENDING); expect(JSON.stringify(result)).not.toContain('SYNTHETIC_TOKEN');
+  });
+  it('returns a committed pending account when verification signing and welcome delivery throw', async () => {
+    users.findOne.mockImplementation(async ({ where }: { where: { email?: string; id?: string } }) => where.email ? null : { ...user });
+    jwt.signAsync.mockRejectedValue(new Error('PRIVATE_SIGNING_ERROR'));
+    sendEmail.mockRejectedValue(new Error('PRIVATE_PROVIDER_ERROR'));
+    const result = await service.register(user.email, 'synthetic-only');
+    expect(result.user.status).toBe(UserStatus.PENDING);
+    expect(result.verificationDelivery).toEqual({ status: 'failed' });
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Welcome to TruCycle' }));
+    expect(users.save).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    [undefined, undefined, 'https://trucycle.co.uk/login'],
+    ['https://staging.example.invalid/path', undefined, 'https://staging.example.invalid/login'],
+    ['https://staging.example.invalid', 'https://api.example.invalid/login', 'https://staging.example.invalid/login'],
+    ['https://staging.example.invalid', '/sign-in', 'https://staging.example.invalid/sign-in'],
+    ['javascript:alert(1)', undefined, undefined],
+  ])('uses the configured frontend for reset notices (%s, %s)', async (frontend, override, expected) => {
+    process.env.APP_BASE_URL = 'https://api.example.invalid';
+    if (frontend) process.env.FRONTEND_BASE_URL = frontend;
+    if (override) process.env.LOGIN_URL = override;
+    users.findOne.mockImplementation(async () => ({ ...user, status: UserStatus.ACTIVE,
+      resetOtpHash: 'valid-synthetic-code', resetOtpExpiresAt: new Date(Date.now() + 60_000) }));
+    await service.resetPassword(user.email, '123456', 'synthetic-only');
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    const { html } = sendEmail.mock.calls[0][0];
+    if (expected) expect(html).toContain(`href="${expected}"`);
+    else expect(html).not.toContain('>Login</a>');
+    expect(html).not.toContain('https://api.example.invalid/login');
+    expect(html).toContain('Your password has been reset');
   });
   it('activates pending once and makes still-valid repeated links idempotent', async () => {
     const pending = { ...user }; users.findOne.mockResolvedValue(pending); await service.verifyUser('synthetic'); await service.verifyUser('synthetic');
