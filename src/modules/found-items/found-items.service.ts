@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, LessThanOrEqual, Repository } from 'typeorm';
+import { In, IsNull, LessThanOrEqual, MoreThan, Not, Repository } from 'typeorm';
 
 import { normalizePostcode, resolveOutwardPostcode } from '../../common/utils/postcode';
 import { projectFoundItemLocation, publicLocationPoint, validLocationPoint } from '../../common/utils/public-location';
@@ -521,14 +521,21 @@ export class FoundItemsService {
     return { success: true };
   }
 
-  private async withItemLock<T>(id: string, operation: (service: FoundItemsService) => Promise<T>): Promise<T> {
+  private async withItemLock<T>(
+    id: string,
+    operation: (service: FoundItemsService) => Promise<T>,
+    onMissing?: () => T,
+  ): Promise<T> {
     const effects: (() => Promise<void>)[] = [];
     const result = await this.foundItems.manager.transaction(async (manager) => {
       const items = manager.getRepository(FoundItem);
       // Every mutation takes this lock first, including claim creation and cancellation.
       // No external I/O is performed while the parent item is locked.
       const item = await items.findOne({ where: { id: id.trim() }, lock: { mode: 'pessimistic_write' } });
-      if (!item) throw new NotFoundException('Found item not found');
+      if (!item) {
+        if (onMissing) return onMissing();
+        throw new NotFoundException('Found item not found');
+      }
       const scoped = new FoundItemsService(items, manager.getRepository(FoundItemClaim),
         manager.getRepository(FoundItemReport), manager.getRepository(User), this.geocoding,
         this.notifications, this.notificationsGateway, this.gamification, manager.getRepository(FoundItemObservation));
@@ -622,22 +629,29 @@ export class FoundItemsService {
   async processLifecycle(now = new Date(), limit = 100): Promise<{ nudged: number; expired: number }> {
     const result = { nudged: 0, expired: 0 };
     const active = In([FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED]);
+    const nudgeBefore = new Date(now.getTime() - this.lifecyclePolicy.nudgeHours * 3600000);
     const candidates = await this.foundItems.find({ where: [
-      { status: active, expiresAt: LessThanOrEqual(now) },
-      { status: active, expiryNudgedAt: IsNull(), lastSeenAt: LessThanOrEqual(new Date(now.getTime() - this.lifecyclePolicy.nudgeHours * 3600000)) },
+      { status: active, expiresAt: LessThanOrEqual(now), lastSeenAt: Not(IsNull()) },
+      { status: active, expiresAt: MoreThan(now), expiryNudgedAt: IsNull(), lastSeenAt: LessThanOrEqual(nudgeBefore) },
     ], order: { id: 'ASC' }, take: Math.min(Math.max(limit, 1), 100) });
     for (const candidate of candidates) {
-      await this.withItemLock(candidate.id, async (scoped) => {
+      const outcome = await this.withItemLock<keyof typeof result | null>(candidate.id, async (scoped) => {
         const item = await scoped.foundItems.findOne({ where: { id: candidate.id } });
-        if (!item || ![FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED].includes(item.status) || !item.lastSeenAt || !item.expiresAt) return;
+        if (!item || ![FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED].includes(item.status) || !item.lastSeenAt || !item.expiresAt) return null;
         if (item.expiresAt <= now) {
-          await scoped.closeWithoutPickup(item, FoundItemStatus.EXPIRED, now); result.expired += 1;
-        } else if (!item.expiryNudgedAt && item.lastSeenAt.getTime() <= now.getTime() - scoped.lifecyclePolicy.nudgeHours * 3600000) {
-          item.expiryNudgedAt = now; await scoped.foundItems.save(item); result.nudged += 1;
+          await scoped.closeWithoutPickup(item, FoundItemStatus.EXPIRED, now);
+          return 'expired';
+        }
+        if (!item.expiryNudgedAt && item.lastSeenAt <= nudgeBefore) {
+          item.expiryNudgedAt = now;
+          await scoped.foundItems.save(item);
           scoped.afterCommit.push(async () => { await scoped.notifications.createAndEmit(item.posterId, 'general', 'Is your spot still there?',
             'Reconfirm your spot if it is still available. Otherwise it will expire at its scheduled expiry.', { foundItemId: item.id }); });
+          return 'nudged';
         }
-      });
+        return null;
+      }, () => null);
+      if (outcome) result[outcome] += 1;
     }
     return result;
   }

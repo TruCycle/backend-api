@@ -224,6 +224,16 @@ describe('Found-item lifecycle (isolated repositories and providers)', () => {
     expect(await service.processLifecycle()).toEqual({nudged:0,expired:0});
     expect(items.save).not.toHaveBeenCalled();
   });
+  it('continues a bounded sweep when a selected row disappears before the lock', async () => {
+    const missingId = 'deleted-after-enumeration';
+    item.lastSeenAt = new Date('2026-11-01T00:00:00Z');
+    item.expiresAt = new Date('2026-11-08T00:00:00Z');
+    items.find.mockResolvedValue([{ id: missingId }, item]);
+    items.findOne.mockImplementation(async ({ where }) => where.id === missingId ? null : item);
+    await expect(service.processLifecycle(new Date('2026-11-08T00:00:00Z'))).resolves.toEqual({ nudged: 0, expired: 1 });
+    expect(item.status).toBe(FoundItemStatus.EXPIRED);
+    expect(items.save).toHaveBeenCalledTimes(1);
+  });
   it('every mutation acquires the parent pessimistic lock before writes', async () => {
     await service.updateStatus('owner', item.id, {status:FoundItemStatus.GONE});
     expect(items.findOne.mock.calls[0][0]).toEqual({where:{id:item.id},lock:{mode:'pessimistic_write'}});
