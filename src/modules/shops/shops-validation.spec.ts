@@ -4,7 +4,7 @@ import { validate } from 'class-validator';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 
 import { GeoService } from '../../geo/geo.service';
-import { Claim } from '../claims/claim.entity';
+import { Claim, ClaimStatus } from '../claims/claim.entity';
 import { ItemGeocodingService } from '../items/item-geocoding.service';
 import { Item } from '../items/item.entity';
 import { RoleCode } from '../users/role.entity';
@@ -58,7 +58,11 @@ function fixture() {
     save: jest.fn(async (shop: Shop) => { const index = rows.findIndex(row => row.id === shop.id); if (index < 0) rows.push(shop); else rows[index] = shop; return shop; }),
     count: jest.fn(async () => rows.filter(shop => shop.active).length), manager: {} as EntityManager,
   };
-  const transaction = { queryRunner: { isTransactionActive: true }, getRepository: (entity: unknown) => entity === User ? users : shops } as unknown as EntityManager;
+  const transaction = {
+    queryRunner: { isTransactionActive: true },
+    query: jest.fn(),
+    getRepository: (entity: unknown) => entity === User ? users : shops,
+  } as unknown as EntityManager;
   let queue = Promise.resolve();
   shops.manager = { transaction: async (work: (manager: EntityManager) => Promise<unknown>) => {
     const previous = queue; let release!: () => void; queue = new Promise(resolve => { release = resolve; });
@@ -66,9 +70,16 @@ function fixture() {
   } } as EntityManager;
   const geocoding = { forwardGeocode: jest.fn().mockResolvedValue({ latitude: 51.51, longitude: -0.13 }) };
   const geo = { nearestShops: jest.fn().mockResolvedValue([]) };
-  const service = new ShopsService(shops as unknown as Repository<Shop>, users as unknown as Repository<User>, {} as Repository<Item>, {} as Repository<Claim>, geo as unknown as GeoService, geocoding as unknown as ItemGeocodingService);
+  const itemQuery = {
+    leftJoinAndSelect: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(), skip: jest.fn().mockReturnThis(), take: jest.fn().mockReturnThis(),
+    getManyAndCount: jest.fn(),
+  };
+  const items = { createQueryBuilder: jest.fn(() => itemQuery) };
+  const claims = { find: jest.fn() };
+  const service = new ShopsService(shops as unknown as Repository<Shop>, users as unknown as Repository<User>, items as unknown as Repository<Item>, claims as unknown as Repository<Claim>, geo as unknown as GeoService, geocoding as unknown as ItemGeocodingService);
   const dto = () => plainToInstance(CreateShopDto, body);
-  return { actor, rows, users, shops, geocoding, geo, service, dto };
+  return { actor, rows, users, shops, geocoding, geo, service, dto, itemQuery, claims };
 }
 
 describe('Shop write/visibility contracts with isolated repositories', () => {
@@ -113,6 +124,39 @@ describe('Shop write/visibility contracts with isolated repositories', () => {
     await expect(f.service.updateShop({ sub: 'owner' }, 'shop-1', { latitude: 91 })).rejects.toBeInstanceOf(BadRequestException);
     await expect(f.service.updateShop({ sub: 'owner' }, 'shop-1', { active: null } as unknown as UpdateShopDto)).rejects.toBeInstanceOf(BadRequestException);
     expect(f.rows[0].latitude).toBe(51.51);
+  });
+  it('keeps one active venue across both deactivation entry points and permits archive retries', async () => {
+    const f = fixture();
+    await f.service.createShop({ sub: 'owner' }, f.dto());
+    await expect(f.service.updateShop({ sub: 'owner' }, 'shop-1', { active: false }))
+      .rejects.toThrow('At least one shop must remain active');
+    await f.service.createShop({ sub: 'owner' }, { ...f.dto(), addressLine: '2 High Street' });
+    await expect(f.service.updateShop({ sub: 'owner' }, 'shop-1', { active: false }))
+      .resolves.toMatchObject({ active: false });
+    await expect(f.service.deleteShop({ sub: 'owner' }, 'shop-1')).resolves.toBeUndefined();
+    await expect(f.service.deleteShop({ sub: 'owner' }, 'shop-2'))
+      .rejects.toThrow('At least one shop must remain active');
+    expect(f.rows.filter(shop => shop.active).map(shop => shop.id)).toEqual(['shop-2']);
+  });
+  it.each(['one shop', 'my shops'])('keeps email-derived collector names out of partner item results for %s', async route => {
+    const f = fixture();
+    const actor = { sub: 'owner' };
+    const shop = await f.service.createShop(actor, f.dto());
+    const items = ['first', 'second'].map(id => ({ id, dropoffLocationId: shop.id }));
+    f.itemQuery.getManyAndCount.mockResolvedValue([items, items.length]);
+    f.claims.find.mockResolvedValue([
+      { id: 'claim-1', status: ClaimStatus.APPROVED, item: items[0], collector: {
+        id: 'collector-1', email: 'PRIVATE_EMAIL_PREFIX@example.invalid', firstName: null, lastName: ' ',
+      } },
+      { id: 'claim-2', status: ClaimStatus.APPROVED, item: items[1], collector: {
+        id: 'collector-2', email: 'named@example.invalid', firstName: 'Test', lastName: 'Collector',
+      } },
+    ]);
+    const result = route === 'one shop'
+      ? await f.service.listShopItems(actor, shop.id, {})
+      : await f.service.listMyShopItems(actor, {});
+    expect(result.items.map(item => item.claim?.collector?.name)).toEqual(['Community member', 'Test Collector']);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_EMAIL_PREFIX');
   });
 });
 

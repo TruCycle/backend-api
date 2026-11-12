@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 
 import { validLocationPoint } from '../../common/utils/public-location';
 import { GeoService } from '../../geo/geo.service';
@@ -128,6 +128,7 @@ export class ShopsService {
         throw new ConflictException('Shop location changed while editing. Reload the shop and try again.');
       }
       const active = dto.active ?? shop.active;
+      if (shop.active && !active) await this.requireAnotherActiveShop(manager);
       if (active || dto.name !== undefined || changesLocation) {
         const identity = normalizeShopIdentity({ name: dto.name === undefined ? shop.name : dto.name,
           addressLine: dto.addressLine === undefined ? shop.addressLine : dto.addressLine,
@@ -172,11 +173,17 @@ export class ShopsService {
       const current = await shops.findOne({ where, relations: { owner: true } });
       if (!current) throw new NotFoundException('Shop not found');
       if (!current.active) return;
-      const activeCount = await shops.count({ where: { active: true } });
-      if (activeCount <= 1) throw new BadRequestException('At least one shop must remain active');
+      await this.requireAnotherActiveShop(manager);
       current.active = false;
       await shops.save(current);
     }, { allowInactiveOwner: isAdmin });
+  }
+
+  private async requireAnotherActiveShop(manager: EntityManager): Promise<void> {
+    // Per-owner locks cannot protect a count shared by different owners.
+    await manager.query("SELECT pg_advisory_xact_lock(hashtext('trucycle'), hashtext('shop-deactivation'))");
+    const activeCount = await manager.getRepository(Shop).count({ where: { active: true } });
+    if (activeCount <= 1) throw new BadRequestException('At least one shop must remain active');
   }
 
   // Coordinates in degrees, search membership/distance in metres.
@@ -367,8 +374,7 @@ export class ShopsService {
               collector: claim.collector
                 ? {
                     id: claim.collector.id,
-                    name: [claim.collector.firstName, claim.collector.lastName].filter(Boolean).join(' ').trim() ||
-                      (typeof claim.collector.email === 'string' ? claim.collector.email.split('@')[0] : ''),
+                    name: [claim.collector.firstName, claim.collector.lastName].filter(Boolean).join(' ').trim() || 'Community member',
                     profile_image: claim.collector.profileImageUrl ?? null,
                   }
                 : null,
@@ -464,8 +470,7 @@ export class ShopsService {
               collector: claim.collector
                 ? {
                     id: claim.collector.id,
-                    name: [claim.collector.firstName, claim.collector.lastName].filter(Boolean).join(' ').trim() ||
-                      (typeof claim.collector.email === 'string' ? claim.collector.email.split('@')[0] : ''),
+                    name: [claim.collector.firstName, claim.collector.lastName].filter(Boolean).join(' ').trim() || 'Community member',
                     profile_image: claim.collector.profileImageUrl ?? null,
                   }
                 : null,
