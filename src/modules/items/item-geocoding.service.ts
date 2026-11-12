@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 
 import { ItemLocation } from './item-location.interface';
 
@@ -17,12 +17,41 @@ function aborted(): Error {
   return error;
 }
 
+type ProviderBudget = { inFlight: number; retryAt: number; lastLimitLogAt: number };
+// Nest registers this service in several feature modules. Forward and reverse
+// requests to the same provider need one budget across all of those instances.
+const providerBudgets = new Map<string, ProviderBudget>();
+const PROVIDER_COOLDOWN_MS = 5_000;
+
+function getProviderBudget(endpoint: string): ProviderBudget {
+  const origin = new URL(endpoint).origin;
+  const existing = providerBudgets.get(origin);
+  if (existing) return existing;
+  const budget = { inFlight: 0, retryAt: 0, lastLimitLogAt: Number.NEGATIVE_INFINITY };
+  providerBudgets.set(origin, budget);
+  return budget;
+}
+
+function retryDelay(response: Response, now: number): number {
+  if (response.status !== 429 && response.status !== 503) return 0;
+  const header = response.headers?.get('Retry-After')?.trim();
+  if (header) {
+    const delay = /^\d+$/.test(header) ? Number(header) * 1_000 : Date.parse(header) - now;
+    if (Number.isFinite(delay) && delay > 0) return delay;
+  }
+  return response.status === 429 ? PROVIDER_COOLDOWN_MS : 0;
+}
+
 @Injectable()
 export class ItemGeocodingService {
   private readonly logger = new Logger(ItemGeocodingService.name);
   private readonly endpoint = process.env.OSM_SEARCH_URL || 'https://nominatim.openstreetmap.org/search';
   private readonly reverseEndpoint = process.env.OSM_REVERSE_URL || 'https://nominatim.openstreetmap.org/reverse';
   private readonly userAgent = process.env.OSM_USER_AGENT || 'TruCycleBackend/0.1 (+https://trucycle.co.uk)';
+  private readonly maxConcurrentRequests = (() => {
+    const configured = Number(process.env.OSM_MAX_CONCURRENT_REQUESTS);
+    return Number.isInteger(configured) && configured >= 1 && configured <= 32 ? configured : 8;
+  })();
   private readonly requestTimeoutMs = (() => {
     const configured = Number(process.env.OSM_TIMEOUT_MS ?? 5000);
     return Number.isFinite(configured) && configured > 0 ? Math.min(30_000, Math.max(1, Math.floor(configured))) : 5000;
@@ -52,13 +81,34 @@ export class ItemGeocodingService {
     } catch (error) {
       if (failure) throw failure;
       // Never log the supplied address, provider body, request URL or raw stack.
-      if (!(error instanceof BadRequestException)) this.logger.warn(label + ' lookup failed');
+      if (!(error instanceof BadRequestException) && !(error instanceof ServiceUnavailableException)) {
+        this.logger.warn(label + ' lookup failed');
+      }
       throw error;
     } finally { clearTimeout(timeout); callerSignal?.removeEventListener('abort', cancel); }
   }
 
   private async requestJson(endpoint: string, params: URLSearchParams, signal: AbortSignal): Promise<unknown> {
     if (signal.aborted) throw aborted();
+    const budget = getProviderBudget(endpoint);
+    const now = Date.now();
+    const reason = now < budget.retryAt ? 'provider_cooldown' : 'concurrency';
+    if (reason === 'provider_cooldown' || budget.inFlight >= this.maxConcurrentRequests) {
+      if (now - budget.lastLimitLogAt >= 60_000) {
+        budget.lastLimitLogAt = now;
+        this.logger.warn(JSON.stringify({ event: 'geocoder_provider_budget', outcome: 'limited', reason }));
+      }
+      throw new ServiceUnavailableException('Location lookup temporarily unavailable');
+    }
+    budget.inFlight++;
+    try {
+      return await this.fetchJson(endpoint, params, signal, budget);
+    } finally {
+      budget.inFlight--;
+    }
+  }
+
+  private async fetchJson(endpoint: string, params: URLSearchParams, signal: AbortSignal, budget: ProviderBudget): Promise<unknown> {
     let response: Response;
     try {
       response = await globalThis.fetch(endpoint + '?' + params.toString(), {
@@ -72,7 +122,13 @@ export class ItemGeocodingService {
     }
     if (signal.aborted) throw aborted();
     if (!response || typeof response.status !== 'number' || !Number.isFinite(response.status)) throw new Error('Unexpected geocoder response');
-    if (!response.ok) throw new Error('Geocoder responded with status ' + response.status);
+    if (!response.ok) {
+      const now = Date.now();
+      const delay = retryDelay(response, now);
+      if (delay > 0) budget.retryAt = Math.max(budget.retryAt, now + delay);
+      void response.body?.cancel().catch(() => undefined);
+      throw new Error('Geocoder responded with status ' + response.status);
+    }
     let payload: unknown;
     try { payload = await response.json(); } catch { throw new Error('Unexpected geocoder response'); }
     if (signal.aborted) throw aborted();

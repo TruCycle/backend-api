@@ -1,9 +1,10 @@
-import { BadRequestException, Logger } from '@nestjs/common';
+import { BadRequestException, Logger, ServiceUnavailableException } from '@nestjs/common';
 
 import { ItemGeocodingService } from './item-geocoding.service';
 
-function response(payload: unknown, status = 200): Response {
-  return { ok: status >= 200 && status < 300, status, json: jest.fn().mockResolvedValue(payload) } as unknown as Response;
+function response(payload: unknown, status = 200, retryAfter?: string): Response {
+  const headers = new Headers(retryAfter ? { 'Retry-After': retryAfter } : {});
+  return { ok: status >= 200 && status < 300, status, headers, json: jest.fn().mockResolvedValue(payload) } as unknown as Response;
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -14,11 +15,17 @@ function deferred<T>() {
 describe('ItemGeocodingService synthetic provider boundary', () => {
   let service: ItemGeocodingService;
   let fetchMock: jest.SpyInstance;
-  const previousTimeout = process.env.OSM_TIMEOUT_MS;
+  let instance = 0;
+  const environmentKeys = ['OSM_TIMEOUT_MS', 'OSM_SEARCH_URL', 'OSM_REVERSE_URL', 'OSM_MAX_CONCURRENT_REQUESTS'] as const;
+  const previousEnvironment = environmentKeys.map(key => process.env[key]);
 
   beforeEach(() => {
     jest.useFakeTimers();
     process.env.OSM_TIMEOUT_MS = '25';
+    const origin = `https://provider-${++instance}.example.test`;
+    process.env.OSM_SEARCH_URL = origin + '/search';
+    process.env.OSM_REVERSE_URL = origin + '/reverse';
+    delete process.env.OSM_MAX_CONCURRENT_REQUESTS;
     fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(response([{ lat: '51.5074', lon: '-0.1278' }]));
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     service = new ItemGeocodingService();
@@ -26,8 +33,11 @@ describe('ItemGeocodingService synthetic provider boundary', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     jest.useRealTimers();
-    if (previousTimeout === undefined) delete process.env.OSM_TIMEOUT_MS;
-    else process.env.OSM_TIMEOUT_MS = previousTimeout;
+    environmentKeys.forEach((key, index) => {
+      const previous = previousEnvironment[index];
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    });
   });
 
   it.each([
@@ -82,6 +92,47 @@ describe('ItemGeocodingService synthetic provider boundary', () => {
     fetchMock.mockResolvedValue(response({}, status));
     await expect(service.forwardGeocode('Private Street, SW1A 1AA, London')).rejects.toThrow('Geocoder responded with status ' + status);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('shares the concurrency limit across service instances and releases it after an upstream failure', async () => {
+    process.env.OSM_MAX_CONCURRENT_REQUESTS = '1';
+    const writer = new ItemGeocodingService();
+    const reader = new ItemGeocodingService();
+    const held = deferred<Response>();
+    fetchMock.mockReturnValueOnce(held.promise);
+    const started = writer.forwardGeocode('PRIVATE_ADDRESS_SENTINEL');
+    const failed = expect(started).rejects.toThrow('Geocoder responded with status 502');
+    await expect(reader.reverseGeocode(51.5, -0.1)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(reader.forwardGeocode('PRIVATE_ADDRESS_SENTINEL')).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(Logger.prototype.warn).toHaveBeenCalledTimes(1);
+    expect(Logger.prototype.warn).toHaveBeenCalledWith(
+      '{"event":"geocoder_provider_budget","outcome":"limited","reason":"concurrency"}',
+    );
+    held.resolve(response({}, 502));
+    await failed;
+    await expect(reader.forwardGeocode('SW1A 1AA')).resolves.toMatchObject({ latitude: 51.5074 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { status: 429, format: 'delay seconds', header: () => '2', wait: 2000 },
+    { status: 429, format: 'missing header', header: () => undefined, wait: 5000 },
+    { status: 503, format: 'HTTP date', header: () => new Date(Date.now() + 3000).toUTCString(), wait: 3000 },
+  ])('honours HTTP $status cooldown with $format across forward and reverse requests', async ({ status, header, wait }) => {
+    jest.setSystemTime(new Date('2026-11-12T09:00:00.000Z'));
+    fetchMock.mockResolvedValueOnce(response({}, status, header()));
+    await expect(service.forwardGeocode('PRIVATE_ADDRESS_SENTINEL')).rejects.toThrow(`Geocoder responded with status ${status}`);
+    const anotherInstance = new ItemGeocodingService();
+    await jest.advanceTimersByTimeAsync(wait - 1);
+    await expect(anotherInstance.reverseGeocode(51.5, -0.1)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(Logger.prototype.warn).toHaveBeenCalledWith(
+      '{"event":"geocoder_provider_budget","outcome":"limited","reason":"provider_cooldown"}',
+    );
+    expect(JSON.stringify(jest.mocked(Logger.prototype.warn).mock.calls)).not.toContain('PRIVATE_ADDRESS_SENTINEL');
+    await jest.advanceTimersByTimeAsync(1);
+    await expect(anotherInstance.forwardGeocode('SW1A 1AA')).resolves.toMatchObject({ latitude: 51.5074 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
   it('rejects malformed JSON without revealing its raw error or starting fallback', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: jest.fn().mockRejectedValue(new Error('PRIVATE_ADDRESS_SENTINEL')) });
