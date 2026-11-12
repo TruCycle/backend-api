@@ -1,27 +1,28 @@
 /* eslint-disable import/no-unresolved */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
+import { JwtService } from '@nestjs/jwt';
+import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import request from 'supertest';
 
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 import { ResponseInterceptor } from '../src/common/interceptors/response.interceptor';
+import { AuthSessionsService } from '../src/modules/auth/auth-sessions.service';
+import { Claim } from '../src/modules/claims/claim.entity';
+import { ClaimsService } from '../src/modules/claims/claims.service';
+import { Co2EstimationService } from '../src/modules/items/co2-estimation.service';
 import { ItemGeocodingService } from '../src/modules/items/item-geocoding.service';
 import { Item, ItemCondition, ItemStatus, ItemPickupOption } from '../src/modules/items/item.entity';
 import { ItemsController } from '../src/modules/items/items.controller';
 import { ItemsService } from '../src/modules/items/items.service';
-import { User, UserStatus } from '../src/modules/users/user.entity';
-import { Shop } from '../src/modules/shops/shop.entity';
-import { Claim } from '../src/modules/claims/claim.entity';
-import { KycProfile } from '../src/modules/users/kyc-profile.entity';
-import { UserReview } from '../src/modules/reviews/user-review.entity';
+import { NotificationsService } from '../src/modules/notifications/notifications.service';
 import { QrImageService } from '../src/modules/qr/qr-image.service';
-import { Co2EstimationService } from '../src/modules/items/co2-estimation.service';
-import { ClaimsService } from '../src/modules/claims/claims.service';
-
-class ServiceZone {}
+import { UserReview } from '../src/modules/reviews/user-review.entity';
+import { Shop } from '../src/modules/shops/shop.entity';
+import { KycProfile } from '../src/modules/users/kyc-profile.entity';
+import { User, UserStatus } from '../src/modules/users/user.entity';
 
 describe('Items E2E', () => {
   let app: INestApplication;
@@ -35,7 +36,6 @@ describe('Items E2E', () => {
     createQueryBuilder: jest.fn(),
   };
   const userRepo = { findOne: jest.fn() };
-  const zoneRepo = { createQueryBuilder: jest.fn() };
   const geocoding = { forwardGeocode: jest.fn() };
   const shopRepo = { find: jest.fn(), findOne: jest.fn() };
   const claimRepo = { find: jest.fn(), findOne: jest.fn(), createQueryBuilder: jest.fn() };
@@ -53,7 +53,6 @@ describe('Items E2E', () => {
         { provide: ItemGeocodingService, useValue: geocoding },
         { provide: getRepositoryToken(Item), useValue: itemRepo },
         { provide: getRepositoryToken(User), useValue: userRepo },
-        { provide: getRepositoryToken(ServiceZone), useValue: zoneRepo },
         { provide: getRepositoryToken(Shop), useValue: shopRepo },
         { provide: getRepositoryToken(Claim), useValue: claimRepo },
         { provide: getRepositoryToken(KycProfile), useValue: kycRepo },
@@ -61,6 +60,9 @@ describe('Items E2E', () => {
         { provide: QrImageService, useValue: qrImage },
         { provide: Co2EstimationService, useValue: co2 },
         { provide: ClaimsService, useValue: claimsService },
+        { provide: NotificationsService, useValue: { notifyDropIn: jest.fn() } },
+        { provide: JwtService, useValue: { verifyAsync: jest.fn() } },
+        { provide: AuthSessionsService, useValue: { assertActive: jest.fn() } },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -89,14 +91,13 @@ describe('Items E2E', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
   });
 
   beforeEach(() => {
     jest.clearAllMocks();
     Object.values(itemRepo).forEach((mock: any) => mock.mockReset?.());
     Object.values(userRepo).forEach((mock: any) => mock.mockReset?.());
-    Object.values(zoneRepo).forEach((mock: any) => mock.mockReset?.());
     Object.values(geocoding).forEach((mock: any) => mock.mockReset?.());
     Object.values(shopRepo).forEach((mock: any) => mock.mockReset?.());
     Object.values(claimRepo).forEach((mock: any) => mock.mockReset?.());
@@ -140,7 +141,7 @@ describe('Items E2E', () => {
     expect(res.body.data).toEqual({ status: 'ok' });
   });
 
-  it('GET /items/:id includes selected dropoff location details', async () => {
+  it('GET /items/:id exposes public dropoff details', async () => {
     const itemId = 'item-123';
     const dropoffId = 'shop-789';
     const itemEntity: any = {
@@ -193,7 +194,7 @@ describe('Items E2E', () => {
       phone_number: '02071234567',
       address_line: '123 Green Street',
       postcode: 'E1 1AA',
-      operational_notes: 'Open weekends',
+      operational_notes: null,
       latitude: 51.514,
       longitude: -0.079,
       opening_hours: { days: ['mon', 'tue'], open_time: '09:00', close_time: '17:00' },
@@ -202,16 +203,24 @@ describe('Items E2E', () => {
       created_at: '2024-01-01T09:00:00.000Z',
       updated_at: '2024-06-01T09:00:00.000Z',
     });
+    expect(res.body.data.metadata).toBeNull();
+    expect(res.body.data.scan_events).toEqual([]);
   });
+
+  it.each([null, { status: ItemStatus.DRAFT }, { status: ItemStatus.REJECTED }])(
+    'GET /items/:id returns the same 404 for missing and non-public items (%j)',
+    async item => {
+      itemRepo.findOne.mockResolvedValue(item);
+      const res = await request(app.getHttpServer()).get('/items/5a3389b6-d3c9-4e5c-b0a9-95bc0ff7db80');
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ status: 'error', message: 'Item not found', data: null });
+      expect(shopRepo.findOne).not.toHaveBeenCalled();
+      expect(itemRepo.query).not.toHaveBeenCalled();
+    },
+  );
 
   it('POST /items creates listing with derived status and geocoded location', async () => {
     userRepo.findOne.mockResolvedValue({ id: 'user-1', status: UserStatus.ACTIVE });
-    const qb: any = {
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      getCount: jest.fn().mockResolvedValue(1),
-    };
-    zoneRepo.createQueryBuilder.mockReturnValue(qb);
     geocoding.forwardGeocode.mockResolvedValue({ latitude: 51.5034, longitude: -0.1276 });
     itemRepo.create.mockImplementation((data: any) => ({ ...data }));
     itemRepo.save.mockImplementation(async (entity: any) => ({
@@ -265,6 +274,7 @@ describe('Items E2E', () => {
         postcode: 'SW1A 2AA',
         latitude: 51.5034,
         longitude: -0.1276,
+        precision: 'exact',
       },
       qr_code: 'https://cdn.trucycle.com/qrs/item-9f5c2c8e.png',
       created_at: '2025-09-25T12:00:00.000Z',
@@ -290,12 +300,6 @@ describe('Items E2E', () => {
     };
     itemRepo.findOne.mockResolvedValue(existingItem);
     geocoding.forwardGeocode.mockResolvedValue({ latitude: 51.5202, longitude: -0.0979 });
-    const qb: any = {
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      getCount: jest.fn().mockResolvedValue(1),
-    };
-    zoneRepo.createQueryBuilder.mockReturnValue(qb);
     itemRepo.save.mockImplementation(async (entity: any) => ({
       ...entity,
       updatedAt: new Date('2025-09-25T14:00:00Z'),
