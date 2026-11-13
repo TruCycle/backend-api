@@ -12,7 +12,10 @@ import { FoundItemObservation } from './found-item-observation.entity';
 import { FoundItemReport } from './found-item-report.entity';
 import { FoundItem } from './found-item.entity';
 import { FoundItemsController } from './found-items.controller';
+import { FoundItemsLifecycleScheduler } from './found-items-lifecycle.scheduler';
 import { FoundItemsService } from './found-items.service';
+import { VisionController } from './vision.controller';
+import { VisionBudgetInterceptor } from './vision-budget.interceptor';
 
 @Module({
   imports: [
@@ -20,8 +23,8 @@ import { FoundItemsService } from './found-items.service';
     NotificationsModule,
     GamificationModule,
   ],
-  controllers: [FoundItemsController],
-  providers: [FoundItemsService, ItemGeocodingService, JwtAuthGuard],
+  controllers: [FoundItemsController, VisionController],
+  providers: [FoundItemsService, FoundItemsLifecycleScheduler, ItemGeocodingService, JwtAuthGuard, VisionBudgetInterceptor],
   exports: [FoundItemsService],
 })
 export class FoundItemsModule {}

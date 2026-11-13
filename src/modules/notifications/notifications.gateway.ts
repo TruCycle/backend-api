@@ -55,8 +55,7 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
 
   async handleConnection(client: Socket): Promise<void> {
     try {
-      const token = this.extractToken(client);
-      const { userId } = await this.access.connect(client, token);
+      const { userId } = await this.access.connect(client, () => this.extractToken(client));
       client.data.userId = userId;
       client.emit('auth:ready');
       this.logger.verbose({ operation: 'notifications_socket_connected' });
@@ -78,6 +77,12 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
     const socketIds = await this.access.authorizedIds(userId);
     if (socketIds.length === 0) return;
     this.server.to(socketIds).emit('notification:new', notification);
+  }
+
+  async emitReadChanged(userId: string): Promise<void> {
+    if (!this.server) return;
+    const socketIds = await this.access.authorizedIds(userId);
+    if (socketIds.length) this.server.to(socketIds).emit('notification:read:changed');
   }
 
   /**

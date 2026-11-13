@@ -7,6 +7,7 @@ import { User, UserStatus } from '../../modules/users/user.entity';
 import { AuthSessionsService } from '../../modules/auth/auth-sessions.service';
 
 import { AccessPrincipal, verifyAccessToken } from './access-token';
+import { socketBudget } from './socket-budget';
 
 interface Connection {
   client: Socket;
@@ -18,17 +19,27 @@ interface Connection {
 /** Owns expiry timers; never treats a past handshake as current authorization. */
 export class SocketAccess {
   private readonly connections = new Map<string, Connection>();
+  private readonly budget = socketBudget();
 
   constructor(private readonly jwt: JwtService, private readonly users: Repository<User>, private readonly sessions: AuthSessionsService) {}
 
-  async connect(client: Socket, token: string): Promise<AccessPrincipal> {
-    const principal = await verifyAccessToken(this.jwt, this.users, token, this.sessions);
+  async connect(client: Socket, credential: string | (() => string)): Promise<AccessPrincipal> {
+    const { principal, token } = await this.budget.authenticate(async () => {
+      const token = typeof credential === 'string' ? credential : credential();
+      const principal = await verifyAccessToken(this.jwt, this.users, token, this.sessions);
+      return { principal, token };
+    });
     if (client.connected === false) throw new UnauthorizedException('Socket disconnected');
     this.release(client);
     const connection: Connection = { client, token, principal };
     this.connections.set(client.id, connection);
     this.armExpiry(connection);
+    const allowPacket = this.budget.packetBudget();
     client.use((_packet, next) => {
+      if (allowPacket && !allowPacket()) {
+        next(new Error('Too many socket requests. Try again shortly.'));
+        return;
+      }
       void this.authorize(client).then(() => next(), () => next(new Error('Socket authentication required')));
     });
     return principal;

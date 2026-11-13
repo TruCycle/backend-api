@@ -31,6 +31,8 @@ import { CreateAuthRateCounters1700000000030 } from './migrations/1700000000030-
 import { CreateAuthResetEmailCounters1700000000031 } from './migrations/1700000000031-CreateAuthResetEmailCounters';
 import { CreateMessageReadReceipts1700000000032 } from './migrations/1700000000032-CreateMessageReadReceipts';
 import { CreatePrivateMessageAttachments1700000000033 } from './migrations/1700000000033-CreatePrivateMessageAttachments';
+import { AllowRefreshRateCounter1700000000034 } from './migrations/1700000000034-AllowRefreshRateCounter';
+import { CreateAuthEmailOutbox1700000000035 } from './migrations/1700000000035-CreateAuthEmailOutbox';
 
 // Complete ordered history. Registration never authorises automatic execution.
 export const migrationRegistry = [
@@ -67,6 +69,8 @@ export const migrationRegistry = [
   CreateAuthResetEmailCounters1700000000031,
   CreateMessageReadReceipts1700000000032,
   CreatePrivateMessageAttachments1700000000033,
+  AllowRefreshRateCounter1700000000034,
+  CreateAuthEmailOutbox1700000000035,
 ];
 
 export const registeredMigrationNames = migrationRegistry.map((migration) => migration.name);

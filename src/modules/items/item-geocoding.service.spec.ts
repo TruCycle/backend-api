@@ -16,7 +16,8 @@ describe('ItemGeocodingService synthetic provider boundary', () => {
   let service: ItemGeocodingService;
   let fetchMock: jest.SpyInstance;
   let instance = 0;
-  const environmentKeys = ['OSM_TIMEOUT_MS', 'OSM_SEARCH_URL', 'OSM_REVERSE_URL', 'OSM_MAX_CONCURRENT_REQUESTS'] as const;
+  const environmentKeys = ['OSM_TIMEOUT_MS', 'OSM_SEARCH_URL', 'OSM_REVERSE_URL', 'OSM_MAX_CONCURRENT_REQUESTS',
+    'APP_RELEASE_SHA', 'RAILWAY_GIT_COMMIT_SHA'] as const;
   const previousEnvironment = environmentKeys.map(key => process.env[key]);
 
   beforeEach(() => {
@@ -26,6 +27,8 @@ describe('ItemGeocodingService synthetic provider boundary', () => {
     process.env.OSM_SEARCH_URL = origin + '/search';
     process.env.OSM_REVERSE_URL = origin + '/reverse';
     delete process.env.OSM_MAX_CONCURRENT_REQUESTS;
+    delete process.env.APP_RELEASE_SHA;
+    delete process.env.RAILWAY_GIT_COMMIT_SHA;
     fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(response([{ lat: '51.5074', lon: '-0.1278' }]));
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     service = new ItemGeocodingService();
@@ -95,6 +98,8 @@ describe('ItemGeocodingService synthetic provider boundary', () => {
   });
   it('shares the concurrency limit across service instances and releases it after an upstream failure', async () => {
     process.env.OSM_MAX_CONCURRENT_REQUESTS = '1';
+    const release = 'a'.repeat(40);
+    process.env.RAILWAY_GIT_COMMIT_SHA = release;
     const writer = new ItemGeocodingService();
     const reader = new ItemGeocodingService();
     const held = deferred<Response>();
@@ -106,7 +111,7 @@ describe('ItemGeocodingService synthetic provider boundary', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(Logger.prototype.warn).toHaveBeenCalledTimes(1);
     expect(Logger.prototype.warn).toHaveBeenCalledWith(
-      '{"event":"geocoder_provider_budget","outcome":"limited","reason":"concurrency"}',
+      JSON.stringify({ event: 'geocoder_provider_budget', outcome: 'limited', reason: 'concurrency', release }),
     );
     held.resolve(response({}, 502));
     await failed;

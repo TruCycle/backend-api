@@ -605,10 +605,13 @@ export class ItemsService {
     }
 
     const impactStatuses = Array.from(IMPACT_ITEM_STATUSES);
+    const co2Sum = "CASE WHEN COUNT(*) FILTER (WHERE item.estimated_co2_saved_kg IS NULL OR NOT " +
+      "(item.estimated_co2_saved_kg >= 0 AND item.estimated_co2_saved_kg < 'Infinity'::float8)) > 0 " +
+      "THEN NULL ELSE COALESCE(SUM(item.estimated_co2_saved_kg), 0) END";
 
     const totalsRaw = await this.items
       .createQueryBuilder('item')
-      .select('COALESCE(SUM(item.estimated_co2_saved_kg), 0)', 'total_co2')
+      .select(co2Sum, 'total_co2')
       .addSelect("SUM(CASE WHEN item.pickup_option = :exchange THEN 1 ELSE 0 END)", 'exchange_count')
       .addSelect("SUM(CASE WHEN item.pickup_option = :donate THEN 1 ELSE 0 END)", 'donate_count')
       .where('item.donor_id = :userId', { userId: normalizedUserId })
@@ -619,7 +622,7 @@ export class ItemsService {
       })
       .getRawOne<{ total_co2: string | number | null; exchange_count: string | number | null; donate_count: string | number | null }>();
 
-    const totalCo2Raw = this.coerceNumber(totalsRaw?.total_co2);
+    const totalCo2Raw = totalsRaw?.total_co2 == null ? null : this.coerceNumber(totalsRaw.total_co2);
     const itemsExchanged = Math.max(0, Math.trunc(this.coerceNumber(totalsRaw?.exchange_count)));
     const itemsDonated = Math.max(0, Math.trunc(this.coerceNumber(totalsRaw?.donate_count)));
 
@@ -629,23 +632,27 @@ export class ItemsService {
 
     const monthlyRaw = await this.items
       .createQueryBuilder('item')
-      .select('COALESCE(SUM(item.estimated_co2_saved_kg), 0)', 'monthly_co2')
-      .leftJoin(Claim, 'claim', 'claim.item_id = item.id')
+      .select(co2Sum, 'monthly_co2')
+      .leftJoin(query => query.select('claim.item_id', 'item_id')
+        .addSelect('MAX(claim.completed_at)', 'completed_at')
+        .from(Claim, 'claim')
+        .where('claim.status = :completedStatus', { completedStatus: ClaimStatus.COMPLETE })
+        .groupBy('claim.item_id'), 'completion', 'completion.item_id = item.id')
       .where('item.donor_id = :userId', { userId: normalizedUserId })
       .andWhere('item.status IN (:...impactStatuses)', { impactStatuses })
-      .andWhere('COALESCE(claim.completed_at, item.updated_at) >= :startOfMonth', { startOfMonth })
-      .andWhere('COALESCE(claim.completed_at, item.updated_at) < :startOfNextMonth', { startOfNextMonth })
+      .andWhere('COALESCE(completion.completed_at, item.updated_at) >= :startOfMonth', { startOfMonth })
+      .andWhere('COALESCE(completion.completed_at, item.updated_at) < :startOfNextMonth', { startOfNextMonth })
       .getRawOne<{ monthly_co2: string | number | null }>();
 
-    const monthlyCo2Raw = this.coerceNumber(monthlyRaw?.monthly_co2);
+    const monthlyCo2Raw = monthlyRaw?.monthly_co2 == null ? null : this.coerceNumber(monthlyRaw.monthly_co2);
 
     const goalKg = this.monthlyCo2GoalKg;
-    const totalCo2SavedKg = this.roundMetric(totalCo2Raw);
-    const monthlyAchievedKg = this.roundMetric(monthlyCo2Raw);
-    const remainingKg = goalKg > 0 ? Math.max(goalKg - monthlyCo2Raw, 0) : 0;
-    const remainingKgRounded = this.roundMetric(remainingKg);
-    const percentRaw = goalKg > 0 ? (monthlyCo2Raw / goalKg) * 100 : 0;
-    const progressPercent = this.roundMetric(Math.max(0, Math.min(100, percentRaw)), 1);
+    const totalCo2SavedKg = totalCo2Raw === null ? null : this.roundMetric(totalCo2Raw);
+    const monthlyAchievedKg = monthlyCo2Raw === null ? null : this.roundMetric(monthlyCo2Raw);
+    const remainingKg = monthlyCo2Raw === null ? null : goalKg > 0 ? Math.max(goalKg - monthlyCo2Raw, 0) : 0;
+    const remainingKgRounded = remainingKg === null ? null : this.roundMetric(remainingKg);
+    const percentRaw = monthlyCo2Raw === null ? null : goalKg > 0 ? (monthlyCo2Raw / goalKg) * 100 : 0;
+    const progressPercent = percentRaw === null ? null : this.roundMetric(Math.max(0, Math.min(100, percentRaw)), 1);
     const targetKg = this.roundMetric(goalKg);
 
     return {
@@ -1144,6 +1151,9 @@ export class ItemsService {
   }
 
   async searchPublicListings(dto: SearchItemsDto, currentUserId?: string) {
+    if (dto.search !== undefined && (typeof dto.search !== 'string' || dto.search.length > 120)) {
+      throw new BadRequestException('Search text must be at most 120 characters');
+    }
     if (dto.postcode !== undefined && dto.postcode !== null && typeof dto.postcode !== 'string') throw new BadRequestException('Valid postcode is required');
     const pc = typeof dto.postcode === 'string' ? dto.postcode.trim() : '';
     let origin: ItemLocation | null = null;
@@ -1220,6 +1230,11 @@ export class ItemsService {
       }
     }
 
+    const searchText = dto.search?.trim().toLowerCase();
+    if (searchText) {
+      qb.andWhere("(STRPOS(LOWER(COALESCE(item.title, '')), :searchText) > 0 OR STRPOS(LOWER(COALESCE(item.category, '')), :searchText) > 0)",
+        { searchText });
+    }
     const rows = await qb.getRawMany();
     const dropoffMap = await this.loadDropoffLocations(rows.map((row: any) => row.dropoff_location_id));
 

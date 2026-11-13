@@ -321,11 +321,6 @@ export class FoundItemsService {
         claim.status = FoundItemClaimStatus.CANCELLED;
         await this.claims.save(claim);
       }
-      try {
-        this.afterCommit.push(async () => { await this.gamification.recordFoundItemPickedUp(userId, item.id, new Date()); });
-      } catch (error) {
-        this.logger.warn(safeFailure('found-item.pickup.activity', error));
-      }
     }
 
     if (dto.status === FoundItemStatus.AVAILABLE || dto.status === FoundItemStatus.EXPIRED || dto.status === FoundItemStatus.GONE) {
@@ -336,11 +331,13 @@ export class FoundItemsService {
     }
 
     item.status = dto.status;
-    item.closedAt = [FoundItemStatus.PICKED_UP, FoundItemStatus.EXPIRED, FoundItemStatus.GONE].includes(dto.status) ? new Date() : null;
+    const changedAt = new Date();
+    item.closedAt = [FoundItemStatus.PICKED_UP, FoundItemStatus.EXPIRED, FoundItemStatus.GONE].includes(dto.status) ? changedAt : null;
     const saved = await this.foundItems.save(item);
     const claimCount = await this.loadClaimCounts([saved.id]);
 
     if (dto.status === FoundItemStatus.PICKED_UP) {
+      await this.gamification.recordFoundItemPickedUp(this.foundItems.manager, userId, saved.id, changedAt);
       try {
         this.afterCommit.push(async () => { await this.notificationsGateway.broadcastRescue('rescue', {
           id: saved.id,
@@ -625,33 +622,40 @@ export class FoundItemsService {
     await this.foundItems.save(item);
   }
 
-  // Deliberately callable only: no scheduler, startup hook or automatic activation.
-  async processLifecycle(now = new Date(), limit = 100): Promise<{ nudged: number; expired: number }> {
-    const result = { nudged: 0, expired: 0 };
+  // Shared by the opt-in scheduler and the isolated lifecycle rehearsal.
+  async processLifecycle(now = new Date(), limit = 100): Promise<{ nudged: number; expired: number; failed: number }> {
+    const result = { nudged: 0, expired: 0, failed: 0 };
     const active = In([FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED]);
     const nudgeBefore = new Date(now.getTime() - this.lifecyclePolicy.nudgeHours * 3600000);
     const candidates = await this.foundItems.find({ where: [
       { status: active, expiresAt: LessThanOrEqual(now), lastSeenAt: Not(IsNull()) },
       { status: active, expiresAt: MoreThan(now), expiryNudgedAt: IsNull(), lastSeenAt: LessThanOrEqual(nudgeBefore) },
-    ], order: { id: 'ASC' }, take: Math.min(Math.max(limit, 1), 100) });
+    ], order: { expiresAt: 'ASC', id: 'ASC' }, take: Math.min(Math.max(limit, 1), 100) });
     for (const candidate of candidates) {
-      const outcome = await this.withItemLock<keyof typeof result | null>(candidate.id, async (scoped) => {
-        const item = await scoped.foundItems.findOne({ where: { id: candidate.id } });
-        if (!item || ![FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED].includes(item.status) || !item.lastSeenAt || !item.expiresAt) return null;
-        if (item.expiresAt <= now) {
-          await scoped.closeWithoutPickup(item, FoundItemStatus.EXPIRED, now);
-          return 'expired';
-        }
-        if (!item.expiryNudgedAt && item.lastSeenAt <= nudgeBefore) {
-          item.expiryNudgedAt = now;
-          await scoped.foundItems.save(item);
-          scoped.afterCommit.push(async () => { await scoped.notifications.createAndEmit(item.posterId, 'general', 'Is your spot still there?',
-            'Reconfirm your spot if it is still available. Otherwise it will expire at its scheduled expiry.', { foundItemId: item.id }); });
-          return 'nudged';
-        }
-        return null;
-      }, () => null);
-      if (outcome) result[outcome] += 1;
+      try {
+        const outcome = await this.withItemLock<'nudged' | 'expired' | null>(candidate.id, async (scoped) => {
+          const item = await scoped.foundItems.findOne({ where: { id: candidate.id } });
+          if (!item || ![FoundItemStatus.AVAILABLE, FoundItemStatus.CLAIMED].includes(item.status) || !item.lastSeenAt || !item.expiresAt) return null;
+          if (item.expiresAt <= now) {
+            await scoped.closeWithoutPickup(item, FoundItemStatus.EXPIRED, now);
+            return 'expired';
+          }
+          if (!item.expiryNudgedAt && item.lastSeenAt <= nudgeBefore) {
+            item.expiryNudgedAt = now;
+            await scoped.foundItems.save(item);
+            const reminder = await scoped.notifications.createInTransaction(scoped.foundItems.manager, item.posterId,
+              'general', 'Is your spot still there?',
+              'Reconfirm your spot if it is still available. Otherwise it will expire at its scheduled expiry.', { foundItemId: item.id });
+            scoped.afterCommit.push(() => scoped.notifications.emitPersisted(item.posterId, reminder));
+            return 'nudged';
+          }
+          return null;
+        }, () => null);
+        if (outcome) result[outcome] += 1;
+      } catch {
+        // Each candidate has its own transaction and remains eligible on failure.
+        result.failed += 1;
+      }
     }
     return result;
   }

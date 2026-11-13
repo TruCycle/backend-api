@@ -14,6 +14,7 @@ import { GeoService } from '../../geo/geo.service';
 import { Claim } from '../claims/claim.entity';
 import { ItemGeocodingService } from '../items/item-geocoding.service';
 import { Item, ItemPickupOption, ItemStatus } from '../items/item.entity';
+import { projectItemLocation } from '../items/public-item-location';
 import { RoleCode } from '../users/role.entity';
 import { User, UserStatus } from '../users/user.entity';
 
@@ -340,10 +341,7 @@ export class ShopsService {
     const items = rows.map((item) => {
       const images = this.normalizeImagesForOutput(item.images);
       const qrCode = typeof item.qrCodeUrl === 'string' && item.qrCodeUrl.trim() ? item.qrCodeUrl.trim() : this.buildQrCodeUrl(item.id);
-      const latitude =
-        typeof item.latitude === 'number' && Number.isFinite(item.latitude) ? Number(item.latitude) : null;
-      const longitude =
-        typeof item.longitude === 'number' && Number.isFinite(item.longitude) ? Number(item.longitude) : null;
+      const isDonor = item.donor?.id === user.id;
       const claim = claimMap.get(item.id) || null;
       const dropoffLocation = this.view(shop, true);
       return {
@@ -357,13 +355,8 @@ export class ShopsService {
           typeof (item as any).estimatedCo2SavedKg === 'number' && Number.isFinite((item as any).estimatedCo2SavedKg)
             ? Number((item as any).estimatedCo2SavedKg)
             : null,
-        metadata: item.metadata ?? null,
-        location: {
-          address_line: typeof item.addressLine === 'string' && item.addressLine.trim() ? item.addressLine.trim() : null,
-          postcode: typeof item.postcode === 'string' && item.postcode.trim() ? item.postcode.trim().toUpperCase() : null,
-          latitude,
-          longitude,
-        },
+        metadata: isDonor ? item.metadata ?? null : null,
+        location: projectItemLocation(item, isDonor),
         created_at: this.formatDate(item.createdAt),
         claim: claim
           ? {
@@ -435,10 +428,7 @@ export class ShopsService {
     const items = rows.map((item) => {
       const images = this.normalizeImagesForOutput(item.images);
       const qrCode = typeof item.qrCodeUrl === 'string' && item.qrCodeUrl.trim() ? item.qrCodeUrl.trim() : this.buildQrCodeUrl(item.id);
-      const latitude =
-        typeof item.latitude === 'number' && Number.isFinite(item.latitude) ? Number(item.latitude) : null;
-      const longitude =
-        typeof item.longitude === 'number' && Number.isFinite(item.longitude) ? Number(item.longitude) : null;
+      const isDonor = item.donor?.id === user.id;
       const claim = claimMap.get(item.id) || null;
       const dropoffEntity = shopEntityMap.get(item.dropoffLocationId ?? '');
       const dropoffLocation = dropoffEntity ? this.view(dropoffEntity, true) : null;
@@ -453,13 +443,8 @@ export class ShopsService {
           typeof (item as any).estimatedCo2SavedKg === 'number' && Number.isFinite((item as any).estimatedCo2SavedKg)
             ? Number((item as any).estimatedCo2SavedKg)
             : null,
-        metadata: item.metadata ?? null,
-        location: {
-          address_line: typeof item.addressLine === 'string' && item.addressLine.trim() ? item.addressLine.trim() : null,
-          postcode: typeof item.postcode === 'string' && item.postcode.trim() ? item.postcode.trim().toUpperCase() : null,
-          latitude,
-          longitude,
-        },
+        metadata: isDonor ? item.metadata ?? null : null,
+        location: projectItemLocation(item, isDonor),
         created_at: this.formatDate(item.createdAt),
         claim: claim
           ? {

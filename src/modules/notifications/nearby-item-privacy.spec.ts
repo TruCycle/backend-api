@@ -57,11 +57,18 @@ describe('Generated nearby notification output and history privacy', () => {
 
   it.each([
     { type: 'general', data: { itemId: 'item', itemPostcode: 'E16 2RD' } },
-    { type: 'item.nearby', data: { itemId: 'item', itemPostcode: 'E16 2RD' } },
     { type: 'general', data: { source: 'nearby-item-v1', itemId: 'item' } },
   ])('preserves unmarked legacy/user-authored history %j for separate review', (fields) => {
     const row = Object.assign(new Notification(), { id: 'history', title: 'Personal note', body: 'User text with E16 2RD', ...fields });
     expect(service.view(row)).toMatchObject({ title: row.title, body: row.body, data: row.data });
+  });
+
+  it('rebuilds legacy nearby history from structured fields without exposing stored content', () => {
+    const row = Object.assign(new Notification(), { type: 'item.nearby', title: 'Private title', body: 'Private address',
+      data: { itemId: 'item', itemPostcode: 'E16 2RD', itemTitle: 'Private title', extra: 'Private address' } });
+    const view = service.view(row);
+    expect(view.data).toMatchObject({ itemId: 'item', itemPostcode: 'E16', itemTitle: null });
+    expect(JSON.stringify(view)).not.toMatch(/Private|2RD/);
   });
 });
 

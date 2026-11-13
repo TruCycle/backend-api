@@ -1,10 +1,14 @@
-import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { firstValueFrom, of } from 'rxjs';
 
 import { ResponseInterceptor } from '../../common/interceptors/response.interceptor';
+import { Repository } from 'typeorm';
+import { User } from '../users/user.entity';
+import { ReadNotificationsDto } from './dto/read-notifications.dto';
+import { Notification } from './notification.entity';
 
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { EmailService } from './email.service';
@@ -20,6 +24,34 @@ function fixture() {
 }
 
 describe('Notification recipient authorization', () => {
+  it.each([{ ids: ['invalid'] }, { ids: [actorId, ''] }, { ids: Array.from({ length: 101 }, () => actorId) }])(
+    'rejects invalid read IDs at the shared service boundary %j', async ({ ids }) => {
+      const update = jest.fn();
+      const service = new NotificationsService({ update } as unknown as Repository<Notification>, {} as Repository<User>);
+      await expect(service.markRead(actorId, ids)).rejects.toBeInstanceOf(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
+  it('scopes selected and all read updates to the authenticated account', async () => {
+    const update = jest.fn().mockResolvedValue({ affected: 2 });
+    const service = new NotificationsService({ update } as unknown as Repository<Notification>, {} as Repository<User>);
+    const controller = new NotificationsController(service, {} as EmailService);
+    const ids = ['00000000-0000-4000-8000-000000000003'];
+    await expect(controller.read({ user: { sub: actorId } }, { ids })).resolves.toEqual({ updated: 2 });
+    expect(update.mock.calls[0][0]).toMatchObject({ user: { id: actorId }, read: false });
+    expect(update.mock.calls[0][0].id.value).toEqual(ids);
+    await expect(controller.readAll({ user: { sub: actorId } })).resolves.toEqual({ updated: 2 });
+    expect(update.mock.calls[1][0]).toEqual({ user: { id: actorId }, read: false });
+    expect(update.mock.calls[1][1]).toEqual({ read: true, readAt: expect.any(Date) });
+    await expect(controller.readAll({ user: { roles: ['admin'] } })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([{ ids: [] }, { ids: [actorId, actorId] }, { ids: ['invalid'] }, { ids: Array.from({ length: 101 }, () => actorId) }])(
+    'rejects invalid selected notification IDs %j', async ({ ids }) => {
+      expect((await validate(plainToInstance(ReadNotificationsDto, { ids }))).length).toBeGreaterThan(0);
+    },
+  );
   it('allows self delivery using the authenticated recipient ID', async () => {
     const f = fixture();
     expect(await f.controller.send({ user: { sub: actorId } }, { userId: actorId, template: 'Synthetic notice', params: { source: 'qa' } }))

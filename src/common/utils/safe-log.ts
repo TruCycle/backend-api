@@ -10,3 +10,8 @@ export function safeErrorClass(error: unknown): string {
 export function safeFailure(operation: string, error: unknown) {
   return { operation, errorClass: safeErrorClass(error) };
 }
+
+export function releaseLogFields(): { release?: string } {
+  const release = process.env.APP_RELEASE_SHA || process.env.RAILWAY_GIT_COMMIT_SHA;
+  return release && /^[0-9a-f]{40}$/i.test(release) ? { release } : {};
+}

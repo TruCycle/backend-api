@@ -74,8 +74,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
 
   async handleConnection(client: Socket): Promise<void> {
     try {
-      const token = this.extractToken(client);
-      const { userId } = await this.access.connect(client, token);
+      const { userId } = await this.access.connect(client, () => this.extractToken(client));
       client.data.userId = userId;
       this.socketUser.set(client.id, userId);
       client.emit('auth:ready');

@@ -1,7 +1,7 @@
-import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, Optional, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { randomInt } from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 
@@ -23,10 +23,13 @@ import { Shop } from '../shops/shop.entity';
 import { CreateShopDto } from '../shops/dto/create-shop.dto';
 import { normalizeShopIdentity, withShopOwnerLock, assertNoDuplicateShop } from '../shops/shop-validation';
 import { AuthSessionsService } from './auth-sessions.service';
+import { AuthEmailOutboxService } from './auth-email-outbox.service';
 import { ItemGeocodingService } from '../items/item-geocoding.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(Role) private readonly roles: Repository<Role>,
@@ -38,6 +41,7 @@ export class AuthService {
     private readonly email: EmailService,
     private readonly sessions: AuthSessionsService,
     private readonly geocoding: ItemGeocodingService,
+    @Optional() private readonly authEmailOutbox?: AuthEmailOutboxService,
   ) {}
 
   private async geocodeAddress(query: string): Promise<{ latitude: number; longitude: number }> {
@@ -71,7 +75,7 @@ export class AuthService {
     const location = identity ? await this.geocodeAddress(identity.postcode) : undefined;
     const hash = await this.passwordService.hash(password);
     const role = await this.getOrCreateRole(code);
-    let created: { user: User; shop?: Shop };
+    let created: { user: User; shop?: Shop; queued?: boolean };
     try {
       created = await this.users.manager.transaction(async manager => {
         const users = manager.getRepository(User);
@@ -90,13 +94,13 @@ export class AuthService {
         }
         const links = manager.getRepository(UserRole);
         await links.save(links.create({ user: saved, role }));
-        return { user: saved, shop };
+        return { user: saved, shop, queued: await this.queueVerification(manager, saved) };
       });
     } catch (error) {
       if ((error as { code?: string })?.code === '23505') throw new ConflictException('Email already registered. Please log in or use account recovery.');
       throw error;
     }
-    const verificationDelivery = await this.sendVerificationEmail(created.user);
+    const verificationDelivery = created.queued ? { status: 'queued' as const } : await this.sendVerificationEmail(created.user);
     await this.sendWelcomeEmail(created.user);
     return { user: await this.findUserWithRoles(created.user.id), shop: created.shop ? this.viewShop(created.shop) : undefined, verificationDelivery };
   }
@@ -179,6 +183,7 @@ export class AuthService {
         user.status = UserStatus.ACTIVE;
         await users.save(user);
       }
+      await this.authEmailOutbox?.discard(manager, user.id, 'verification');
       // Verification cannot mint sessions or replace a signed-in account.
       return { verified: true as const };
     });
@@ -218,61 +223,72 @@ export class AuthService {
     }
 
     const payload = ticket.getPayload();
-    if (!payload || !payload.sub) {
+    if (!payload || !payload.sub?.trim()) {
       throw new UnauthorizedException('Invalid Google credential');
     }
-    if (payload.email_verified === false || !payload.email) {
+    if (payload.email_verified !== true || !payload.email?.trim()) {
       throw new UnauthorizedException('Google account email is not verified');
     }
 
     const googleId = payload.sub;
     const email = payload.email.trim().toLowerCase();
 
-    // 1. Match on google_id, 2. fall back to a matching email (link the account).
-    let user =
-      (await this.users.findOne({ where: { googleId } })) ??
-      (await this.users.findOne({ where: { email } }));
-
-    if (user) {
-      if (user.status === UserStatus.DELETED || user.status === UserStatus.SUSPENDED) {
-        throw new UnauthorizedException('Account is not eligible for sign-in');
-      }
-      let dirty = false;
-      if (!user.googleId) {
-        user.googleId = googleId;
-        dirty = true;
-      }
-      // A Google sign-in proves the email — activate a pending account.
-      if (user.status === UserStatus.PENDING) {
-        user.status = UserStatus.ACTIVE;
-        dirty = true;
-      }
-      if (!user.firstName && payload.given_name) {
-        user.firstName = payload.given_name;
-        dirty = true;
-      }
-      if (!user.lastName && payload.family_name) {
-        user.lastName = payload.family_name;
-        dirty = true;
-      }
-      if (dirty) await this.users.save(user);
-    } else {
-      const created = this.users.create({
-        email,
-        firstName: payload.given_name ?? undefined,
-        lastName: payload.family_name ?? undefined,
-        googleId,
-        status: UserStatus.ACTIVE,
-      });
-      user = await this.users.save(created);
-      const role = await this.getOrCreateRole(RoleCode.CUSTOMER);
-      await this.userRoles.save(this.userRoles.create({ user, role }));
-      await this.sendWelcomeEmail(user);
+    const authoritativeEmail = email.endsWith('@gmail.com') || Boolean(payload.hd?.trim());
+    const linked = await this.users.findOne({ where: { googleId }, loadEagerRelations: false });
+    if (!linked && !authoritativeEmail) {
+      throw new UnauthorizedException('Use email and password for this email address');
     }
+    let created = false;
+    let user: User;
+    try {
+      user = await this.users.manager.transaction(async manager => {
+        const users = manager.getRepository(User);
+        const lock = { mode: 'pessimistic_write' } as const;
+        const account = linked
+          ? await users.findOne({ where: { id: linked.id }, loadEagerRelations: false, lock })
+          : await users.findOne({ where: { email }, loadEagerRelations: false, lock });
+        if (linked && account?.googleId !== googleId) throw new UnauthorizedException('Use your existing sign-in method');
+        if (account) return this.updateGoogleAccount(manager, account, googleId, payload);
 
+        const saved = await users.save(users.create({
+          email, firstName: payload.given_name, lastName: payload.family_name, googleId, status: UserStatus.ACTIVE,
+        }));
+        const roles = manager.getRepository(Role);
+        await roles.upsert({ code: RoleCode.CUSTOMER }, { conflictPaths: ['code'], skipUpdateIfNoValuesChanged: true });
+        const role = await roles.findOneByOrFail({ code: RoleCode.CUSTOMER });
+        const links = manager.getRepository(UserRole);
+        await links.save(links.create({ user: saved, role }));
+        created = true;
+        return saved;
+      });
+    } catch (error) {
+      if ((error as { code?: string })?.code !== '23505') throw error;
+      const winner = await this.users.findOne({ where: { googleId }, loadEagerRelations: false });
+      if (!winner) throw new UnauthorizedException('Use your existing sign-in method');
+      user = winner;
+      created = false;
+    }
     const tokens = await this.sessions.create(user.id, { googleId });
-
+    if (created) await this.sendWelcomeEmail(user);
     return { user: await this.findUserWithRoles(user.id), tokens };
+  }
+
+  private async updateGoogleAccount(manager: EntityManager, user: User, googleId: string,
+    profile: { given_name?: string; family_name?: string }): Promise<User> {
+    if (user.googleId && user.googleId !== googleId) throw new UnauthorizedException('Use your existing sign-in method');
+    if (user.status !== UserStatus.ACTIVE) {
+      // A pending password account might have been created by somebody else.
+      throw new UnauthorizedException('Account is not eligible for Google sign-in');
+    }
+    const firstName = user.firstName || profile.given_name;
+    const lastName = user.lastName || profile.family_name;
+    if (user.googleId !== googleId || firstName !== user.firstName || lastName !== user.lastName) {
+      user.googleId = googleId;
+      user.firstName = firstName;
+      user.lastName = lastName;
+      await manager.getRepository(User).save(user);
+    }
+    return user;
   }
 
   private async findUserWithRoles(id: string) {
@@ -288,6 +304,21 @@ export class AuthService {
       roles: roleCodes,
       createdAt: user!.createdAt,
     };
+  }
+
+  private async queueVerification(manager: EntityManager, user: User): Promise<boolean> {
+    if (!this.authEmailOutbox?.enabled) return false;
+    const appBase = frontendOrigin();
+    if (!appBase) return false;
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const token = await this.jwt.signAsync(
+      { sub: user.id, email: user.email, type: 'verify', iat: issuedAt },
+      { expiresIn: '24h' },
+    );
+    await this.authEmailOutbox.enqueue(manager, user.id,
+      { kind: 'verification', email: user.email, token, frontendOrigin: appBase },
+      new Date((issuedAt + 24 * 60 * 60) * 1_000));
+    return true;
   }
 
   private async sendVerificationEmail(user: User) {
@@ -351,7 +382,17 @@ export class AuthService {
     // Look up user; avoid leaking existence or state
     const user = await this.users.findOne({ where: { email: normalizedEmail } });
     if (user && user.status === UserStatus.PENDING) {
-      await this.sendVerificationEmail(user);
+      if (this.authEmailOutbox?.enabled) {
+        await this.users.manager.transaction(async manager => {
+          const locked = await manager.getRepository(User).findOne({ where: { id: user.id }, loadEagerRelations: false,
+            lock: { mode: 'pessimistic_write' } });
+          if (locked?.status === UserStatus.PENDING && locked.email === normalizedEmail) {
+            await this.queueVerification(manager, locked);
+          }
+        }).catch(() => this.logger.warn('Could not queue verification email'));
+      } else {
+        await this.sendVerificationEmail(user);
+      }
     }
     // Always return success from controller to prevent user enumeration
   }
@@ -361,7 +402,11 @@ export class AuthService {
     const user = await this.users.findOne({ where: { email: normalizedEmail } });
     // Do not reveal whether the user exists; send only for eligible accounts
     if (user && user.status !== UserStatus.DELETED && user.status !== UserStatus.SUSPENDED) {
-      await this.sendResetPasswordOtpEmail(user);
+      if (this.authEmailOutbox?.enabled) {
+        await this.sendResetPasswordOtpEmail(user).catch(() => this.logger.warn('Could not queue password reset email'));
+      } else {
+        await this.sendResetPasswordOtpEmail(user);
+      }
     }
     // Controller always returns success
   }
@@ -371,7 +416,7 @@ export class AuthService {
     if (!Number.isFinite(parsed) || parsed <= 0) {
       return 10;
     }
-    return Math.min(Math.trunc(parsed), 60);
+    return Math.max(1, Math.min(Math.trunc(parsed), 60));
   }
 
   private generatePasswordResetOtp(): string {
@@ -386,10 +431,13 @@ export class AuthService {
       const users = manager.getRepository(User);
       const locked = await users.findOne({ where: { id: user.id }, loadEagerRelations: false, lock: { mode: 'pessimistic_write' } });
       if (!locked || locked.email !== user.email || locked.status === UserStatus.DELETED || locked.status === UserStatus.SUSPENDED) return null;
-      await users.update(locked.id, {
-        resetOtpHash: otpHash,
-        resetOtpExpiresAt: new Date(Date.now() + expiresInMinutes * 60 * 1000),
-      });
+      const expiresAt = new Date(Date.now() + expiresInMinutes * 60_000);
+      await users.update(locked.id, { resetOtpHash: otpHash, resetOtpExpiresAt: expiresAt });
+      if (this.authEmailOutbox?.enabled) {
+        await this.authEmailOutbox.enqueue(manager, locked.id,
+          { kind: 'password_reset', email: locked.email, otp, otpHash }, expiresAt);
+        return null;
+      }
       return { email: locked.email, firstName: locked.firstName };
     });
     if (!recipient) return;
@@ -434,6 +482,7 @@ export class AuthService {
       locked.passwordHash = hash; locked.resetOtpHash = null; locked.resetOtpExpiresAt = null;
       await users.save(locked);
       await this.sessions.revokeAllInTransaction(manager, locked.id);
+      await this.authEmailOutbox?.discard(manager, locked.id, 'password_reset');
     });
 
     // Optional: notify user about password change

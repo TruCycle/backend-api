@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiQuery, ApiTags 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
+import { ReadNotificationsDto } from './dto/read-notifications.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { EmailService } from './email.service';
 import { NotificationsService } from './notifications.service';
@@ -80,6 +81,24 @@ export class NotificationsController {
     const userId = this.getUserId(req);
     const count = await this.notifications.countUnread(userId);
     return { count };
+  }
+
+  @Post('read')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Mark selected notifications as read for the current account' })
+  async read(@Req() req: any, @Body() body: ReadNotificationsDto) {
+    const updated = await this.notifications.markRead(this.getUserId(req), body.ids);
+    return { updated };
+  }
+
+  @Post('read-all')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Mark all current account notifications as read' })
+  async readAll(@Req() req: any) {
+    const updated = await this.notifications.markAllRead(this.getUserId(req));
+    return { updated };
   }
 
   @Post('send')

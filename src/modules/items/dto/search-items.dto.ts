@@ -71,6 +71,13 @@ export class SearchItemsDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   category?: string;
 
+  @ApiPropertyOptional({ description: 'Literal text search in item title and category', maxLength: 120 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  search?: string;
+
   @ApiPropertyOptional({ description: 'Requested page (1-indexed)', minimum: 1, default: 1 })
   @IsOptional()
   @Transform(({ value }) => toInteger(value))

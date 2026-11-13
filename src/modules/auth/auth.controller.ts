@@ -42,7 +42,7 @@ export class AuthController {
     type: RegisterDto,
   })
   @ApiCreatedResponse({
-    description: 'User created successfully. verificationDelivery describes provider acceptance, not inbox delivery.',
+    description: 'User created successfully. verificationDelivery reports queue or provider status. Inbox delivery is separate.',
     schema: {
       example: {
         status: 'success',
@@ -177,6 +177,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @LimitAuthOperation('refresh')
   @ApiOperation({ summary: 'Refresh access and refresh tokens' })
   @ApiBody({ description: 'Refresh token payload', type: RefreshTokenDto })
   @HttpCode(200)

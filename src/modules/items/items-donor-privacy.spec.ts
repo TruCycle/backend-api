@@ -27,7 +27,7 @@ function queryMock() {
     groupBy: jest.fn().mockReturnThis(), orderBy: jest.fn().mockReturnThis(),
     addOrderBy: jest.fn().mockReturnThis(), offset: jest.fn().mockReturnThis(),
     limit: jest.fn().mockReturnThis(), setParameters: jest.fn().mockReturnThis(),
-    leftJoinAndSelect: jest.fn().mockReturnThis(), skip: jest.fn().mockReturnThis(), take: jest.fn().mockReturnThis(),
+    leftJoin: jest.fn().mockReturnThis(), leftJoinAndSelect: jest.fn().mockReturnThis(), skip: jest.fn().mockReturnThis(), take: jest.fn().mockReturnThis(),
     getManyAndCount: jest.fn(), getMany: jest.fn(), getRawMany: jest.fn(), getRawOne: jest.fn(),
   };
 }
@@ -189,7 +189,7 @@ describe.each(['real names', 'email fallback'])('Public donor privacy with %s', 
   it.each(viewers)('neutralises search donors for %s and preserves search/own-claim behaviour', async (_role, viewerId) => {
     const result = await service.searchPublicListings({
       lat: 51.5, lng: 0.06, radius: 7, limit: 12, page: 2,
-      status: ItemStatus.ACTIVE, category: ' Furniture ',
+      status: ItemStatus.ACTIVE, category: ' Furniture ', search: ' SOFA %_ ',
     }, viewerId);
 
     expect(result.items[0].owner).toEqual(expectedOwner());
@@ -200,6 +200,10 @@ describe.each(['real names', 'email fallback'])('Public donor privacy with %s', 
     expect(donorQuery.where).toHaveBeenCalledWith('u.id IN (:...ids)', { ids: [donor.id] });
     expect(itemQuery.where).toHaveBeenCalledWith('item.status IN (:...statuses)', { statuses: [ItemStatus.ACTIVE] });
     expect(itemQuery.andWhere).toHaveBeenCalledWith('LOWER(item.category) = :category', { category: 'furniture' });
+    expect(itemQuery.andWhere).toHaveBeenCalledWith(
+      "(STRPOS(LOWER(COALESCE(item.title, '')), :searchText) > 0 OR STRPOS(LOWER(COALESCE(item.category, '')), :searchText) > 0)",
+      { searchText: 'sofa %_' },
+    );
     expect(itemQuery.offset).toHaveBeenCalledWith(12);
     expect(itemQuery.limit).toHaveBeenCalledWith(12);
     expect(itemQuery.setParameters).toHaveBeenCalledWith({ originLat: 51.5, originLng: 0.06, radiusMeters: 7000 });
@@ -212,6 +216,23 @@ describe.each(['real names', 'email fallback'])('Public donor privacy with %s', 
         where: { collector: { id: viewerId }, item: { id: expect.anything() } },
       });
     } else expect(claims.find).not.toHaveBeenCalled();
+  });
+
+  it('keeps unavailable impact sums distinct from an explicit zero', async () => {
+    itemQuery.getRawOne
+      .mockResolvedValueOnce({ total_co2: null, exchange_count: 1, donate_count: 0 })
+      .mockResolvedValueOnce({ monthly_co2: null });
+    const unavailable = await service.getUserImpactMetrics(donor.id);
+    expect(unavailable).toMatchObject({
+      total_co2_saved_kg: null, items_exchanged: 1,
+      monthly_goal: { achieved_kg: null, remaining_kg: null, progress_percent: null },
+    });
+    itemQuery.getRawOne
+      .mockResolvedValueOnce({ total_co2: '0', exchange_count: 0, donate_count: 0 })
+      .mockResolvedValueOnce({ monthly_co2: '0' });
+    expect(await service.getUserImpactMetrics(donor.id)).toMatchObject({
+      total_co2_saved_kg: 0, monthly_goal: { achieved_kg: 0, progress_percent: 0 },
+    });
   });
 
   it('uses the same public SQL point for distance and membership, never raw geometry', async () => {

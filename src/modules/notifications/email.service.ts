@@ -15,6 +15,7 @@ interface SendEmailParams {
   to: string;
   subject: string;
   html: string;
+  classifyTransientRejections?: boolean;
 }
 
 interface EmailAttachment {
@@ -140,7 +141,7 @@ export class EmailService implements OnModuleInit {
   private async sendViaBrevo(
     apiKey: string,
     from: string,
-    { to, subject, html }: SendEmailParams,
+    { to, subject, html, classifyTransientRejections }: SendEmailParams,
     attachments: EmailAttachment[],
     signal: AbortSignal,
   ): Promise<EmailDeliveryOutcome> {
@@ -172,13 +173,13 @@ export class EmailService implements OnModuleInit {
     if (!res.ok) {
       this.logger.error({ operation: 'email_delivery', provider: 'brevo', status: res.status });
     }
-    return { status: res.ok ? 'accepted' : 'rejected' };
+    return this.providerOutcome(res, classifyTransientRejections);
   }
 
   private async sendViaResend(
     apiKey: string,
     from: string,
-    { to, subject, html }: SendEmailParams,
+    { to, subject, html, classifyTransientRejections }: SendEmailParams,
     attachments: EmailAttachment[],
     signal: AbortSignal,
   ): Promise<EmailDeliveryOutcome> {
@@ -195,10 +196,18 @@ export class EmailService implements OnModuleInit {
     if (!res.ok) {
       this.logger.error({ operation: 'email_delivery', provider: 'resend', status: res.status });
     }
-    return { status: res.ok ? 'accepted' : 'rejected' };
+    return this.providerOutcome(res, classifyTransientRejections);
   }
 
-  async sendEmail({ to, subject, html }: SendEmailParams): Promise<EmailDeliveryOutcome> {
+  private providerOutcome(response: Response, classifyTransientRejections?: boolean): EmailDeliveryOutcome {
+    if (response.ok) return { status: 'accepted' };
+    if (classifyTransientRejections && (response.status === 408 || response.status === 429 || response.status >= 500)) {
+      return { status: 'failed' };
+    }
+    return { status: 'rejected' };
+  }
+
+  async sendEmail(params: SendEmailParams): Promise<EmailDeliveryOutcome> {
     const brevoApiKey = process.env.BREVO_API_KEY;
     const resendApiKey = process.env.RESEND_API_KEY;
     const from = process.env.MAIL_FROM || 'no-reply@example.com';
@@ -212,10 +221,6 @@ export class EmailService implements OnModuleInit {
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const attachments = await this.loadInlineAttachments(html);
-      const delivery = brevoApiKey
-        ? this.sendViaBrevo(brevoApiKey, from, { to, subject, html }, attachments, controller.signal)
-        : this.sendViaResend(resendApiKey!, from, { to, subject, html }, attachments, controller.signal);
       // Bound stalled providers without sending a second, possibly duplicate email.
       const deadline = new Promise<EmailDeliveryOutcome>((resolve) => {
         timer = setTimeout(() => {
@@ -224,6 +229,12 @@ export class EmailService implements OnModuleInit {
           this.logger.error({ operation: 'email_delivery', outcome: 'timeout' });
           resolve({ status: 'timeout' });
         }, 10000);
+      });
+      const delivery = this.loadInlineAttachments(params.html).then(attachments => {
+        if (controller.signal.aborted) return { status: 'timeout' } as const;
+        return brevoApiKey
+          ? this.sendViaBrevo(brevoApiKey, from, params, attachments, controller.signal)
+          : this.sendViaResend(resendApiKey!, from, params, attachments, controller.signal);
       });
       return await Promise.race([delivery, deadline]);
     } catch (err: unknown) {

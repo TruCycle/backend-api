@@ -7,7 +7,8 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { isUUID } from 'class-validator';
+import { EntityManager, In, Repository } from 'typeorm';
 
 import { safeFailure } from '../../common/utils/safe-log';
 import { User } from '../users/user.entity';
@@ -87,27 +88,65 @@ export class NotificationsService {
     const normalizedUserId = this.normalizeUserId(userId);
     const user = await this.users.findOne({ where: { id: normalizedUserId } });
     if (!user) throw new BadRequestException('User not found');
-    let n = this.notifications.create({ user, type, title, body: body ?? null, data: data ?? null, read: false });
-    n = await this.notifications.save(n);
-    const view = this.view(n);
+    const view = await this.persist(this.notifications, user, type, title, body, data);
+    await this.emitPersisted(normalizedUserId, view);
+    return view;
+  }
+
+  async createInTransaction(manager: EntityManager, userId: string, type: NotificationType, title: string,
+    body: string, data: Record<string, unknown>): Promise<NotificationViewModel> {
+    return this.persist(manager.getRepository(Notification), { id: this.normalizeUserId(userId) }, type, title, body, data);
+  }
+
+  private async persist(repository: Repository<Notification>, user: Pick<User, 'id'>, type: NotificationType, title: string,
+    body?: string | null, data?: Record<string, unknown> | null): Promise<NotificationViewModel> {
+    const row = repository.create({ user, type, title, body: body ?? null, data: data ?? null, read: false });
+    return this.view(await repository.save(row));
+  }
+
+  async emitPersisted(userId: string, view: NotificationViewModel): Promise<void> {
     try {
-      await this.gateway?.emitToUser(normalizedUserId, view);
+      await this.gateway?.emitToUser(userId, view);
     } catch (err) {
       this.logger.warn(safeFailure('notification_emit', err));
     }
-    return view;
   }
 
   async markRead(userId: string, ids: string[]): Promise<number> {
     const normalizedUserId = this.normalizeUserId(userId);
-    const unique = Array.from(new Set((ids || []).filter((v) => typeof v === 'string' && v.trim())));
+    if (!Array.isArray(ids) || ids.length > 100 ||
+        ids.some(id => typeof id !== 'string' || !isUUID(id.trim(), 'all'))) {
+      throw new BadRequestException('Provide at most 100 valid notification IDs');
+    }
+    const unique = Array.from(new Set(ids.map(id => id.trim().toLowerCase())));
     if (unique.length === 0) return 0;
     const now = new Date();
     const res = await this.notifications.update({ id: In(unique), user: { id: normalizedUserId }, read: false }, {
       read: true,
       readAt: now,
     } as any);
-    return res.affected || 0;
+    const updated = res.affected || 0;
+    if (updated) await this.emitReadChanged(normalizedUserId);
+    return updated;
+  }
+
+  async markAllRead(userId: string): Promise<number> {
+    const normalizedUserId = this.normalizeUserId(userId);
+    const result = await this.notifications.update({
+      user: { id: normalizedUserId },
+      read: false,
+    }, { read: true, readAt: new Date() });
+    const updated = result.affected ?? 0;
+    if (updated) await this.emitReadChanged(normalizedUserId);
+    return updated;
+  }
+
+  private async emitReadChanged(userId: string): Promise<void> {
+    try {
+      await this.gateway?.emitReadChanged(userId);
+    } catch (error) {
+      this.logger.warn(safeFailure('notification_read_delivery', error));
+    }
   }
 
   // Domain helpers — call from Items/Claims flows
@@ -226,17 +265,19 @@ export class NotificationsService {
   }
 
   view(n: Notification): NotificationViewModel {
-    // Only explicit generated provenance is rewritten. Old unmarked general
-    // notifications and user-authored content need a separate reviewed policy.
-    const nearby = n.type === 'item.nearby' && n.data?.source === NEARBY_ITEM_SOURCE && typeof n.data.itemId === 'string'
-      ? nearbyItemProjection(n.data.itemId, n.data.itemTitle, n.data.itemPostcode) : null;
+    // The server-generated nearby type predates the source marker. Rebuild
+    // legacy messages without returning their stored text or arbitrary metadata.
+    const nearby = n.type === 'item.nearby'
+      ? nearbyItemProjection(n.data?.itemId, n.data?.source === NEARBY_ITEM_SOURCE ? n.data?.itemTitle : null,
+        n.data?.itemPostcode)
+      : null;
     return {
       id: n.id,
       userId: n.user?.id ?? null,
       type: n.type,
       title: nearby?.title ?? n.title,
       body: nearby?.body ?? n.body ?? null,
-      data: nearby?.data ?? n.data ?? null,
+      data: nearby ? nearby.data : n.data ?? null,
       read: n.read,
       readAt: n.readAt ?? null,
       createdAt: n.createdAt,

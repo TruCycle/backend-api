@@ -11,6 +11,7 @@ import { User } from '../users/user.entity';
 import { KycProfile } from '../users/kyc-profile.entity';
 
 import { AuthResetEmailLimiter } from './auth-rate-limit.guard';
+import { AuthEmailOutboxService } from './auth-email-outbox.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { Shop } from '../shops/shop.entity';
@@ -22,7 +23,7 @@ import { Shop } from '../shops/shop.entity';
     forwardRef(() => NotificationsModule),
   ],
   controllers: [AuthController],
-  providers: [AuthService, AuthResetEmailLimiter, PasswordService, JwtAuthGuard, ItemGeocodingService],
+  providers: [AuthService, AuthEmailOutboxService, AuthResetEmailLimiter, PasswordService, JwtAuthGuard, ItemGeocodingService],
   exports: [],
 })
 export class AuthModule {}

@@ -85,7 +85,7 @@ interface CommunityBoardPostcodeEntry {
   readonly spots: number;
   readonly rescues: number;
   readonly activeSpots: number;
-  readonly totalCo2eKg: number;
+  readonly totalCo2eKg: number | null;
   readonly impactPoints: number;
 }
 
@@ -95,7 +95,7 @@ interface CommunityBoardSpotterEntry {
   readonly postcode: string | null;
   readonly spotsPosted: number;
   readonly rescues: number;
-  readonly totalCo2eKg: number;
+  readonly totalCo2eKg: number | null;
   readonly impactPoints: number;
 }
 
@@ -260,14 +260,14 @@ export class GamificationService {
     });
   }
 
-  async recordFoundItemPickedUp(userId: string, itemId: string, occurredAt?: Date | null): Promise<void> {
-    await this.recordActivity(this.pointTransactions.manager, {
+  async recordFoundItemPickedUp(manager: EntityManager, userId: string, itemId: string, occurredAt: Date): Promise<void> {
+    await this.recordActivity(manager, {
       userId,
       points: FOUND_ITEM_PICKED_UP_POINTS,
       reason: 'Marked a found item as picked up',
       actionType: 'found_item_picked_up',
       actionId: itemId,
-      occurredAt: occurredAt ?? new Date(),
+      occurredAt,
     });
   }
 
@@ -303,7 +303,7 @@ export class GamificationService {
         localSpotterRank: currentUserSpotterRank,
         impactPoints: currentUserSpotter?.impactPoints ?? 0,
         spotsPosted: currentUserSpotter?.spotsPosted ?? 0,
-        totalCo2eKg: currentUserSpotter?.totalCo2eKg ?? 0,
+        totalCo2eKg: currentUserSpotter ? currentUserSpotter.totalCo2eKg : 0,
       },
     };
   }
@@ -394,8 +394,7 @@ export class GamificationService {
 
     const topArea = [...areaTally.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
     const pickedUp = items.filter(item => item.status === FoundItemStatus.PICKED_UP);
-    const hasUnknownEstimate = pickedUp.some(item =>
-      typeof item.estimatedCo2eKg !== 'number' || !Number.isFinite(item.estimatedCo2eKg) || item.estimatedCo2eKg < 0);
+    const hasUnknownEstimate = pickedUp.some(item => this.validImpactEstimate(item.estimatedCo2eKg) === null);
 
     return {
       spotsPosted: items.length,
@@ -412,7 +411,7 @@ export class GamificationService {
         title: item.title,
         postcode: item.postcode,
         status: item.status,
-        estimatedCo2eKg: item.estimatedCo2eKg ?? 0,
+        estimatedCo2eKg: this.validImpactEstimate(item.estimatedCo2eKg),
         impactPoints: item.impactPoints ?? 0,
         postedAt: item.postedAt.toISOString(),
       })),
@@ -470,7 +469,7 @@ export class GamificationService {
       spots: number;
       rescues: number;
       activeSpots: number;
-      totalCo2eKg: number;
+      totalCo2eKg: number | null;
       impactPoints: number;
     }>();
     const spotterMap = new Map<string, {
@@ -479,12 +478,14 @@ export class GamificationService {
       postcode: string | null;
       spotsPosted: number;
       rescues: number;
-      totalCo2eKg: number;
+      totalCo2eKg: number | null;
       impactPoints: number;
     }>();
 
     for (const item of items) {
       const outwardPostcode = resolveOutwardPostcode(item.postcode);
+      const rescued = item.status === FoundItemStatus.PICKED_UP;
+      const estimate = rescued ? this.validImpactEstimate(item.estimatedCo2eKg) : 0;
       if (outwardPostcode) {
         const existingPostcode = postcodeMap.get(outwardPostcode) ?? {
           postcode: outwardPostcode,
@@ -495,10 +496,10 @@ export class GamificationService {
           impactPoints: 0,
         };
         existingPostcode.spots += 1;
-        existingPostcode.rescues += item.status === FoundItemStatus.PICKED_UP ? 1 : 0;
+        existingPostcode.rescues += rescued ? 1 : 0;
         existingPostcode.activeSpots +=
           item.status === FoundItemStatus.AVAILABLE || item.status === FoundItemStatus.CLAIMED ? 1 : 0;
-        existingPostcode.totalCo2eKg += item.status === FoundItemStatus.PICKED_UP ? this.nonNegativeMetric(item.estimatedCo2eKg) : 0;
+        existingPostcode.totalCo2eKg = this.addImpactEstimate(existingPostcode.totalCo2eKg, estimate);
         existingPostcode.impactPoints += item.impactPoints ?? 0;
         postcodeMap.set(outwardPostcode, existingPostcode);
       }
@@ -514,8 +515,8 @@ export class GamificationService {
         impactPoints: 0,
       };
       spotter.spotsPosted += 1;
-      spotter.rescues += item.status === FoundItemStatus.PICKED_UP ? 1 : 0;
-      spotter.totalCo2eKg += item.status === FoundItemStatus.PICKED_UP ? this.nonNegativeMetric(item.estimatedCo2eKg) : 0;
+      spotter.rescues += rescued ? 1 : 0;
+      spotter.totalCo2eKg = this.addImpactEstimate(spotter.totalCo2eKg, estimate);
       spotter.impactPoints += item.impactPoints ?? 0;
       if (!spotter.postcode && outwardPostcode) {
         spotter.postcode = outwardPostcode;
@@ -683,7 +684,7 @@ export class GamificationService {
           reason: 'Marked a found item as picked up',
           actionType: 'found_item_picked_up',
           actionId: item.id,
-          occurredAt: item.updatedAt ?? item.postedAt ?? item.createdAt,
+          occurredAt: item.closedAt ?? item.updatedAt ?? item.postedAt ?? item.createdAt,
         });
       }
     }
@@ -726,8 +727,12 @@ export class GamificationService {
     }).orIgnore().execute();
   }
 
-  private nonNegativeMetric(value: unknown): number {
-    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+  private addImpactEstimate(total: number | null, estimate: number | null): number | null {
+    return total === null || estimate === null ? null : total + estimate;
+  }
+
+  private validImpactEstimate(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
   }
 
   private async syncUserState(manager: EntityManager, userId: string): Promise<void> {

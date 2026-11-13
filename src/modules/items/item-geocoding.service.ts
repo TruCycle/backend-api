@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 
+import { releaseLogFields } from '../../common/utils/safe-log';
 import { ItemLocation } from './item-location.interface';
 
 type JsonObject = Record<string, unknown>;
@@ -22,6 +23,7 @@ type ProviderBudget = { inFlight: number; retryAt: number; lastLimitLogAt: numbe
 // requests to the same provider need one budget across all of those instances.
 const providerBudgets = new Map<string, ProviderBudget>();
 const PROVIDER_COOLDOWN_MS = 5_000;
+const MAX_PROVIDER_COOLDOWN_MS = 5 * 60_000;
 
 function getProviderBudget(endpoint: string): ProviderBudget {
   const origin = new URL(endpoint).origin;
@@ -37,7 +39,7 @@ function retryDelay(response: Response, now: number): number {
   const header = response.headers?.get('Retry-After')?.trim();
   if (header) {
     const delay = /^\d+$/.test(header) ? Number(header) * 1_000 : Date.parse(header) - now;
-    if (Number.isFinite(delay) && delay > 0) return delay;
+    if (delay > 0) return Math.min(delay, MAX_PROVIDER_COOLDOWN_MS);
   }
   return response.status === 429 ? PROVIDER_COOLDOWN_MS : 0;
 }
@@ -96,7 +98,7 @@ export class ItemGeocodingService {
     if (reason === 'provider_cooldown' || budget.inFlight >= this.maxConcurrentRequests) {
       if (now - budget.lastLimitLogAt >= 60_000) {
         budget.lastLimitLogAt = now;
-        this.logger.warn(JSON.stringify({ event: 'geocoder_provider_budget', outcome: 'limited', reason }));
+        this.logger.warn(JSON.stringify({ event: 'geocoder_provider_budget', outcome: 'limited', reason, ...releaseLogFields() }));
       }
       throw new ServiceUnavailableException('Location lookup temporarily unavailable');
     }
@@ -112,7 +114,8 @@ export class ItemGeocodingService {
     let response: Response;
     try {
       response = await globalThis.fetch(endpoint + '?' + params.toString(), {
-        method: 'GET', headers: { 'User-Agent': this.userAgent, Accept: 'application/json', 'Accept-Language': 'en' }, signal,
+        method: 'GET', redirect: 'error',
+        headers: { 'User-Agent': this.userAgent, Accept: 'application/json', 'Accept-Language': 'en' }, signal,
       });
     } catch {
       if (signal.aborted) throw aborted();

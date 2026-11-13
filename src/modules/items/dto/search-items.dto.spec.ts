@@ -10,6 +10,13 @@ describe('Actual search DTO transforms and validation', () => {
     expect(dto.lat).toBeUndefined();
     expect(dto.lng).toBeUndefined();
   });
+  it('trims search text and rejects oversized search text', async () => {
+    const dto = plainToInstance(SearchItemsDto, { search: '  sofa %_  ' });
+    expect(await validate(dto)).toHaveLength(0);
+    expect(dto.search).toBe('sofa %_');
+    expect((await validate(plainToInstance(SearchItemsDto, { search: 'x'.repeat(121) })))
+      .map(error => error.property)).toContain('search');
+  });
   it.each(['nonsense', '', ' ', 'Infinity', 'NaN', '0x10', '0b10', [], {}, null])('rejects supplied malformed latitude %j instead of dropping it', async (value) => {
     const dto = plainToInstance(SearchItemsDto, { lat: value });
     expect(dto.lat).not.toBeUndefined();

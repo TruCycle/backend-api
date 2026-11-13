@@ -6,22 +6,27 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { DataSource } from 'typeorm';
 
-const operations = ['register', 'login', 'google', 'resend', 'reset_request', 'reset_attempt'] as const;
-type Operation = typeof operations[number];
+import { releaseLogFields } from '../../common/utils/safe-log';
+
+const requiredOperations = ['register', 'login', 'google', 'resend', 'reset_request', 'reset_attempt'] as const;
+type Operation = typeof requiredOperations[number] | 'refresh';
 const resetOperations = ['reset_request', 'reset_attempt'] as const;
 type ResetOperation = typeof resetOperations[number];
 const operationKey = Symbol('auth-rate-limit-operation');
 
-function parseLimits<T extends string>(name: string, keys: readonly T[], value?: string): ReadonlyMap<T, number> {
+function parseLimits<T extends string>(name: string, keys: readonly T[], value?: string, optionalKey?: T): ReadonlyMap<T, number> {
   if (!value?.trim()) return new Map();
   const invalid = () => new Error(`${name} must specify a positive integer budget for every supported operation`);
   let parsed: unknown;
   try { parsed = JSON.parse(value); } catch { throw invalid(); }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw invalid();
   const record = parsed as Record<string, unknown>;
-  if (Object.keys(record).length !== keys.length) throw invalid();
+  const configuredKeys = optionalKey && Object.prototype.hasOwnProperty.call(record, optionalKey)
+    ? [...keys, optionalKey]
+    : keys;
+  if (Object.keys(record).length !== configuredKeys.length) throw invalid();
   const limits = new Map<T, number>();
-  for (const operation of keys) {
+  for (const operation of configuredKeys) {
     const limit = record[operation];
     if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 1_000_000) throw invalid();
     limits.set(operation, limit);
@@ -30,7 +35,7 @@ function parseLimits<T extends string>(name: string, keys: readonly T[], value?:
 }
 
 export function parseAuthRateLimits(value?: string): ReadonlyMap<Operation, number> {
-  return parseLimits('AUTH_RATE_LIMITS', operations, value);
+  return parseLimits<Operation>('AUTH_RATE_LIMITS', requiredOperations, value, 'refresh');
 }
 
 // One row per operation. Rejected attempts leave the counter capped, and a
@@ -81,14 +86,13 @@ function reportBudgetEvent(operation: Operation, scope: 'global' | 'reset_email'
   const last = lastBudgetEvent.get(key);
   if (last !== undefined && now >= last && now - last < 60_000) return;
   lastBudgetEvent.set(key, now);
-  const release = process.env.APP_RELEASE_SHA || process.env.RAILWAY_GIT_COMMIT_SHA;
   // Keep each event atomic in log streams that ingest one line at a time.
   budgetLogger.warn(JSON.stringify({
     event: 'auth_rate_limit',
     operation,
     scope,
     outcome,
-    ...(release && /^[0-9a-f]{40}$/i.test(release) ? { release } : {}),
+    ...releaseLogFields(),
   }));
 }
 

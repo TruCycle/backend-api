@@ -23,7 +23,7 @@ describe('Found-item lifecycle (isolated repositories and providers)', () => {
   const reports = { create: jest.fn(), save: jest.fn() };
   let observationRows: FoundItemObservation[] = [];
   const observations = { find: jest.fn(), upsert: jest.fn() };
-  const notifications = { createAndEmit: jest.fn() };
+  const notifications = { createAndEmit: jest.fn(), createInTransaction: jest.fn(), emitPersisted: jest.fn() };
   const gateway = { broadcastRescue: jest.fn() };
   const gamification = { recordFoundItemPickedUp: jest.fn() };
 
@@ -75,7 +75,15 @@ describe('Found-item lifecycle (isolated repositories and providers)', () => {
     await service.updateStatus('owner', item.id, { status: FoundItemStatus.PICKED_UP });
     await service.updateStatus('owner', item.id, { status: FoundItemStatus.PICKED_UP });
     expect(gamification.recordFoundItemPickedUp).toHaveBeenCalledTimes(1);
+    expect(gamification.recordFoundItemPickedUp).toHaveBeenCalledWith(expect.anything(), 'owner', item.id, item.closedAt);
     expect(gateway.broadcastRescue).toHaveBeenCalledTimes(1);
+  });
+  it('rejects pickup and suppresses the rescue broadcast if the points write fails', async () => {
+    gamification.recordFoundItemPickedUp.mockRejectedValueOnce(new Error('Synthetic points write failure'));
+
+    await expect(service.updateStatus('owner', item.id, { status: FoundItemStatus.PICKED_UP }))
+      .rejects.toThrow('Synthetic points write failure');
+    expect(gateway.broadcastRescue).not.toHaveBeenCalled();
   });
   it('cannot reopen a completed pickup for repeated reward cycles', async () => {
     item.status = FoundItemStatus.PICKED_UP;
@@ -212,16 +220,17 @@ describe('Found-item lifecycle (isolated repositories and providers)', () => {
   it('72h nudge occurs once; 7d expiry cancels active claims without pickup proof', async () => {
     item.lastSeenAt=new Date('2026-11-01T00:00:00Z'); item.expiresAt=new Date('2026-11-08T00:00:00Z');
     items.find.mockResolvedValue([item]); claims.find.mockResolvedValue([claim]);
-    expect(await service.processLifecycle(new Date('2026-11-04T00:00:00Z'))).toEqual({nudged:1,expired:0});
-    expect(await service.processLifecycle(new Date('2026-11-04T01:00:00Z'))).toEqual({nudged:0,expired:0});
-    expect(notifications.createAndEmit).toHaveBeenCalledTimes(1);
-    expect(await service.processLifecycle(new Date('2026-11-08T00:00:00Z'))).toEqual({nudged:0,expired:1});
+    expect(await service.processLifecycle(new Date('2026-11-04T00:00:00Z'))).toEqual({nudged:1,expired:0,failed:0});
+    expect(await service.processLifecycle(new Date('2026-11-04T01:00:00Z'))).toEqual({nudged:0,expired:0,failed:0});
+    expect(notifications.createInTransaction).toHaveBeenCalledTimes(1);
+    expect(notifications.emitPersisted).toHaveBeenCalledTimes(1);
+    expect(await service.processLifecycle(new Date('2026-11-08T00:00:00Z'))).toEqual({nudged:0,expired:1,failed:0});
     expect(item.status).toBe(FoundItemStatus.EXPIRED); expect(claim.status).toBe(FoundItemClaimStatus.CANCELLED);
     expect(gamification.recordFoundItemPickedUp).not.toHaveBeenCalled();
   });
   it('historical null confirmation/expiry remains unscheduled', async () => {
     item.lastSeenAt=null; item.expiresAt=null; items.find.mockResolvedValue([item]);
-    expect(await service.processLifecycle()).toEqual({nudged:0,expired:0});
+    expect(await service.processLifecycle()).toEqual({nudged:0,expired:0,failed:0});
     expect(items.save).not.toHaveBeenCalled();
   });
   it('continues a bounded sweep when a selected row disappears before the lock', async () => {
@@ -230,7 +239,7 @@ describe('Found-item lifecycle (isolated repositories and providers)', () => {
     item.expiresAt = new Date('2026-11-08T00:00:00Z');
     items.find.mockResolvedValue([{ id: missingId }, item]);
     items.findOne.mockImplementation(async ({ where }) => where.id === missingId ? null : item);
-    await expect(service.processLifecycle(new Date('2026-11-08T00:00:00Z'))).resolves.toEqual({ nudged: 0, expired: 1 });
+    await expect(service.processLifecycle(new Date('2026-11-08T00:00:00Z'))).resolves.toEqual({ nudged: 0, expired: 1, failed: 0 });
     expect(item.status).toBe(FoundItemStatus.EXPIRED);
     expect(items.save).toHaveBeenCalledTimes(1);
   });
@@ -238,6 +247,18 @@ describe('Found-item lifecycle (isolated repositories and providers)', () => {
     await service.updateStatus('owner', item.id, {status:FoundItemStatus.GONE});
     expect(items.findOne.mock.calls[0][0]).toEqual({where:{id:item.id},lock:{mode:'pessimistic_write'}});
     expect(items.findOne.mock.invocationCallOrder[0]).toBeLessThan(items.save.mock.invocationCallOrder[0]);
+  });
+
+  it('counts a candidate failure and still expires the next due item', async () => {
+    item.lastSeenAt = new Date('2026-11-01T00:00:00Z');
+    item.expiresAt = new Date('2026-11-08T00:00:00Z');
+    items.find.mockResolvedValue([{ id: 'failed-candidate' }, item]);
+    items.findOne.mockRejectedValueOnce(new Error('Synthetic lock failure'));
+
+    await expect(service.processLifecycle(new Date('2026-11-08T00:00:00Z')))
+      .resolves.toEqual({ nudged: 0, expired: 1, failed: 1 });
+    expect(items.save).toHaveBeenCalledTimes(1);
+    expect(item.status).toBe(FoundItemStatus.EXPIRED);
   });
 
   it('concurrent close then claim cannot commit a late claim after closure (modelled transaction mutex)', async () => {

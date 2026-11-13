@@ -247,8 +247,8 @@ export class ShopsController {
             qr_code: 'https://.../qr.png',
             images: [{ url: 'https://...', alt_text: null }],
             estimated_co2_saved_kg: 1.2,
-            metadata: { brand: 'TruCycle' },
-            location: { address_line: '10 Downing St', postcode: 'SW1A 2AA', latitude: 51.5034, longitude: -0.1276 },
+            metadata: null,
+            location: { address_line: null, postcode: 'SW1A', latitude: 51.51, longitude: -0.13, precision: 'approximate' },
             created_at: '2024-06-01T10:00:00.000Z',
             claim: {
               id: 'claim-id',
@@ -301,8 +301,8 @@ export class ShopsController {
             qr_code: 'https://.../qr.png',
             images: [{ url: 'https://...', alt_text: null }],
             estimated_co2_saved_kg: 1.2,
-            metadata: { brand: 'TruCycle' },
-            location: { address_line: '10 Downing St', postcode: 'SW1A 2AA', latitude: 51.5034, longitude: -0.1276 },
+            metadata: null,
+            location: { address_line: null, postcode: 'SW1A', latitude: 51.51, longitude: -0.13, precision: 'approximate' },
             created_at: '2024-06-01T10:00:00.000Z',
             claim: {
               id: 'claim-id',
