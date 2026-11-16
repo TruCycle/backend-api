@@ -123,6 +123,24 @@ describe('Manual completion of an assigned claim', () => {
 });
 
 describe.each(['completeClaimOutManual', 'completeClaimOut'] as const)('%s notifications', method => {
+  it.each([false, true])('records progress in account order for reciprocal roles (reversed=%s)', async (reversed) => {
+    const { service, item, claim, gamification } = approvedExchange();
+    if (reversed) {
+      const donor = item.donor;
+      item.donor = claim.collector;
+      claim.collector = donor;
+      item.approvedCollectorId = claim.collector.id;
+    }
+    item.dropoffLocationId = 'shop';
+
+    await service[method](auth(claim.collector.id), item.id, 'shop');
+
+    expect(gamification.recordExchangeCompleted.mock.calls.map(([, id, , role]) => [id, role])).toEqual([
+      ['collector', reversed ? 'donor' : 'collector'],
+      ['donor', reversed ? 'collector' : 'donor'],
+    ]);
+  });
+
   it('notifies the parties after commit and skips notification on retry', async () => {
     const { service, item, commit, notifications, shops } = approvedExchange();
     item.dropoffLocationId = 'shop';
