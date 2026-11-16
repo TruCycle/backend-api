@@ -274,13 +274,14 @@ describe('Found-item lifecycle (isolated repositories and providers)', () => {
     expect(result.map(row => row.status)).toEqual(['fulfilled','rejected']);
     expect(item.status).toBe(FoundItemStatus.GONE);
   });
-  it('transaction commit failure never emits rewards or public announcements', async () => {
-    const manager = { getRepository: (entity: unknown) => entity === FoundItem ? items : entity === FoundItemClaim ? claims : entity === FoundItemReport ? reports : entity === User ? {} : observations };
+  it('writes pickup rewards through the transaction manager and suppresses broadcasts on commit failure', async () => {
+    const manager = { getRepository: (entity: unknown) => entity === FoundItem ? { ...items, manager } : entity === FoundItemClaim ? claims : entity === FoundItemReport ? reports : entity === User ? {} : observations };
     Object.assign(items, {manager:{transaction: async (operation: (value: typeof manager) => Promise<unknown>) => {
       await operation(manager); throw new Error('Synthetic transaction commit rejected');
     }}});
     await expect(service.updateStatus('owner',item.id,{status:FoundItemStatus.PICKED_UP})).rejects.toThrow('commit rejected');
-    expect(gamification.recordFoundItemPickedUp).not.toHaveBeenCalled();
+    expect(gamification.recordFoundItemPickedUp).toHaveBeenCalledTimes(1);
+    expect(gamification.recordFoundItemPickedUp).toHaveBeenCalledWith(manager, 'owner', item.id, item.closedAt);
     expect(gateway.broadcastRescue).not.toHaveBeenCalled();
   });
   it('GONE cannot become pickup proof without explicit reconfirmation', async () => {
