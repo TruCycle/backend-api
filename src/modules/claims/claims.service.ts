@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 
 import { Item, ItemStatus } from '../items/item.entity';
 import { sanitizeShopId } from '../qr/qr.utils';
@@ -313,25 +313,7 @@ export class ClaimsService {
       }
 
       try {
-        const donorId = claim.item?.donor?.id || null;
-        if (claim.collector?.id) {
-          await this.gamification.recordExchangeCompleted(
-            manager,
-            claim.collector.id,
-            claim.id,
-            'collector',
-            completionDate,
-          );
-        }
-        if (donorId) {
-          await this.gamification.recordExchangeCompleted(
-            manager,
-            donorId,
-            claim.id,
-            'donor',
-            completionDate,
-          );
-        }
+        await this.recordExchangeProgress(manager, claim, claim.item?.donor?.id, completionDate);
       } catch {
         // Progress-update failures are tolerated by the existing completion flow.
       }
@@ -482,25 +464,7 @@ export class ClaimsService {
       }
 
       try {
-        const resolvedDonorId = donorId || null;
-        if (claim.collector?.id) {
-          await this.gamification.recordExchangeCompleted(
-            manager,
-            claim.collector.id,
-            claim.id,
-            'collector',
-            completionDate,
-          );
-        }
-        if (resolvedDonorId) {
-          await this.gamification.recordExchangeCompleted(
-            manager,
-            resolvedDonorId,
-            claim.id,
-            'donor',
-            completionDate,
-          );
-        }
+        await this.recordExchangeProgress(manager, claim, donorId, completionDate);
       } catch {
         // Progress-update failures are tolerated by the existing completion flow.
       }
@@ -519,6 +483,22 @@ export class ClaimsService {
 
     if (completedClaim) await this.notifyClaimCollection(completedClaim, providedShopId);
     return result;
+  }
+
+  private async recordExchangeProgress(
+    manager: EntityManager,
+    claim: Claim,
+    donorId: string | null | undefined,
+    completedAt: Date,
+  ): Promise<void> {
+    const participants: Array<{ userId: string; role: 'collector' | 'donor' }> = [];
+    if (claim.collector?.id) participants.push({ userId: claim.collector.id, role: 'collector' });
+    if (donorId) participants.push({ userId: donorId, role: 'donor' });
+    // Match the wallet reward lock order in RewardsService for reciprocal exchanges.
+    participants.sort((left, right) => left.userId.localeCompare(right.userId));
+    for (const { userId, role } of participants) {
+      await this.gamification.recordExchangeCompleted(manager, userId, claim.id, role, completedAt);
+    }
   }
 
   private async notifyClaimCollection(claim: Claim, shopId: string): Promise<void> {

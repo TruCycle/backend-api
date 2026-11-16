@@ -609,7 +609,7 @@ export class GamificationService {
       // All gamification writers lock the same existing account before reading
       // or creating derived state. A DB lock also coordinates separate replicas.
       const rows: Array<{ id: string }> = await transaction.query(
-        'SELECT id FROM public."user" WHERE id = $1 FOR UPDATE', [userId],
+        'SELECT id FROM public."user" WHERE id = $1 FOR NO KEY UPDATE', [userId],
       );
       if (rows.length === 0) throw new NotFoundException('User not found');
       await work(transaction);

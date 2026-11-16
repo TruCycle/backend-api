@@ -87,7 +87,7 @@ describe('Concurrent gamification initialisation', () => {
     const work = jest.fn().mockResolvedValue(undefined);
     const pending = service['withUserStateLock'](outer, userId, work);
     expect(work).not.toHaveBeenCalled();
-    expect(transaction.query).toHaveBeenCalledWith('SELECT id FROM public."user" WHERE id = $1 FOR UPDATE', [userId]);
+    expect(transaction.query).toHaveBeenCalledWith('SELECT id FROM public."user" WHERE id = $1 FOR NO KEY UPDATE', [userId]);
     release([{id:userId}]); await pending;
     expect(work).toHaveBeenCalledWith(transaction);
   });
