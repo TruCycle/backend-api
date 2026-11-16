@@ -556,9 +556,11 @@ export class GamificationService {
   }
 
   private async recordActivity(manager: EntityManager, input: PointActivityInput): Promise<void> {
-    await this.createPointTransaction(manager, input);
-    await this.syncUserState(manager, input.userId);
-    await this.maybeApplyWeeklyStreakBonus(manager, input);
+    await this.withUserStateLock(manager, input.userId, async (transaction) => {
+      await this.createPointTransaction(transaction, input);
+      await this.syncUserState(transaction, input.userId);
+      await this.maybeApplyWeeklyStreakBonus(transaction, input);
+    });
   }
 
   private async maybeApplyWeeklyStreakBonus(
@@ -591,9 +593,27 @@ export class GamificationService {
   }
 
   private async backfillAndSync(userId: string): Promise<void> {
-    await this.dedupeTrackedPointTransactions(this.pointTransactions.manager, userId);
-    await this.backfillHistoricalActivity(this.pointTransactions.manager, userId);
-    await this.syncUserState(this.pointTransactions.manager, userId);
+    await this.withUserStateLock(this.pointTransactions.manager, userId, async (transaction) => {
+      await this.dedupeTrackedPointTransactions(transaction, userId);
+      await this.backfillHistoricalActivity(transaction, userId);
+      await this.syncUserState(transaction, userId);
+    });
+  }
+
+  private async withUserStateLock(
+    manager: EntityManager,
+    userId: string,
+    work: (transaction: EntityManager) => Promise<void>,
+  ): Promise<void> {
+    await manager.transaction(async (transaction) => {
+      // All gamification writers lock the same existing account before reading
+      // or creating derived state. A DB lock also coordinates separate replicas.
+      const rows: Array<{ id: string }> = await transaction.query(
+        'SELECT id FROM public."user" WHERE id = $1 FOR UPDATE', [userId],
+      );
+      if (rows.length === 0) throw new NotFoundException('User not found');
+      await work(transaction);
+    });
   }
 
   private async dedupeTrackedPointTransactions(manager: EntityManager, userId: string): Promise<void> {
@@ -745,7 +765,7 @@ export class GamificationService {
 
   private async ensureUserProgressRow(manager: EntityManager, userId: string): Promise<UserProgress> {
     const progressRepo = this.getUserProgressRepository(manager);
-    let row = await progressRepo.findOne({ where: { userId } });
+    const row = await progressRepo.findOne({ where: { userId } });
     if (row) {
       return row;
     }
@@ -755,8 +775,12 @@ export class GamificationService {
       throw new NotFoundException('User not found');
     }
 
-    row = progressRepo.create({ userId, user, totalPoints: 0, currentLevel: 1 });
-    return progressRepo.save(row);
+    // Dashboard requests can initialise the same account concurrently. Keep the
+    // winner's progress rather than failing or resetting it in a later request.
+    await progressRepo.createQueryBuilder().insert().into(UserProgress).values({
+      userId, totalPoints: 0, currentLevel: 1,
+    }).onConflict('("user_id") DO NOTHING').execute();
+    return progressRepo.findOneOrFail({ where: { userId } });
   }
 
   private async ensureStreakRows(manager: EntityManager, userId: string): Promise<void> {
