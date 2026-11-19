@@ -2,7 +2,7 @@ name: Backend checks
 
 on:
   pull_request:
-    branches: [main, stage]
+    branches: [main, stage, codex/stabilisation-baseline]
   push:
     branches: ['codex/**']
   workflow_dispatch:
