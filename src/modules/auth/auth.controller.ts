@@ -70,7 +70,7 @@ export class AuthController {
     },
   })
   async register(@Body() dto: RegisterDto) {
-    const { user, shop } = await this.auth.register(
+    const { user, shop, verificationDelivery } = await this.auth.register(
       dto.email,
       dto.password,
       dto.role,
@@ -90,6 +90,7 @@ export class AuthController {
           roles: (user as any).roles ?? undefined,
         },
         ...(shop ? { shop } : {}),
+        verificationDelivery,
       },
     };
   }
@@ -208,21 +209,21 @@ export class AuthController {
   @Post('resend-verification')
   @ApiOperation({ summary: 'Resend email verification link' })
   @ApiBody({ description: 'Email to resend verification to', type: ResendVerificationDto })
-  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Verification email sent successfully.', data: null } } })
+  @ApiOkResponse({ description: 'Verification request acknowledged without disclosing account status' })
   async resendVerification(@Body() dto: ResendVerificationDto) {
     await this.auth.resendVerification(dto.email);
     // Always return success to avoid email enumeration
-    return { status: 'success', message: 'Verification email sent successfully.', data: null };
+    return { status: 'success', message: 'If the account needs verification, a link has been requested.', data: null };
   }
 
   @Post('forget-password')
   @ApiOperation({ summary: 'Request a password reset OTP' })
   @ApiBody({ description: 'Email to send reset OTP to', type: ForgetPasswordDto })
-  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Reset OTP sent successfully.', data: null } } })
+  @ApiOkResponse({ description: 'Reset request acknowledged without disclosing account status' })
   async forgetPassword(@Body() dto: ForgetPasswordDto) {
     await this.auth.requestPasswordReset(dto.email);
     // Always return success to avoid email enumeration
-    return { status: 'success', message: 'Reset OTP sent successfully.', data: null };
+    return { status: 'success', message: 'If the account is eligible, a reset code has been requested.', data: null };
   }
 
   @Post('verify')

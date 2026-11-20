@@ -18,6 +18,7 @@ function repoMock() {
     findOne: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
+    update: jest.fn(),
   };
 }
 
@@ -44,7 +45,7 @@ describe('AuthService', () => {
         AuthService,
         PasswordService,
         { provide: JwtService, useValue: jwt },
-        { provide: EmailService, useValue: { sendEmail: jest.fn().mockResolvedValue(undefined) } },
+        { provide: EmailService, useValue: { sendEmail: jest.fn().mockResolvedValue({ status: 'accepted' }) } },
         { provide: getRepositoryToken(User), useValue: userRepo },
         { provide: getRepositoryToken(Role), useValue: roleRepo },
         { provide: getRepositoryToken(UserRole), useValue: userRoleRepo },
@@ -72,6 +73,26 @@ describe('AuthService', () => {
     const res = await service.register('a@b.com', 'Password123!', undefined);
     expect(res.user.email).toBe('a@b.com');
     expect(res.token).toBe('jwt-token');
+    expect(res.verificationDelivery).toEqual({ status: 'accepted' });
+  });
+
+  it('allows only one concurrent password reset for the same code', async () => {
+    userRepo.findOne.mockResolvedValue({
+      id: 'u1', email: 'a@b.com', status: UserStatus.ACTIVE,
+      resetOtpHash: await password.hash('123456'),
+      resetOtpExpiresAt: new Date(Date.now() + 60000),
+    });
+    userRepo.update.mockResolvedValueOnce({ affected: 1 }).mockResolvedValue({ affected: 0 });
+
+    const attempts = await Promise.allSettled([
+      service.resetPassword('a@b.com', '123456', 'NewPassword123!'),
+      service.resetPassword('a@b.com', '123456', 'OtherPassword123!'),
+    ]);
+    expect(attempts.map(attempt => attempt.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(userRepo.update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'u1', resetOtpHash: expect.any(String), resetOtpExpiresAt: expect.anything() }),
+      expect.objectContaining({ resetOtpHash: null, resetOtpExpiresAt: null }),
+    );
   });
 
   it('fails to register duplicate email and suggests upgrade', async () => {

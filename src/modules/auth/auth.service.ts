@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
 import { randomInt } from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 
@@ -158,10 +158,10 @@ export class AuthService {
     const token = await this.issueToken(saved);
 
     // Generate a time-limited email verification token and send email
-    await this.sendVerificationEmail(saved);
+    const verificationDelivery = await this.sendVerificationEmail(saved);
     await this.sendWelcomeEmail(saved);
 
-    return { user: await this.findUserWithRoles(saved.id), token, shop: createdShop };
+    return { user: await this.findUserWithRoles(saved.id), token, shop: createdShop, verificationDelivery };
   }
 
   async upgradeToPartner(authPayload: any, shopDto?: CreateShopDto) {
@@ -479,7 +479,7 @@ export class AuthService {
     );
     const verifyUrl = `${appBase.replace(/\/$/, '')}/auth/verify-email?token=${encodeURIComponent(verifyToken)}`;
     const html = buildVerifyEmailTemplate({ firstName: user.firstName, verifyUrl });
-    await this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
+    return this.email.sendEmail({ to: user.email, subject: 'Verify your email', html });
   }
 
   private async sendWelcomeEmail(user: User) {
@@ -531,7 +531,7 @@ export class AuthService {
     const normalizedEmail = email.trim().toLowerCase();
     const user = await this.users.findOne({ where: { email: normalizedEmail } });
     // Do not reveal whether the user exists; send only for eligible accounts
-    if (user && user.status !== UserStatus.DELETED) {
+    if (user && user.status !== UserStatus.DELETED && user.status !== UserStatus.SUSPENDED) {
       await this.sendResetPasswordOtpEmail(user);
     }
     // Controller always returns success
@@ -555,9 +555,11 @@ export class AuthService {
     const otpHash = await this.passwordService.hash(otp);
     const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
 
-    user.resetOtpHash = otpHash;
-    user.resetOtpExpiresAt = expiresAt;
-    await this.users.save(user);
+    const updated = await this.users.update(
+      { id: user.id, status: user.status },
+      { resetOtpHash: otpHash, resetOtpExpiresAt: expiresAt },
+    );
+    if (updated.affected !== 1) return;
 
     const html = buildPasswordResetOtpEmailTemplate({
       firstName: user.firstName,
@@ -582,9 +584,6 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired OTP');
     }
     if (new Date(user.resetOtpExpiresAt).getTime() <= Date.now()) {
-      user.resetOtpHash = null;
-      user.resetOtpExpiresAt = null;
-      await this.users.save(user);
       throw new UnauthorizedException('Invalid or expired OTP');
     }
     const otpValid = await this.passwordService.compare(normalizedOtp, user.resetOtpHash);
@@ -593,10 +592,16 @@ export class AuthService {
     }
 
     const hash = await this.passwordService.hash(newPassword);
-    user.passwordHash = hash;
-    user.resetOtpHash = null;
-    user.resetOtpExpiresAt = null;
-    await this.users.save(user);
+    const updated = await this.users.update(
+      {
+        id: user.id,
+        status: user.status,
+        resetOtpHash: user.resetOtpHash,
+        resetOtpExpiresAt: MoreThan(new Date()),
+      },
+      { passwordHash: hash, resetOtpHash: null, resetOtpExpiresAt: null },
+    );
+    if (updated.affected !== 1) throw new UnauthorizedException('Invalid or expired OTP');
 
     // Optional: notify user about password change
     try {

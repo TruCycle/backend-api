@@ -1,7 +1,14 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import * as path from 'path';
-import * as fs from 'fs/promises';
 import { existsSync } from 'fs';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+
+
+export interface EmailDeliveryOutcome {
+  // HTTP acceptance is not confirmation of inbox delivery.
+  status: 'accepted' | 'unavailable' | 'rejected' | 'timeout' | 'failed';
+}
 
 interface SendEmailParams {
   to: string;
@@ -108,8 +115,8 @@ export class EmailService implements OnModuleInit {
           content_type: asset.mimeType,
           content_id: asset.contentId,
         });
-      } catch (error) {
-        this.logger.warn(`Failed to load inline asset ${asset.filename}: ${error instanceof Error ? error.message : String(error)}`);
+      } catch {
+        this.logger.warn({ operation: 'email_inline_asset', outcome: 'failed' });
       }
     }
 
@@ -134,7 +141,8 @@ export class EmailService implements OnModuleInit {
     from: string,
     { to, subject, html }: SendEmailParams,
     attachments: EmailAttachment[],
-  ): Promise<void> {
+    signal: AbortSignal,
+  ): Promise<EmailDeliveryOutcome & { fallbackAllowed: boolean }> {
     const regularAttachments = attachments.filter((attachment) => !attachment.content_id);
     const payload: Record<string, unknown> = {
       sender: this.parseFromAddress(from),
@@ -152,6 +160,7 @@ export class EmailService implements OnModuleInit {
 
     const res = await fetch(EmailService.BREVO_API_URL, {
       method: 'POST',
+      signal,
       headers: {
         'api-key': apiKey,
         'Content-Type': 'application/json',
@@ -160,9 +169,9 @@ export class EmailService implements OnModuleInit {
     });
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      this.logger.error(`Brevo API error: ${res.status} ${res.statusText} ${text}`);
+      this.logger.error({ operation: 'email_delivery', provider: 'brevo', status: res.status });
     }
+    return { ...this.providerOutcome(res), fallbackAllowed: [401, 403, 404].includes(res.status) };
   }
 
   private async sendViaResend(
@@ -170,9 +179,11 @@ export class EmailService implements OnModuleInit {
     from: string,
     { to, subject, html }: SendEmailParams,
     attachments: EmailAttachment[],
-  ): Promise<void> {
+    signal: AbortSignal,
+  ): Promise<EmailDeliveryOutcome> {
     const res = await fetch(EmailService.RESEND_API_URL, {
       method: 'POST',
+      signal,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -181,32 +192,63 @@ export class EmailService implements OnModuleInit {
     });
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      this.logger.error(`Resend API error: ${res.status} ${res.statusText} ${text}`);
+      this.logger.error({ operation: 'email_delivery', provider: 'resend', status: res.status });
     }
+    return this.providerOutcome(res);
   }
 
-  async sendEmail({ to, subject, html }: SendEmailParams): Promise<void> {
+  private providerOutcome(response: Response): EmailDeliveryOutcome {
+    if (response.ok) return { status: 'accepted' };
+    if (response.status === 408 || response.status === 429 || response.status >= 500) {
+      return { status: 'failed' };
+    }
+    return { status: 'rejected' };
+  }
+
+  async sendEmail(params: SendEmailParams): Promise<EmailDeliveryOutcome> {
     const brevoApiKey = process.env.BREVO_API_KEY;
     const resendApiKey = process.env.RESEND_API_KEY;
     const from = process.env.MAIL_FROM || 'no-reply@example.com';
 
     if (!brevoApiKey && !resendApiKey) {
       this.logger.warn('No email provider configured; set BREVO_API_KEY or RESEND_API_KEY');
-      return;
+      return { status: 'unavailable' };
     }
 
+    const controller = new AbortController();
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const attachments = await this.loadInlineAttachments(html);
-      if (brevoApiKey) {
-        await this.sendViaBrevo(brevoApiKey, from, { to, subject, html }, attachments);
-        return;
-      }
+      // Bound stalled providers without sending a second, possibly duplicate email.
+      const deadline = new Promise<EmailDeliveryOutcome>((resolve) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          this.logger.error({ operation: 'email_delivery', outcome: 'timeout' });
+          resolve({ status: 'timeout' });
+        }, 10000);
+      });
+      const delivery = this.loadInlineAttachments(params.html).then(async attachments => {
+        if (controller.signal.aborted) return { status: 'timeout' } as const;
+        if (!brevoApiKey) {
+          return this.sendViaResend(resendApiKey!, from, params, attachments, controller.signal);
+        }
 
-      await this.sendViaResend(resendApiKey!, from, { to, subject, html }, attachments);
-    } catch (err: any) {
+        // A timeout or server error may occur after accepting the message.
+        // Fall back only after a definitive provider configuration rejection.
+        const primary = await this.sendViaBrevo(brevoApiKey, from, params, attachments, controller.signal);
+        if (resendApiKey && primary.status === 'rejected' && primary.fallbackAllowed && !controller.signal.aborted) {
+          return this.sendViaResend(resendApiKey, from, params, attachments, controller.signal);
+        }
+        return { status: primary.status };
+      });
+      return await Promise.race([delivery, deadline]);
+    } catch {
       const provider = brevoApiKey ? 'Brevo' : 'Resend';
-      this.logger.error(`Failed to send email via ${provider}`, err?.stack || err);
+      this.logger.error({ operation: 'email_delivery', outcome: 'failed', provider });
+      return { status: timedOut ? 'timeout' : 'failed' };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 }
