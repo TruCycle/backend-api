@@ -36,6 +36,15 @@ Why the deploy must be coordinated:
 
 ---
 
+## Standing rule from the owner (26 Nov 2026): no colour or visual redesign
+
+- The frontend release uses **staging as its base**, with the colour change reverted (`03c1b54`, the same change as abandoned PR #18).
+- From staging, keep anything tied to functionality, UX, accessibility or the QA work.
+- **Do not implement any change that is only a redesign** (colours, palette, theme or restyling). Leave it out of every PR until the owner finishes the design compendium and the redesign is integrated as its own piece of work.
+- This applies to every PR in this programme. When a commit mixes the two, keep the functional part and drop the colour part.
+
+---
+
 ## A. Executed in this session
 
 | # | Item | Result |
@@ -82,7 +91,7 @@ Why the deploy must be coordinated:
 
 **Rollback pair:** main backend `5bc53a8` plus frontend `83d30d6`, running on the migrated schema with `TYPEORM_SYNC=false`. This was rehearsed: main works, and attachment messages display as empty. **Never** roll back with sync on.
 
-**Redesign decision needed (blocks B1):** staging tip `c93693e` is the merge of frontend PR #21 ("redesign-charcoal-mint": 16 commits, 138 files). It contains `03c1b54`, which is the **same 24-file colour change** as the abandoned PR #18 (`8f826c3`). Promoting staging as-is ships the redesign you asked to abandon. The alternative base is `c93693e^1` (`83d7827`), but every QA fix inside #21 would then need re-applying. The simulation ran on `c93693e`, with the redesign.
+**Redesign decision (resolved 26 Nov: staging base, colour reverted, see the standing rule):** staging tip `c93693e` is the merge of frontend PR #21 ("redesign-charcoal-mint": 16 commits, 138 files). It contains `03c1b54`, which is the **same 24-file colour change** as the abandoned PR #18 (`8f826c3`). Promoting staging as-is ships the redesign you asked to abandon. The alternative base is `c93693e^1` (`83d7827`), but every QA fix inside #21 would then need re-applying. The simulation ran on `c93693e`, with the redesign.
 
 **Observations:**
 - **Cookie banner:** on the iPhone-sized viewport it covers *Log in* on the deployed frontend until it is dismissed.
