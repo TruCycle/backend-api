@@ -16,7 +16,7 @@
 | 2a | Reproduce production schema from main's **migrations only** (`TYPEORM_SYNC=false`) | **FAIL (not a viable prod state)** | Ledger 001–026. There is no `google_id` column, because main never registers 027. There are no `role`/`user_role` tables. `/auth/register` returns 500, and the Postgres log shows `relation "user_role" does not exist`. Adding 027's DDL by hand with no ledger row does not help: `user_role` is still missing and register still fails. |
 | 2b | Reproduce production schema with main booted using `TYPEORM_SYNC=true` (as in main's `.env.example`) | **PASS (assumed baseline)** | Ledger 001–026. Sync created `google_id`, `role` and `user_role`. Sync also **dropped** `idx_user_phone` and did **not** create `UQ_user_google_id`. Register, login and `/auth/me` work. |
 | 3a | Bare `npm run migration:run` | Lists only (exit 0, DB not touched) | It prints the offline registry. Applying needs `--apply --expect`. |
-| 3b | Apply with the closeout-plan list (027–036 (or 028–036), 8 names) | **FAIL-CLOSED (correct)** | `Pending migrations differ from the complete ordered --expect list; no migrations executed.` exit 1 |
+| 3b | Apply with the closeout-plan list (028–035, 8 names) | **FAIL-CLOSED (correct)** | `Pending migrations differ from the complete ordered --expect list; no migrations executed.` exit 1 |
 | 3c | Apply with 027–035 (9 names) | **PASS** | All 9 applied, exit 0. CLI wall time 1.9 s. Seed data was intact afterwards. |
 | 3d | Re-run (same list / empty list / no list) | **PASS (fail-closed, no change)** | Each exits 1 with a sanitized message. `pg_dump -s` and the ledger are byte-identical before and after. There is no "successful no-op" mode by design. |
 | 3e | Concurrent release lock | **PASS** | While `pg_advisory_lock(16478005,1)` is held: `Another migration release owns the lock; no migrations executed.` |
@@ -27,7 +27,7 @@
 | 4d | Release gate: does HEAD refuse to boot with pending migrations? | **FAIL (no gate)** | HEAD booted on the unmigrated 2b DB. `/auth/health` returns 200, but login returns 503 (`relation "public.auth_session" does not exist`). The gate exists only in the CLI. |
 | 5a | Rollback pair: main code + migrated schema, `TYPEORM_SYNC=false` | **PASS (degraded)** | Main boots and the schema is unchanged. Login, register, `/auth/me`, `/items/me/listed`, `/found-items`, `/found-items/my-posts`, rooms and room messages return 200. `/found-items?postcode=E1` returned 500 because the sandbox has no network access for the geocoder; this is not a schema problem. Attachment messages show as empty (text and imageUrl are null). HEAD-issued tokens are accepted by main. |
 | 5b | Rollback pair: main code + migrated schema, `TYPEORM_SYNC=true` | **FAIL (destructive)** | With a `gone` found item present, main crash-loops: sync's enum recast fails and is rolled back, so the app never listens. **Without** a `gone` row, main boots and sync **drops** `message."hasAttachment"`, `found_item.last_seen_at/closed_at/expiry_nudged_at`, `UQ_user_google_id`, `found_item_lifecycle_due_idx` and the `gone` enum value. The ledger still says 035, so a later HEAD redeploy breaks. |
-| 5c | `down()` reversibility of 027–036 (or 028–036) | **Irreversible by design** | Every `down()` from 028 to 035 throws. Only 027 has a real `down()`. Rollback means code only. |
+| 5c | `down()` reversibility of 028–035 | **Irreversible by design** | Every `down()` from 028 to 035 throws. Only 027 has a real `down()`. Rollback means code only. |
 | 6a | Main-issued **access** token on HEAD `JwtAuthGuard` | **FAIL: users logged out** | `/auth/me`, `/items/me/listed` and `/found-items/my-posts` return 401 `Invalid or expired session`. |
 | 6b | Main-issued **refresh** token on HEAD `/auth/refresh` | **FAIL: users logged out** | 401 `Invalid or expired session` |
 | 6c | HEAD login after migration | **PASS** | Creates an `auth_session` row. Tokens carry `sid` and `type`. `/auth/me` returns 200. |
@@ -52,7 +52,7 @@ Also record the production **`TYPEORM_SYNC`** value and **`JWT_SECRET` byte leng
 How the result changes the release:
 
 - **Ledger top is 026** (expected from main's code): the `--expect` list is **027–035, nine names**. Closeout-plan B2's "0028–0035" is wrong for this case, and the CLI will refuse it. If 027's DDL was already applied by hand without a ledger row, 027 is still pending. It is `IF NOT EXISTS`, so it is a harmless no-op.
-- **Ledger top is 027**: the list is 027–036 (or 028–036). This branch was **not** rehearsed.
+- **Ledger top is 027**: the list is 028–035. This branch was **not** rehearsed.
 
 Verified `--expect` value for the 026 case:
 ```
@@ -118,7 +118,7 @@ Verbs HEAD's code uses on each table:
 
 - (a) Run as the table owner, which is what 2b/3c did. Owners bypass non-forced RLS.
 - (b) `ALTER ROLE <runtime> BYPASSRLS`. This needs superuser.
-- (c) Reviewed permissive policies `TO <runtime>` on each table. These must be applied outside migrations 027–036 (or 028–036), because the reviewed migrations deliberately contain none and the spec forbids them in 028.
+- (c) Reviewed permissive policies `TO <runtime>` on each table. These must be applied outside migrations 028–035, because the reviewed migrations deliberately contain none and the spec forbids them in 028.
 
 The runtime role also needs `UPDATE` on `"user"`, because the outbox uses `FOR UPDATE OF account`.
 
@@ -166,3 +166,7 @@ All scripts and logs are in the session scratchpad and are not committed. The st
 3. Register and log in through the API, then add seed rows by SQL.
 4. In the candidate checkout, `npm run build`, then `npm run migration:run -- --apply --expect <9 names>` with env passed inline. No `.env` was written to the repo.
 5. Clone databases with `CREATE DATABASE ... TEMPLATE` for the rollback and RLS variants.
+
+## Addendum (after this rehearsal)
+
+Migration `1700000000036-BackfillMessageReadReceipts` was added later in `eda6820`. Its SQL was run twice against a copy of the migrated `sim_b` database: 2 receipts were inserted the first time and 0 the second, with no self-receipts and no unread historical direct messages left. The full `--expect` list is therefore 027–036 (ledger at 026) or 028–036 (ledger at 027). The complete CLI path with 036 has **not** been re-rehearsed.
