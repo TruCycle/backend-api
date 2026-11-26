@@ -36,6 +36,16 @@ Why the deploy must be coordinated:
 
 ---
 
+## Standing rule from the owner: alignment before any merge
+
+Before merging anything to either `main`, confirm the backend and frontend are aligned at the exact commits being merged, so neither side breaks the other. The gate is:
+
+1. **Pin the pair.** Record the backend PR head SHA and the frontend PR head SHA that will ship together.
+2. **Contract check at those SHAs.** Every frontend API call (path, method, request fields, response fields) must match the backend controllers and DTOs, including the Vision `context`, verify-without-tokens, sessions and refresh, found-item search, report reasons, and read receipts. Re-run it if either head moves.
+3. **Simulated E2E on that exact pair.** It must pass on desktop and phones, both against the migrated schema and against the deployed frontend (the old-client shims).
+4. **CI green on both heads**, with no merge conflicts.
+5. **Merge order follows the release order** (B3 → B4 + B5). Never merge one side alone. If either PR changes after the check, steps 2–4 run again.
+
 ## Standing rule from the owner: commit authorship
 
 All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858622+macaddy2@users.noreply.github.com`). Never use a Claude/AI author, committer, or `Co-Authored-By`/`Claude-Session` trailer. PR descriptions carry no Claude/AI footer either.
