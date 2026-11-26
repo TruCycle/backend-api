@@ -38,7 +38,7 @@ Why the deploy must be coordinated:
 
 ## Standing rule from the owner: commit authorship
 
-All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858622+macaddy2@users.noreply.github.com`). Never use a Claude/AI author, committer, or `Co-Authored-By`/`Claude-Session` trailer.
+All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858622+macaddy2@users.noreply.github.com`). Never use a Claude/AI author, committer, or `Co-Authored-By`/`Claude-Session` trailer. PR descriptions carry no Claude/AI footer either.
 
 ## Standing rule from the owner (26 Nov 2026): no colour or visual redesign
 
