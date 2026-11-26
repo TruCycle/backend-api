@@ -30,6 +30,7 @@ Why the deploy must be coordinated:
 | R4 | The deployed Found Items page sends nearest + 5mi with no location, and gets a 400. | ✅ Shimmed in the backend (`eda6820`). |
 | R5 | The deployed spot report sends free-text reasons, and gets a 400. | ✅ Shimmed in the backend: the reason becomes `other` and the text is kept. |
 | R7 | Production had no read state, so every historical message would show as unread. | ✅ Migration 0036 backfills receipts. Tested on a copy of the migrated database: idempotent, no self-receipts. |
+| R7 residual | Deployed clients never call the read endpoint. Messages that arrive after the release stay unread on old tabs until the user moves to the new frontend. Confirmed in simulation. | Coordinated frontend release. Stale tabs self-correct on reload. |
 | R8, R9, R10, R14 | Names show as "Community member", `gone` displays as available, and duplicate-tab or 429 refresh logs the user out. | Coordinated frontend release, plus owner awareness. |
 | R15 | The staging Vision worker requires a secret. If it reaches the production worker before the new frontend, Smart Spot silently stops. | Promote the worker **with** the frontend, never before it. |
 
@@ -47,6 +48,7 @@ Why the deploy must be coordinated:
 | A6 | Flag defaults | Outbox, shared rate budgets and per-email reset limits are all off by default. |
 | A7 | Migration rehearsal (simulated) | The upgrade applies cleanly. Findings are folded into B and the pre-checks below. |
 | A8 | Frontend promotion list and contract check | Done. Results are in the table above and in the doc. Frontend staging build, lint and tests pass locally. |
+| A9 | Simulated browser journeys: both frontends against the local candidate ([`simulated-e2e.md`](simulated-e2e.md)) | R3 reproduced on the deployed frontend, while staging passes. The R4, R5 and R7 backfill shims work. Reset single-use, refresh and mobile layout pass on both. Staging logout revokes the server session. Keyboard sign-in passes. Defect **D1** was found in the R5 shim and fixed: a free-text reason is now kept alongside details. |
 
 ---
 
@@ -79,6 +81,8 @@ Why the deploy must be coordinated:
 **Order:** B0 → B1 → B2 → B3 → (B4 + B5 + B6 in one window) → smoke tests → B7, one flag per window → B8 / B9.
 
 **Rollback pair:** main backend `5bc53a8` plus frontend `83d30d6`, running on the migrated schema with `TYPEORM_SYNC=false`. This was rehearsed: main works, and attachment messages display as empty. **Never** roll back with sync on.
+
+**Frontend base warning:** staging `c93693e` forks from deployed `83d30d6` at `c7d7e2b`. It lacks deployed PRs #19, #20, #22 and #23: auth-mail recovery (reset 401 → back to OTP), camera framing, the Vision structured response, and optional cutout. It also has no postcode field on signup. B1 must carry these forward. Confirm the exact staging commit to promote.
 
 **Stale item corrected:** frontend PR #24 is already **merged** to frontend main (`0c31f71`) but is **not deployed**, and staging lacks it. It is carried in B1.
 

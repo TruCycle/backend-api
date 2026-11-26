@@ -21,9 +21,16 @@ describe('ReportFoundItemDto reason compatibility', () => {
     expect(dto).toMatchObject({ reason: 'other', details: 'Someone already took it' });
   });
 
-  it('does not overwrite explicit details with the free-text reason', async () => {
-    const { dto } = await parse({ reason: 'Took it', details: 'Seen at 9am' });
-    expect(dto).toMatchObject({ reason: 'other', details: 'Seen at 9am' });
+  it('keeps both the free-text reason and explicit details', async () => {
+    const { dto, errors } = await parse({ reason: 'Blocking the pavement', details: 'Next to the bus stop' });
+    expect(errors).toHaveLength(0);
+    expect(dto).toMatchObject({ reason: 'other', details: 'Blocking the pavement — Next to the bus stop' });
+  });
+
+  it('caps combined details at the details limit', async () => {
+    const { dto, errors } = await parse({ reason: 'x'.repeat(100), details: 'y'.repeat(1000) });
+    expect(errors).toHaveLength(0);
+    expect(dto.details).toHaveLength(1000);
   });
 
   it('still rejects a missing or blank reason', async () => {

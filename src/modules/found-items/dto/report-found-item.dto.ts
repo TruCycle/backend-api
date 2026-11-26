@@ -17,8 +17,10 @@ export function normalizeReportReason(value: unknown): unknown {
 
 export function normalizeReportDetails(details: unknown, reason: unknown): unknown {
   const text = typeof details === 'string' ? details.trim() : details;
-  if (text || isKnownReason(reason) || typeof reason !== 'string' || !reason.trim()) return text;
-  return reason.trim().slice(0, 1000);
+  if (isKnownReason(reason) || typeof reason !== 'string' || !reason.trim()) return text;
+  // Keep the free-text reason alongside any details so neither is lost.
+  const combined = typeof text === 'string' && text ? `${reason.trim()} — ${text}` : reason.trim();
+  return combined.slice(0, 1000);
 }
 
 export class ReportFoundItemDto {
