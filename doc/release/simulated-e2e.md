@@ -371,3 +371,136 @@ Screenshots are in `doc/release/e2e-shots/run5/`, all local simulation at `devic
 | `m-open-bob-iph14.png` | M1: after tapping a room, the newest message and composer are above the bottom nav |
 
 The raw JSON (`results/r5-toast.json`, `r5-desk.json`, `r5-t2.json`, `r5-msg.json`, `r5-j.json`) and the harness (`h/r5.js`, plus `h/lib.js` and `h/seed.js` copied from Run 4) are in the session scratchpad (`…/scratchpad/e2e5/`). They are not kept in the repo.
+
+## Run 6 — pre-merge alignment gate (19b88ca + 10896fe)
+
+> **Local simulation — not production evidence.**
+> This is the owner's alignment gate (`closeout-plan.md`, "Standing rule from the owner: alignment before any merge"), run on 26 Nov 2026 in a sandbox.
+> - It used a fresh throwaway `postgis/postgis:15-3.4` container, local `vite preview` servers and headless Chromium (Playwright 1.63.0) with the Run 2 network guard (only localhost allowed; Cloudinary simulated; Vision Worker and geocoder stubbed).
+> - No remote database, hosted site or deploy was touched. Nothing was pushed, committed or merged. Neither clone was edited; every build came from a detached scratch worktree.
+> - Phones are Playwright viewport and UA emulation in Chromium, not WebKit or real devices.
+
+**Verdict: GATE FAIL.** The only blocker is contract mismatch **C1** (`POST /qr/scan` is rejected by the backend's validation pipe). It is **pre-existing**: origin/main `5bc53a8` and the deployed frontend `83d30d6` behave the same way, so it is not a regression from this pair. Everything else passed:
+- Every other contract check.
+- All 12 Run 2 journeys, plus the Run 3–5 checks, on all five viewports.
+- The old-client checks.
+- The local CI reproduction on both heads.
+- The merge-conflict check.
+
+**C3** (the individual leaderboard returns 500) is also pre-existing and user-visible: the Community Board "Individual" tab (`CommunityBoardPage.tsx:85`) cannot load. It is a backend defect, not a shape mismatch, but the owner should waive or fix it together with C1. If either head changes, steps 2–4 must run again.
+
+### Pinned pair
+
+| Side | SHA | Notes |
+|---|---|---|
+| Backend | `19b88ca` (PR #11) | `git diff 75b9411 19b88ca -- src package.json package-lock.json` is empty. While the run was in progress, the branch moved to `4466281` with three doc-only commits (`60ef36b`, `fed66b2`, `4466281`). `git diff --stat 19b88ca 4466281 -- . ':!doc'` prints nothing, and `merge-tree` against `origin/main` is still clean, so the pin holds under the runbook rule. |
+| Frontend | `10896fe` (PR #25) | Default build on `:4175`. A `VITE_ENABLE_SMART_SPOT=true` build (`dist-smart`) on `:4176` was used for J7 only. |
+| Deployed frontend (old client) | `83d30d6` | Served on `:4173`. |
+
+### Setup (local)
+
+| Part | Value |
+|---|---|
+| Schema | Fresh DB. `origin/main` `5bc53a8` booted once with `TYPEORM_SYNC=true` (ledger 26). alice and bob were registered through main, with a room through main's `POST /messages/rooms`, and one **pre-migration message** (bob → alice, 2 days old) inserted by SQL. Then HEAD's `npm run migration:run -- --apply --expect …027,…,…036`: all 10 applied, ledger 36. **The 0036 backfill created exactly 1 receipt.** |
+| Backend | `node dist/main.js`, `TYPEORM_SYNC=false`, `JWT_EXPIRES_IN=15m`. No email provider and no rate-limit flags. Vision Worker and Nominatim were local stubs. |
+| Seed | Through the API where possible: per-device `j2-*`, `rs-*`, `vis-*` and `cf-*` users; 20 found items by `poster` (12 in E1 6AN, 8 in N1 9GU); carol (partner, shop created at registration) with 6 dropped-off items; dana with 25 listings (the Run 3 seed: 7 impact items, one NULL CO2e); cole (2 completed claims); malice with three 30-message rooms (the Run 4/5 seed). **dana's total is 31, not 25**, because the 6 partner-shop items were seeded with dana as the donor. |
+| Viewports | Desktop 1440×900, desktop 1024×768, Pixel 7 412×839, iPhone 14 390×664, iPhone SE (3rd gen) 375×667 |
+
+### Step 1 — contract check at the pinned SHAs
+
+**Method:**
+- **Static.** Every `apiRequest`, `apiRequestBlob` and `fetch` in `web-frontend/src` (74 call sites across 15 files), plus the socket namespaces and events, matched against the controllers, the DTOs (`src/main.ts:29-34`: `whitelist` + `forbidNonWhitelisted` + implicit conversion) and the response shapes. A sweep of every `@Body()`/`@Query()` DTO found only one class with no validators: `ScanDto`.
+- **Live.** `h/probe.js` sent 83 requests built exactly as the frontend builds them (including multipart and Socket.IO), and asserted the fields that the frontend reads or validates. **79/83 passed.** Of the 4 failures:
+  - 3 are C1–C3 below.
+  - 1 is a business rule (`PATCH /found-items/:id/status` on a closed item → 400). A second call on an open item gave 200 `picked_up`.
+
+**Mismatches:**
+
+| ID | Area | Frontend (`web-frontend` @ `10896fe`) | Backend (`backend-api` @ `19b88ca`) | Effect | Status |
+|---|---|---|---|---|---|
+| **C1** | QR scan | `src/features/items/api/itemsApi.ts:307` sends `{qrPayload, direction, shopId?}` + `Idempotency-Key`. It is called from `src/features/collected/hooks/useCollectedItems.ts:79` (`CollectedItemsPage.tsx:83`, the QR collection path). `src/features/partner/api/partnerApi.ts:381` is the same call, with no caller. | `src/modules/qr/qr.controller.ts:11-16`: `ScanDto` has no class-validator decorators, so the global pipe rejects every property. | **400** `property qrPayload should not exist, property direction should not exist`. A collector's QR-confirmed collection fails with "Collection could not be confirmed"; `collectItem` is never reached. Manual confirmation (no QR) is unaffected. | **Blocking per the gate. Pre-existing:** the same on `origin/main` (same file, last changed in `0d4ea09`) and on deployed `83d30d6`. |
+| C2 | Wallet balance | `src/features/items/api/itemsApi.ts:284-297` reads `balance ?? points ?? available`. | `src/modules/rewards/rewards.controller.ts:20-31` returns `availableAmount`. | The balance would always read 0. **`fetchWalletBalance` has no caller**, so nothing is visible today. | Latent; pre-existing (main returns the same shape). |
+| C3 | Individual leaderboard | `src/features/gamification/api/gamificationApi.ts:425` via `hooks/useIndividualLeaderboard.ts:21`. The request shape is correct (`limit`, `offset`). | `src/modules/gamification/gamification.service.ts:325-333` returns **500** (`TypeError`) for every user and every query tried. The likely cause is `orderBy` on raw column names (`progress.total_points`, `progress.created_at`) together with `leftJoinAndSelect` + `skip`/`take`. | The Community Board "Individual" tab (`src/features/gamification/ui/CommunityBoardPage.tsx:85` → `components/IndividualLeaderboard.tsx:15`) cannot load. | A backend defect, not a shape mismatch. **Pre-existing:** `origin/main` booted on the same DB on `:3001` also returns 500, and main's query has the same `leftJoinAndSelect` + `orderBy('progress.total_points')` + `skip`/`take` lines. The server log shows only the error class, so the root cause is inferred. |
+
+Note: with attachments off, `POST …/messages/image` returns 503, but the body message is the generic "An unexpected error occurred" instead of the guard's text. There is no user impact, because the frontend button is disabled.
+
+**Called-out items (all aligned):**
+
+| Item | Result |
+|---|---|
+| Vision `context` | `image + context=spot` → 200, and the stub received `prompt="Analyze this item spotted on a UK street…"`. `context=listing` → 200, and the stub received `image` only. A non-admin `prompt` → 403, so `InternalVisionPage` is admin-only. Multer limits (`fields:1`) fit the one `context` field. |
+| Verify with no tokens | `POST /auth/verify {token}` → `{verified:true}` with no `tokens` key. The frontend (`authApi.ts:163-176`) checks only `verified === true`. |
+| Login, refresh, logout, sessions | Login returns `tokens.{accessToken, refreshToken, accessTokenExpiry, refreshTokenExpiry}`. Refresh returns `user` + `tokens`; the refresh token is session-bound and comes back unchanged, and the frontend keeps the old one when it is absent (`authApi.ts:297`). `logout {refresh_token}` and `logout {access_token}` (both frontend branches) → 200, and that session's refresh → 401. `logout-all` → 200, all refresh tokens dead. #25 has no session list or logout-all control. |
+| Found-item search params | `includeRecentClosed, category, status, maxDistance, postcode, sortBy, page, limit` are all whitelisted (`search-found-items.dto.ts`). The page sends only these. |
+| Report reasons | The UI offers `already_gone, unsafe, misleading, duplicate, other` (`not_there` only with an active claim), and each is stored exactly. Old-client free text → `other`, with the text kept in details (R5 shim and D1 fix). |
+| Read receipts | `POST /messages/rooms/:id/read {messageIds}` → `{readMessageIds ⊆ ids, unreadCount}`. Rooms carry `unreadCount`. The socket emits `messages:read`. |
+| Message attachments | Off on both sides: the button is disabled ("Image attachments are unavailable"), and the upload and GET return 503. Upload field names (`clientMessageId`, `image`) match `SendImageMessageDto`. |
+| Socket auth and events | `/messages` and `/notifications` accept `auth.token` → `auth:ready`. A bogus token → no `auth:ready`, server disconnect. `message:new` (no `room:join` needed), `room:activity`, `room:cleared`, `room:deleted`, `presence:update`, `messages:read`, `notification:new`, `notification:read:changed` and `rescue:new` / `rescue:flytip` all match the listeners. |
+| Notifications envelope | The list is an array of `{id, title, body, data, read, readAt, createdAt}`. `unread-count` → `{count}`. `read` and `read-all` → `{updated}`. `limit=50` is within `Max(100)`. |
+| Impact and listing totals | `/items/me/impact` → `total_co2_saved_kg` (number or null), `items_exchanged`, `items_donated`. `/items/me/listed` → `pagination.{page, limit, total, total_pages}`, with `total` 31 against 20 rows on page 1. |
+| Gamification | `progress`, `streaks`, `badges?filter`, `points/history`, `community-board?window`, `impact/found-items` and `badges/:id/seen` (204) all match. The leaderboard fails (C3). |
+| Claims and QR | `POST /claims {item_id}`, `PATCH /claims/:id/approve`, `POST /items/:id/collect {}` → `status: complete`, `GET /qr/item/:id/view`, `dropoff-in {shop_id, action}` and `claim-out {shop_id}` all match. The exception is `/qr/scan` (C1). |
+| Other | Register, Google (shape only), forget/reset/resend, profile PATCH (snake_case via `@Expose`), `/items` create (snake_case), `/shops` create and patch, `/shops/nearby`, `/shops/me/items` and `upgrade-to-partner` (flat shop body; no tokens returned, which the frontend handles) all match. |
+
+### Step 2 — simulated E2E on the pinned pair
+
+Devices: D14 = 1440, D10 = 1024, P7 = Pixel 7, i14 = iPhone 14, SE = iPhone SE. "N/A" means the check does not apply on that device by design.
+
+| # | Journey | D14 | D10 | P7 | i14 | SE | Evidence |
+|---|---|---|---|---|---|---|---|
+| J1 | Signup → verify → sign in | PASS | PASS | PASS | PASS | PASS | Register 201 → `pending`. Verify POST 200 → `active`. "Sign in to continue" leads to `/login`; login 200 → `/dashboard`. |
+| J2 | Persist, sign out, logout-all | PASS | PASS | PASS | PASS | PASS | Reload keeps the session. Logout 200 revokes the row (1/1; D14 1/2 because of an earlier API login). Logout-all 200 revokes every row (3/3; D14 4/4), and both contexts go to `/login` after `/auth/me` 401 and `/auth/refresh` 401. |
+| J3 | Found items: no location, postcode | PASS | PASS | PASS | PASS | PASS | Both queries returned 200 with 9 cards, and `scrollWidth` equals the viewport. |
+| J4 | Spot report with reason | PASS | PASS | PASS | PASS | PASS | Send stays disabled until a reason is chosen. Stored: `unsafe / Broken glass…`, `duplicate / <null>`, `already_gone / <null>`, `misleading / Not a chair`, `other / Blocking a doorway`. |
+| J5 | Messaging: badge, read, reload | PASS | PASS | PASS | PASS | PASS | The legacy receipt exists, so unread was 0 before the run. Badge 1, the read call returned 200, and the count went to 0 with **no scroll** on every device. Legacy and new messages both render. |
+| J6 | Password reset | PASS | PASS | PASS | PASS | PASS | A double-click sends 1 request. Wrong code → 401, back to the code step and cleared. Valid code → 201 → `/login`, and the hash is cleared. Reuse → 401 (API and UI). Old password 401, new password 200. |
+| J7 | Vision Spot / listing (Smart build) | N/A / PASS | N/A / PASS | PASS | PASS | PASS | Desktop shows the "uses the mobile camera" notice. Spot sends `context=spot` and the stub got the Spot prompt; the listing call sends `context=listing` and the stub got image only. Hint shown, all 200. |
+| J8 | List camera + upload; Spot retry | PASS / N/A | PASS / N/A | PASS | PASS | PASS | Live camera 640×480 → 1, then 2 thumbnails, 0 failed. 0 Vision calls with the flag off. Spot: "Photo upload failed" → Retry → "Confirm details". |
+| J9 | Confetti once per new badge | PASS | PASS | PASS | PASS | PASS | Canvas inserts 1, 0, 0, then 1 (second badge), then 0. |
+| J10 | Phone layout (listings, messages, partner tables) | N/A | N/A | PASS | PASS | PASS | No horizontal overflow. Previous/Next and "Load more spots" (8 → 14) are visible. Partner tables of 695 and 1000 px scroll inside `overflow-x:auto` wrappers. |
+| J11 | Cookie banner vs Log in | PASS | PASS | PASS | PASS | PASS | Log in is clear of the banner, and the hit-test lands on the button (i14: 408–456 vs a banner from 470; SE: banner from 473). |
+| J12 | Keyboard sign-in | PASS | PASS | N/A | N/A | N/A | Tab order is the same as Run 2, and every stop shows `:focus-visible` with a ring. Enter → 200 → `/dashboard`. |
+| R3 | Donor tiles (null CO2e → 30.4 → impact 500 → collector) | PASS | PASS | PASS | PASS | PASS | Tiles read 31 / 7 / "Unavailable", then 31 / 7 / **30.4kg** (equal to the DB sum). With an injected 500: 31 / Unavailable / Unavailable, with no page errors. Collector: 2 completed collections and 0 impact calls. No "this page" text. |
+| R4/5 | Phone messaging: land, tap, switch | PASS | PASS | PASS | PASS | PASS | No scroll on load. On a tap, `<main>` scrolls 0→289 (i14), 0→286 (SE) and 0→114 (P7), and 0 on D10 and D14. The newest message and the composer are in the visible band and pass all hit-tests. Unread 2 → 0 per room. The geometry is identical to Run 5. |
+| R5 | Phone toasts (banner open and dismissed) + **dismiss clears hidden stack** | PASS | PASS | PASS | PASS | PASS | Phones: one visible toast at y 7–131. The OTP row, Continue and the banner buttons are clear and all hit-tests pass. **Dismiss: 3 toasts in the DOM (1 visible) → 0 at +150 ms** on P7, i14 and SE, with the banner open and dismissed. Run 5's R5-O1 is fixed. The login toast expires at 3.40 s or is dismissed at about 0.38 s, after which the menu opens. Desktops: `top:96px; right:16px`, the same boxes as Run 5. |
+
+Old client `83d30d6` against this backend:
+
+| # | Verdict | Evidence |
+|---|---|---|
+| J1 (D14, i14) | **EXPECTED-FAIL (R3), criteria met** | Verify 200 and the DB moved to `active`. The page shows "Verification failed"; R3 is deliberate and is not reverted. A manual sign-in returned 200 → `/dashboard`. |
+| J3 (D14, i14) | **PASS (R4 shim)** | `status=available&maxDistance=5&sortBy=nearest&page=1&limit=9` with no location → 200, 9 cards. |
+| J4 (D14, i14) | **PASS (R5 shim)** | `{"reason":"Blocking the pavement"}` was stored as `other / Blocking the pavement`. With details added, it was stored as `other / Blocking the pavement — Next to the bus stop`. |
+| J11 (i14) | Known, unchanged | The banner covers Log in on the deployed client; #25 fixes this. |
+
+There were no uncaught page errors in any session. The only API errors were the deliberate ones: J2's 401s after logout and logout-all, J6's 401s, the T1 wrong codes, and the injected impact 500s. The Spot pages log `ERR_BLOCKED_BY_CLIENT` for `api.postcodes.io`, which is a sandbox artifact.
+
+Still open from Run 5 and unchanged:
+- **R5-O2:** the top toast covers the phone header for 3.4 s.
+- **R5-O3:** on i14 and SE, the auto-selected room drops 2 → 1 on landing.
+
+### Step 3 — CI and merge conflicts
+
+**CI, local evidence:** the scratchpad CI logs from earlier sessions (`run_*.log`, `fe-ci.log`) predate both heads (13:06–14:48 against commits at 16:33 and 16:41), so they do not count. The workflows' own commands were re-run at the pinned SHAs in the scratch worktrees. **This is a local reproduction, not a GitHub Actions status; the Actions result is not evidenced locally.** Locally Node 22.23.5 and npm 10.9.9 were used; CI uses Node 24.18.0 and npm 11.16.0.
+
+| Repo @ SHA | Steps (`.github/workflows/checks.yml`) | Result |
+|---|---|---|
+| backend `19b88ca` | `npm ci --ignore-scripts`, typecheck, lint, `test:unit`, build | All exit 0. Lint 0 errors (195 warnings); 36 suites / 824 tests. |
+| frontend `10896fe` | `npm ci --ignore-scripts`, typecheck, build, `test:staging`, `test:consent`, `test:session`, `test:socket`, `test:messaging`, `test:seo`, `test:shops`, `test:location`, lint | All exit 0 (pass counts 17, 10, 34, 14, 47, 18, 6, 29; fail 0). |
+
+**Merge conflicts:** `git fetch origin main` was run (backend `--depth=200`, since the clone is already shallow; frontend as a normal fetch, to avoid making a full clone shallow). `origin/main` is unchanged: backend `5bc53a8` and frontend `0c31f71`. `git merge-tree --write-tree origin/main <head>` exited 0 with no conflicts in both repos, and each head's merge-base is the `main` tip.
+
+**Deployed vs main:** frontend `origin/main` is `0c31f71`, one merge (#24, cutout fallback) ahead of the deployed `83d30d6`. The old-client checks used `83d30d6`, as instructed.
+
+### Evidence
+
+Screenshots are in `doc/release/e2e-shots/run6/`, all local simulation at `deviceScaleFactor` 1:
+
+| File | What it shows |
+|---|---|
+| `t-dismiss-before-iph14.png` | Reset page after a wrong code on iPhone 14: the single visible top toast, clear of the OTP row and Continue (older toasts hidden in the DOM until Dismiss clears them) |
+| `m-open-bob-iph14.png` | Room tapped on iPhone 14: the newest message and the composer are above the bottom nav |
+| `j4-report-rc-d1440.png` | Desktop 1440: report sent with a reason selected |
+| `j1-verify-prod-iph.png` | Deployed `83d30d6` on iPhone 14: the R3 "Verification failed" page after a successful verify |
+
+The raw JSON (`results/j1234-*.json`, `j56-all.json`, `j78-all.json`, `j9to12-all.json`, `r6-*.json`, `probe.json`), the harness (`h/*.js`) and the CI logs (`ci-*.log`, `ci-summary.txt`) are in the session scratchpad (`…/scratchpad/gate/`). They are not kept in the repo.

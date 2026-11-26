@@ -13,6 +13,7 @@ import { Claim } from './modules/claims/claim.entity';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { FoundItemsModule } from './modules/found-items/found-items.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
+import { HealthModule } from './modules/health/health.module';
 import { Item } from './modules/items/item.entity';
 import { ItemsModule } from './modules/items/items.module';
 import { MessageRoom } from './modules/messages/message-room.entity';
@@ -68,6 +69,7 @@ const dbModules: any[] = enableDb
     RewardsModule,
     GamificationModule,
     FoundItemsModule,
+    HealthModule,
   ]
   : [];
 

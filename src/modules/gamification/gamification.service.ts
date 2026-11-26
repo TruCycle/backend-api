@@ -326,8 +326,10 @@ export class GamificationService {
       .createQueryBuilder('progress')
       .leftJoinAndSelect('progress.user', 'user')
       .where('progress.total_points > 0')
-      .orderBy('progress.total_points', 'DESC')
-      .addOrderBy('progress.created_at', 'ASC')
+      // skip/take with a join needs entity property names here, not column names;
+      // column names make TypeORM throw while building the pagination query.
+      .orderBy('progress.totalPoints', 'DESC')
+      .addOrderBy('progress.createdAt', 'ASC')
       .skip(offset)
       .take(limit)
       .getMany();

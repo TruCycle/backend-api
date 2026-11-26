@@ -18,7 +18,7 @@ If either PR gains a commit that changes anything outside `doc/`, the pinned hea
 
 ## 0. Go / no-go (all must be ✅)
 
-1. **Alignment gate passed on the pinned pair.** That means a contract check, a simulated E2E on desktop and phones, the old-client checks, and no conflicts (`simulated-e2e.md`, Run 6).
+1. **Alignment gate must pass on the pinned pair** (not yet met: Run 6 failed on C1, now fixed, and is being re-run). That means a contract check, a simulated E2E on desktop and phones, the old-client checks, and no conflicts (`simulated-e2e.md`, Run 6).
 2. **Read-only production checks are done** (`closeout-plan.md` §B0). The results decide:
    - the `--expect` list (§2);
    - whether duplicate `google_id` rows must be resolved first;
@@ -76,7 +76,7 @@ Before merging, confirm with the owner:
 - that each host can **redeploy the previous build**;
 - the Node version each host builds with (≥22.12, <25).
 
-`/auth/health` can return 200 while login fails, so it is **not** a readiness signal. Use the sign-in check below.
+`/auth/health` can return 200 while login fails, so it is **not** a readiness signal. Use **`GET /health/ready`**: it returns 200 only when the database answers and every registered migration is applied, and 503 otherwise. Point the host's health check at it if the host supports one. The sign-in check below remains the final gate.
 
 1. Merge **backend #11**. Wait for the production deploy to show the new SHA.
    - Check that `/auth/health` returns 200.
