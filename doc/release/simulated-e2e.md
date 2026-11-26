@@ -235,3 +235,72 @@ Screenshots are in `doc/release/e2e-shots/run3/`, all local simulation at `devic
 | `t-reset-401-toast-cookie-rc-iph.png` | R3-2: toasts covering the cookie banner buttons |
 
 The raw JSON (`results/r3-*.json`), the harness (`h/r3.js`, `h/seed.js`, `h/seed-msgs.js`, `h/diag.js`) and the logs are in the session scratchpad (`…/scratchpad/e2e3/`). They are not kept in the repo.
+
+## Run 4 — re-verification (7b175ca)
+
+> **Local simulation — not production evidence.**
+> It ran on 26 Nov 2026 with the Run 3 method: a fresh throwaway `postgis/postgis:15-3.4` container, local `vite preview` servers and headless Chromium with the Run 2 network guard (only localhost allowed). The installed Playwright is **1.63.0**: the "1.65" given in Run 3 is the same install and was a typo.
+> - No remote database, hosted site or deploy was touched. Nothing was pushed or committed.
+> - Phones are Playwright viewport and UA emulation in Chromium, not WebKit or real devices. In Chromium, `env(safe-area-inset-bottom)` is 0.
+> - Scope: only Run 3's two failures (R3-1, R3-2), plus regression checks around them.
+
+### Setup (local)
+
+| Part | Value |
+|---|---|
+| Backend | `backend-api` HEAD **`bd1a8d5`** (PR #11) in a detached scratch worktree, run with `node dist/main.js` and `TYPEORM_SYNC=false`. `src/` and `package*.json` are identical to Run 3's `aa4f996`. |
+| Schema | The same as Run 3: `origin/main` `5bc53a8` booted once with `TYPEORM_SYNC=true` on an empty DB (ledger 26), then HEAD's `migration:run -- --apply --expect …027,…,…036`. All 10 applied, ledger 36. |
+| Seed | alice, bob, carl and dave registered through HEAD and activated by SQL. alice has three rooms (with bob, carl and dave), each with **30 messages** sent through `POST …/messages/text`. Messages 29–30 in each room are from the other user. Before each session, alice's receipts were reset by SQL so that `unreadCount` = **2** in every room. dave's room is the most recent, so the page auto-selects it on load (`useMessages.ts:226`). bob and carl are then opened from the list. |
+| Frontend under test | `web-frontend` **`7b175ca`** (scratch worktree of `uiadedo/frontend-release-candidate`), `npm ci && npm run build` with the Run 2 env, served on `:4175`. |
+| Baseline | **`3ad8631`** (Run 3's build), built the same way and served on `:4176`. |
+| Viewports | iPhone 14 390×664; iPhone SE (3rd gen) 375×667; Pixel 7 412×839; 768×1024; 1024×768; 1440×900. |
+
+**How "visible" was measured:**
+- The visible band is the app-shell `<main>` scroller clipped to the viewport: y 80–595 on iPhone 14, 80–598 on iPhone SE, 80–770 on Pixel 7, 72–839 at 1440 and 72–707 at 1024.
+- On phones this band excludes the bottom Spot/List/Rescue nav.
+- Each target was also hit-tested with `elementFromPoint` (at the centre of the newest message, 4 px above its bottom, and at the centre of the composer).
+
+### Results — `7b175ca`
+
+| # | Check | Verdict | Evidence |
+|---|---|---|---|
+| M1 | Messaging, iPhone 14 390×664 (R3-1) | **PASS** | `<main>` was scrolled back to the top and bob was opened from the list. `<main>` then scrolled 0 → 289 with no manual scroll.<br>• Newest message **398–492**, composer **522–566**, both inside the band (80–595). All three hit-tests hit the target.<br>• The list is pinned to the bottom (scrollTop 2989 of 3232) and `scrollWidth` is 390.<br>• **unread 2 → 0**, two read calls, both 200.<br>Baseline `3ad8631`: newest at 687–781 and composer at 811–855, both off-screen, and unread 2 → 1 (the Run 3 result reproduced). |
+| M2 | Messaging, iPhone SE 375×667 | **PASS** | Newest **381–495**, composer **525–569**, band 80–598. The hit-tests pass and **unread 2 → 0** (read 200 ×2). There is no horizontal overflow. |
+| M3 | Messaging, Pixel 7 412×839 | **PASS** (the Run 3 F2b observation is fixed) | `<main>` scrolled 0 → 114. Newest **573–667**, composer **697–741**, both above the bottom nav at 770, and the hit-tests pass. **unread 2 → 0** (read 200 ×2). |
+| M4 | Switching rooms (bob → carl), all phones | **PASS** | `<main>` was scrolled back to 0 so the list could be reached, then carl was tapped. The card scrolled back into view with the same geometry as M1–M3, and carl's **unread went 2 → 0** (read 200). |
+| M5 | Desktop 1440×900 | **PASS, unchanged** | The geometry matches `3ad8631` exactly: card 192–791, newest 618–692, composer 734–778. `<main>` and the document scrollTop stay 0. Unread 2 → 0 for bob and for carl (read 200). The effect is gated at `max-width: 1279.98px`, so it does not run here. |
+| M6 | 1024×768: are positions unchanged vs `3ad8631`? | **FAIL (low; changed by design, R4-2)** | The new effect does run at 1024, because the panels are stacked below `xl`.<br>• **On load, with no user action,** `<main>` scrolls **0 → 29 px**. The card moves from 413–720 to 384–691 and the composer from 663–707 to 634–678.<br>• The **"Messaging" heading is clipped** (h1 not fully visible; it is visible on `3ad8631`).<br>On `3ad8631` the bottom 13 px of the card sat below `<main>`'s visible edge (707). It is now fully visible.<br>Unread 2 → 0 for both rooms. There is no horizontal overflow and the document itself never scrolls (`scrollingElement.scrollTop` stays 0). |
+| T1 | Toast vs cookie banner: banner buttons (R3-2) | **PASS** | With the banner open, `--tc-consent-offset` is **194px** (iPhone 14, iPhone SE and Pixel 7) and the region is at `bottom: 210px`.<br>• iPhone 14: the stack ends at y 455 and the banner starts at 470.<br>• With 1, 2 and 3 toasts on all three phones, "Reject optional" and "Accept optional" are not overlapped and both hit-tests hit the button.<br>Baseline `3ad8631`: both buttons are covered and the hit-tests fail (R3-2 reproduced). |
+| T2 | Clicking a banner button with toasts showing | **PASS** | The button was clicked with 3 toasts showing in each case:<br>• "Reject optional" on iPhone 14 and Pixel 7, and "Accept optional" on iPhone SE (and with 1 toast on iPhone 14).<br>• Each time the banner unmounted, `tc-tracking-consent` was stored (`rejected` / `accepted`), and the inline `--tc-consent-offset` was **removed**.<br>• The region returned to `bottom: 16px`; on iPhone 14 the toasts moved to 265–649.<br>• A wrong-code toast raised after dismissal sat at 525–649 (bottom-anchored). |
+| T3 | Toasts vs OTP and Continue, **banner dismissed**, iPhone 14 / SE | **PASS for 1–2 toasts**; **3 covers Continue** | iPhone 14 with 2 toasts ("Code completed" + "Reset failed"): 395–649. The OTP row (210–258) and Continue (310–358) are clear, and all hit-tests pass. SE gives the same result (398–652).<br>**3-toast case, observed (it was only computed in Run 3):** 265–649 overlaps Continue, so the Continue hit-test fails. The OTP inputs stay clear. `3ad8631` behaves identically, so this is not new. |
+| T4 | Toasts vs OTP and Continue, **banner open**, iPhone 14 / SE | **FAIL (new, R4-1)** | Because the stack is lifted by 194 px, **one** "Reset failed" toast (iPhone 14: 331–455; SE: 334–458) overlaps Continue (310–358).<br>• On iPhone 14 the Continue hit-test fails. In the mouse-driven run, Playwright's click on Continue waited 30 s and timed out. This was likely because the harness pointer was over the toast, and hovering pauses auto-dismiss (`ToastProvider.tsx:132`). Not measured.<br>• **Two toasts** (201–455) also cover **all 6 OTP inputs** (every hit-test fails). Two toasts is the normal case after a wrong code, because re-typing the code raises "Code completed" (`PasswordResetPage.tsx:125/183`).<br>• **Three toasts** sit at 71–455.<br>• **The happy path is affected too.** On iPhone 14 with the banner open, filling the code on the first attempt raises "Code completed" at 331–455, over Continue, and the Continue hit-test fails. With the banner dismissed, the same toast sits at 525–649 and Continue is clear.<br>• Pixel 7 with the banner open: 1–2 toasts are clear (376–630); 3 toasts (246–630) cover Continue, the same as T3.<br>• On `3ad8631` with the banner open, 1–2 toasts sat at 395–649: clear of the OTP row and of Continue, but covering the banner buttons. 3 toasts (265–649) covered Continue. |
+| T5 | Desktop ≥768 placement | **PASS, unchanged** | At 768 and 1440 the region is `top: 96px; right: 16px` and the toast boxes are identical on `7b175ca` and `3ad8631`: 1440 x 1072–1424, y 95–219 / 225–349; 768 x 400–752.<br>With the banner open at 1440, the variable is set (130px) but has no effect (`md:bottom-auto`), and the banner buttons pass the hit-test.<br>The top-right stack's overlap with the OTP row and Continue is pre-existing, the same as Run 3 F3b. |
+
+There were no uncaught page errors in any session.
+- **Recorded console errors:** only the browser's "Failed to load resource … 401" line for each deliberate `reset-password` 401.
+- **Recorded API errors:** only those 401s.
+
+### New defects and observations
+
+| ID | Severity | Where | What |
+|---|---|---|---|
+| R4-1 | Medium (UX, regression from the R3-2 fix) | `web-frontend` `src/shared/ui/toast/ToastProvider.tsx:123`, with `src/shared/ui/site/TrackingConsentBanner.tsx:17` | **On phones of about 664–667 px height with the cookie banner open, the lifted toast stack covers the reset form.**<br>• The stack is lifted by the banner height (194 px), so it now starts at y ≈ 455.<br>• A single toast covers Continue, and the usual two toasts after a wrong code also cover the OTP inputs. Until the toasts expire (3.4 s, or longer while hovered or focused), the user cannot tap Continue or the code boxes.<br>• This applies even on a first, correct attempt, because filling the code raises "Code completed" over Continue.<br>• Before this fix, the same toasts covered the banner buttons instead (R3-2).<br>• **Fix options:**<br>&nbsp;&nbsp;– Cap the region's `max-height` to the space above the banner, for example `max-h-[calc(100dvh-7rem-var(--tc-consent-offset,0px))]`, and show fewer toasts.<br>&nbsp;&nbsp;– Or move phone toasts to the top while the banner is open.<br>&nbsp;&nbsp;– Or stop raising the "Code completed" info toast on the reset page. |
+| R4-O1 | Low (observation) | `web-frontend` `src/features/messaging/ui/MessagingPage.tsx:209-210`, with `src/features/messaging/hooks/useMessages.ts:226` | **On phones, the page auto-scrolls past the room list on load.**<br>• `/messages` auto-selects `rooms[0]`, so the new scroll-into-view effect runs on load as well as on tap.<br>• On iPhone 14, `<main>` lands scrolled to 289 px. The "Messaging" heading is off-screen and the room list card sits at y −89 to 172, so only about one room row shows in the band.<br>• Choosing another conversation needs a manual scroll up (M4). |
+| R4-2 | Low (layout change at a desktop width) | `web-frontend` `src/features/messaging/ui/MessagingPage.tsx:209` | **The `max-width: 1279.98px` gate includes 1024-wide desktops and tablets, so the scroll effect also runs there.**<br>• At 1024×768, `<main>` scrolls by 29 px **on load** and the "Messaging" heading is clipped (M6).<br>• The fix intends this for the stacked layout, but positions are not unchanged versus `3ad8631`.<br>• **Options:**<br>&nbsp;&nbsp;– Gate the effect on phone widths only (e.g. `max-width: 767.98px`).<br>&nbsp;&nbsp;– Or skip it when the card is already mostly visible.<br>&nbsp;&nbsp;– Or run it only on a user tap, not on auto-select. |
+
+**Status of Run 3 defects:**
+- **R3-1 is fixed** on iPhone 14, iPhone SE and Pixel 7: the newest message and the composer are visible and unread clears to 0.
+- **R3-2 is fixed** (the banner buttons are clear and clickable, and the variable is removed when the banner closes), but the fix introduces **R4-1**.
+
+### Evidence
+
+Screenshots are in `doc/release/e2e-shots/run4/`, all local simulation at `deviceScaleFactor` 1:
+
+| File | What it shows |
+|---|---|
+| `m-open-iph14.png` | M1: bob's room opened from the list on iPhone 14, with msg 30 and the composer above the bottom nav. The room list is mostly scrolled away (R4-O1). |
+| `t-cookie-1toast-iph14.png` | R4-1: banner open, one "Reset failed" toast over Continue, banner buttons clear |
+| `t-cookie-3toasts-iph14.png` | T1 / R4-1: three toasts above the banner, covering the OTP row and Continue |
+| `t-after-reject-iph14.png` | T2: after "Reject optional", the banner is gone and the toasts are back at the bottom |
+
+The raw JSON (`results/r4-msg.json`, `r4-toast.json`, `r4-toastk.json`, `r4-shot1.json`, `r4-otp1.json`), the harness (`h/r4.js`, `h/seed.js`, `h/diag-land.js`, `h/lib.js`) and the logs are in the session scratchpad (`…/scratchpad/e2e4/`). They are not kept in the repo.
