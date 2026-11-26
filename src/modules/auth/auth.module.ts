@@ -3,12 +3,15 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PasswordService } from '../../common/security/password.service';
+import { ItemGeocodingService } from '../items/item-geocoding.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { Role } from '../users/role.entity';
 import { UserRole } from '../users/user-role.entity';
 import { User } from '../users/user.entity';
 import { KycProfile } from '../users/kyc-profile.entity';
 
+import { AuthResetEmailLimiter } from './auth-rate-limit.guard';
+import { AuthEmailOutboxService } from './auth-email-outbox.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { Shop } from '../shops/shop.entity';
@@ -20,7 +23,7 @@ import { Shop } from '../shops/shop.entity';
     forwardRef(() => NotificationsModule),
   ],
   controllers: [AuthController],
-  providers: [AuthService, PasswordService, JwtAuthGuard],
+  providers: [AuthService, AuthEmailOutboxService, AuthResetEmailLimiter, PasswordService, JwtAuthGuard, ItemGeocodingService],
   exports: [],
 })
 export class AuthModule {}

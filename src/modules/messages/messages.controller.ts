@@ -1,13 +1,19 @@
 import {
   Body,
+  CanActivate,
   Controller,
   Delete,
   Get,
+  Header,
+  HttpCode,
+  Injectable,
   Param,
   ParseUUIDPipe,
   Post,
   Query,
   Req,
+  ServiceUnavailableException,
+  StreamableFile,
   UnauthorizedException,
   UploadedFile,
   UseGuards,
@@ -24,13 +30,17 @@ import {
 } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { SkipResponseEnvelope } from '../../common/decorators/skip-response-envelope.decorator';
 
 import { CreateRoomDto } from './dto/create-room.dto';
+import { DirectMessageDto } from './dto/direct-message.dto';
 import { GeneralMessageDto } from './dto/general-message.dto';
 import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
+import { ReadMessagesDto } from './dto/read-messages.dto';
 import { SearchMessagesQueryDto } from './dto/search-messages-query.dto';
 import { SendImageMessageDto } from './dto/send-image-message.dto';
 import { MessagesService } from './messages.service';
+import { MAX_MESSAGE_IMAGE_BYTES } from './messages-media.service';
 
 const messageExample = {
   id: '1b8cf2e2-5f24-4dc4-8c0c-0c0fe5bc9f91',
@@ -43,8 +53,8 @@ const messageExample = {
   createdAt: '2024-06-01T13:45:00.000Z',
   sender: {
     id: '9f0c9559-83d3-4afd-8a79-5f437c82c1d1',
-    firstName: 'Ada',
-    lastName: 'Lovelace',
+    firstName: 'Community member',
+    lastName: null,
     profileImageUrl: null,
   },
 };
@@ -54,15 +64,15 @@ const roomExample = {
   participants: [
     {
       id: '9f0c9559-83d3-4afd-8a79-5f437c82c1d1',
-      firstName: 'Ada',
-      lastName: 'Lovelace',
+      firstName: 'Community member',
+      lastName: null,
       profileImageUrl: null,
       online: true,
     },
     {
       id: '2c4c0f2c-97f2-4e4f-96b4-e8d9ba1d21f6',
-      firstName: 'Grace',
-      lastName: 'Hopper',
+      firstName: 'Community member',
+      lastName: null,
       profileImageUrl: null,
       online: false,
     },
@@ -71,6 +81,16 @@ const roomExample = {
   createdAt: '2024-05-30T09:12:00.000Z',
   updatedAt: '2024-06-01T13:45:00.000Z',
 };
+
+// Runs after controller authentication and before multipart parsing.
+// Enable the pilot only after the migration and runtime grants are verified.
+@Injectable()
+export class MessageAttachmentsUnavailableGuard implements CanActivate {
+  canActivate(): boolean {
+    if (process.env.MESSAGE_ATTACHMENTS_ENABLED === 'true') return true;
+    throw new ServiceUnavailableException('Image attachments are unavailable');
+  }
+}
 
 @ApiTags('messages')
 @ApiBearerAuth()
@@ -173,14 +193,17 @@ export class MessagesController {
   }
 
   @Post('rooms/:roomId/messages/image')
-  @UseInterceptors(FileInterceptor('image'))
+  @UseGuards(MessageAttachmentsUnavailableGuard)
+  @UseInterceptors(FileInterceptor('image', {
+    limits: { fileSize: MAX_MESSAGE_IMAGE_BYTES + 1, files: 1, fields: 2, parts: 4, fieldSize: 512 },
+  }))
   @ApiOperation({ summary: 'Send an image message to the room', operationId: 'sendImageMessage' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     description: 'Multipart payload containing the image and optional caption.',
     schema: {
       type: 'object',
-      required: ['image'],
+      required: ['image', 'clientMessageId'],
       properties: {
         image: {
           type: 'string',
@@ -191,6 +214,7 @@ export class MessagesController {
           type: 'string',
           example: 'Proof of collection',
         },
+        clientMessageId: { type: 'string', format: 'uuid' },
       },
     },
   })
@@ -204,7 +228,8 @@ export class MessagesController {
           ...messageExample,
           category: 'direct',
           direction: 'outgoing',
-          imageUrl: 'https://cdn.trucycle.com/messages/image-123.png',
+          imageUrl: null,
+          hasAttachment: true,
           caption: 'Proof of collection',
           text: null,
         },
@@ -219,6 +244,36 @@ export class MessagesController {
   ) {
     const userId = this.getUserId(req);
     return this.messages.sendImageMessage(roomId, userId, file, dto);
+  }
+
+  @Get('rooms/:roomId/messages/:messageId/image')
+  @UseGuards(MessageAttachmentsUnavailableGuard)
+  @SkipResponseEnvelope()
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Content-Type-Options', 'nosniff')
+  async getImageAttachment(
+    @Req() req: any,
+    @Param('roomId', ParseUUIDPipe) roomId: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+  ) {
+    const attachment = await this.messages.getImageAttachment(roomId, messageId, this.getUserId(req));
+    return new StreamableFile(attachment.payload, {
+      type: attachment.content_type,
+      length: attachment.payload.length,
+    });
+  }
+
+  @Post('rooms/:roomId/messages/text')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Persist a direct text message; reuse its client UUID for an exact retry' })
+  @ApiBody({ type: DirectMessageDto })
+  @ApiOkResponse({ description: 'Persisted sender view; not a recipient delivery or read receipt' })
+  async sendDirectMessage(
+    @Req() req: any,
+    @Param('roomId', ParseUUIDPipe) roomId: string,
+    @Body() dto: DirectMessageDto,
+  ) {
+    return this.messages.createDirectTextMessage(roomId, this.getUserId(req), dto.text, dto.clientMessageId);
   }
 
   @Post('rooms/:roomId/messages/general')
@@ -303,6 +358,13 @@ export class MessagesController {
     const userId = this.getUserId(req);
     await this.messages.deleteRoom(roomId, userId);
     return { success: true };
+  }
+
+  @Post('rooms/:roomId/read')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Acknowledge explicitly viewed incoming messages' })
+  async acknowledgeRead(@Req() req: any, @Param('roomId', ParseUUIDPipe) roomId: string, @Body() dto: ReadMessagesDto) {
+    return this.messages.acknowledgeRead(roomId, this.getUserId(req), dto.messageIds);
   }
 
   private getUserId(req: any): string {

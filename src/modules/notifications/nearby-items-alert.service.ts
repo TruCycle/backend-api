@@ -2,8 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 
+import { resolveOutwardPostcode } from '../../common/utils/postcode';
+import { publicLocationPoint } from '../../common/utils/public-location';
+import { safeFailure } from '../../common/utils/safe-log';
+import { frontendOrigin } from '../../common/utils/frontend-origin';
 import { Item, ItemPickupOption, ItemStatus } from '../items/item.entity';
 import { Shop } from '../shops/shop.entity';
+
 import { EmailService } from './email.service';
 
 @Injectable()
@@ -48,9 +53,9 @@ export class NearbyItemsAlertService {
       const shop = await this.shops.findOne({ where: { id: item.dropoffLocationId } });
       if (!shop) return 0;
 
-      const lon = Number(shop.longitude);
-      const lat = Number(shop.latitude);
-      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return 0;
+      const publicPoint = publicLocationPoint(shop.latitude, shop.longitude);
+      if (!publicPoint) return 0;
+      const { longitude: lon, latitude: lat } = publicPoint;
 
       const point = `ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)`;
       const radiusMeters = this.getRadiusMeters();
@@ -70,21 +75,21 @@ export class NearbyItemsAlertService {
 
       if (!rows || rows.length === 0) return 0;
 
-      const appBase = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+      const appBase = frontendOrigin();
+      if (!appBase) return 0;
       const itemUrl = `${appBase}/items/${encodeURIComponent(item.id)}`;
 
-      const subject = `New donation near you: ${item.title || 'An item'} at ${shop.name}`;
+      const subject = `New donation near you: ${item.title || 'An item'}`;
       const safeTitle = (item.title || '').toString().slice(0, 120);
       const safeCategory = (item.category || '').toString().slice(0, 80);
-      const shopAddress = [shop.addressLine, shop.postcode].filter(Boolean).join(', ');
+      const area = resolveOutwardPostcode(shop.postcode) || 'Area unavailable';
 
       const html = `
         <div style="font-family:Arial,sans-serif;color:#111;line-height:1.5">
           <h2 style="margin:0 0 8px 0">New donation near you</h2>
           <p style="margin:0 0 6px 0"><strong>${this.escapeHtml(safeTitle)}</strong>${safeCategory ? ` &middot; ${this.escapeHtml(safeCategory)}` : ''
         }</p>
-          <p style="margin:0 0 6px 0">Available at <strong>${this.escapeHtml(shop.name)}</strong></p>
-          <p style="margin:0 0 12px 0">${this.escapeHtml(shopAddress)}</p>
+          <p style="margin:0 0 6px 0">Approximate area: <strong>${this.escapeHtml(area)}</strong></p>
           <p style="margin:0 0 12px 0">
             <a href="${itemUrl}" target="_blank"
                style="background:#0f766e;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none">
@@ -102,16 +107,16 @@ export class NearbyItemsAlertService {
       for (const r of rows) {
         if (!r?.email) continue;
         try {
-          await this.email.sendEmail({ to: r.email, subject, html });
-          sent++;
+            const delivery = await this.email.sendEmail({ to: r.email, subject, html });
+            if (delivery.status === 'accepted') sent++;
         } catch (err) {
-          this.logger.debug(`Email send failed to ${r.email}: ${err instanceof Error ? err.message : err}`);
+          this.logger.debug(safeFailure('nearby_email_delivery', err));
         }
       }
-      if (sent > 0) this.logger.log(`Nearby donation alert sent for item ${item.id} to ${sent} user(s).`);
+      if (sent > 0) this.logger.log({ operation: 'nearby_donation_email', sent });
       return sent;
     } catch (err) {
-      this.logger.error(`Failed nearby donation alert for item ${itemId}: ${err instanceof Error ? err.message : err}`);
+      this.logger.error(safeFailure('nearby_donation_email', err));
       return 0;
     }
   }
@@ -126,10 +131,10 @@ export class NearbyItemsAlertService {
       if (item.pickupOption !== ItemPickupOption.EXCHANGE) return 0;
       if (item.status !== ItemStatus.ACTIVE) return 0;
 
-      // Use item's own location (not shop)
-      const lon = Number(item.longitude);
-      const lat = Number(item.latitude);
-      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return 0;
+      // Target from the same public item cell used by public discovery.
+      const publicPoint = publicLocationPoint(item.latitude, item.longitude);
+      if (!publicPoint) return 0;
+      const { longitude: lon, latitude: lat } = publicPoint;
 
       const point = `ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)`;
       const radiusMeters = this.getRadiusMeters();
@@ -149,20 +154,21 @@ export class NearbyItemsAlertService {
 
       if (!rows || rows.length === 0) return 0;
 
-      const appBase = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+      const appBase = frontendOrigin();
+      if (!appBase) return 0;
       const itemUrl = `${appBase}/items/${encodeURIComponent(item.id)}`;
 
       const subject = `New exchange near you: ${item.title || 'An item'}`;
       const safeTitle = (item.title || '').toString().slice(0, 120);
       const safeCategory = (item.category || '').toString().slice(0, 80);
-      const address = [item.addressLine, item.postcode].filter(Boolean).join(', ');
+      const area = resolveOutwardPostcode(item.postcode) || 'Area unavailable';
 
       const html = `
         <div style="font-family:Arial,sans-serif;color:#111;line-height:1.5">
           <h2 style="margin:0 0 8px 0">New exchange near you</h2>
           <p style="margin:0 0 6px 0"><strong>${this.escapeHtml(safeTitle)}</strong>${safeCategory ? ` &middot; ${this.escapeHtml(safeCategory)}` : ''
         }</p>
-          <p style="margin:0 0 6px 0">Location: <strong>${this.escapeHtml(address)}</strong></p>
+          <p style="margin:0 0 6px 0">Approximate area: <strong>${this.escapeHtml(area)}</strong></p>
           <p style="margin:0 0 12px 0">
             <a href="${itemUrl}" target="_blank"
                style="background:#0f766e;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none">
@@ -179,16 +185,16 @@ export class NearbyItemsAlertService {
       for (const r of rows) {
         if (!r?.email) continue;
         try {
-          await this.email.sendEmail({ to: r.email, subject, html });
-          sent++;
+            const delivery = await this.email.sendEmail({ to: r.email, subject, html });
+            if (delivery.status === 'accepted') sent++;
         } catch (err) {
-          this.logger.debug(`Email send failed to ${r.email}: ${err instanceof Error ? err.message : err}`);
+          this.logger.debug(safeFailure('nearby_email_delivery', err));
         }
       }
-      if (sent > 0) this.logger.log(`Nearby exchange alert sent for item ${item.id} to ${sent} user(s).`);
+      if (sent > 0) this.logger.log({ operation: 'nearby_exchange_email', sent });
       return sent;
     } catch (err) {
-      this.logger.error(`Failed nearby exchange alert for item ${itemId}: ${err instanceof Error ? err.message : err}`);
+      this.logger.error(safeFailure('nearby_exchange_email', err));
       return 0;
     }
   }

@@ -6,7 +6,10 @@ import {
   MinLength,
   MaxLength,
   IsNotEmpty,
+  IsIn,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 import { RoleCode } from '../../users/role.entity';
 import { CreateShopDto } from '../../shops/dto/create-shop.dto';
@@ -33,11 +36,14 @@ export class RegisterDto {
   @MinLength(8)
   password!: string;
 
-  @ApiProperty({ enum: RoleCode, required: false })
+  @ApiProperty({ enum: [RoleCode.CUSTOMER, RoleCode.COLLECTOR, RoleCode.PARTNER], required: false })
   @IsOptional()
+  @IsIn([RoleCode.CUSTOMER, RoleCode.COLLECTOR, RoleCode.PARTNER, 'donor'])
   role?: RoleCode;
 
   @ApiPropertyOptional({ description: 'Partner shop details (required when registering as a partner)', type: CreateShopDto })
   @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateShopDto)
   shop?: CreateShopDto;
 }

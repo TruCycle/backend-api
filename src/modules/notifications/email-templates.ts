@@ -6,6 +6,7 @@ interface PasswordResetOtpTemplateParams {
   firstName?: string | null;
   otp: string;
   expiresInMinutes: number;
+  expiresAt?: Date;
   supportEmail?: string;
 }
 
@@ -21,7 +22,7 @@ interface WelcomeEmailTemplateParams {
 interface PasswordResetSuccessTemplateParams {
   firstName?: string | null;
   supportEmail?: string;
-  loginUrl: string;
+  loginUrl?: string;
 }
 
 interface FeedbackEmailTemplateParams {
@@ -119,6 +120,7 @@ export function buildPasswordResetOtpEmailTemplate({
   firstName,
   otp,
   expiresInMinutes,
+  expiresAt,
   supportEmail,
 }: PasswordResetOtpTemplateParams): string {
   const passwordLockIconUrl = escapeHtml(`cid:${INLINE_ASSET_CID.passwordLock}`);
@@ -138,7 +140,9 @@ export function buildPasswordResetOtpEmailTemplate({
       <p style="margin:0 0 16px;font-size:16px;line-height:1.5">Hi${safeName ? ` ${safeName}` : ''},</p>
       <p style="margin:0 0 16px;font-size:16px;line-height:1.5">Here's your one-time reset code:</p>
       <div style="margin:0 0 24px">${otpBoxes}</div>
-      <p style="margin:0 0 16px;font-size:16px;line-height:1.5">This code will only be valid for the next ${expiresInMinutes} minute(s).</p>
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.5">${expiresAt
+        ? `This code expires at ${expiresAt.toISOString().slice(11, 16)} UTC on ${expiresAt.toISOString().slice(0, 10)}.`
+        : `This code will only be valid for the next ${expiresInMinutes} minute(s).`}</p>
       <p style="margin:0 0 32px;font-size:14px;line-height:1.5;color:#475569">
         If you didn't request this password reset, please contact our support team immediately at
         <a href="mailto:${safeSupportEmail}" style="color:#22c55e;text-decoration:none">${safeSupportEmail}</a>
@@ -194,7 +198,7 @@ export function buildPasswordResetSuccessEmailTemplate({
 }: PasswordResetSuccessTemplateParams): string {
   const safeName = firstName ? escapeHtml(firstName) : '';
   const safeSupportEmail = escapeHtml(supportEmail || 'support@trucycle.co.uk');
-  const safeLoginUrl = escapeHtml(loginUrl);
+  const safeLoginUrl = loginUrl ? escapeHtml(loginUrl) : null;
 
   return buildBrandedEmailLayout({
     bodyHtml: `
@@ -204,9 +208,9 @@ export function buildPasswordResetSuccessEmailTemplate({
         For more information or assistance, send an email to<br />
         <a href="mailto:${safeSupportEmail}" style="color:#22c55e;text-decoration:none">${safeSupportEmail}</a>
       </p>
-      <p style="margin:0 0 40px">
+      ${safeLoginUrl ? `<p style="margin:0 0 40px">
         <a href="${safeLoginUrl}" target="_blank" style="display:inline-block;background:#8be28f;color:#1d2330;text-decoration:none;padding:12px 32px;border-radius:8px;font-size:16px;line-height:1.2;font-weight:600">Login</a>
-      </p>
+      </p>` : ''}
       <p style="margin:0;font-size:16px;line-height:1.5;color:#64748b">Best,<br />TruCycle Team</p>
     `,
   });

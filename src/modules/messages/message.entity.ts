@@ -34,6 +34,9 @@ export class Message {
   @Column({ type: 'text', nullable: true })
   imageUrl?: string | null;
 
+  @Column({ type: 'boolean', default: false })
+  hasAttachment!: boolean;
+
   @Column({ type: 'text', nullable: true })
   caption?: string | null;
 

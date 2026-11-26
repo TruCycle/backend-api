@@ -1,9 +1,11 @@
-import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
+import { AuthResetEmailLimiter, LimitAuthOperation } from './auth-rate-limit.guard';
 import { AuthService } from './auth.service';
 import { ForgetPasswordDto } from './dto/forget-password.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
@@ -14,12 +16,13 @@ import { CreateShopDto } from '../shops/dto/create-shop.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyDto } from './dto/verify.dto';
+import { LogoutDto } from './dto/logout.dto';
 
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(private readonly auth: AuthService, private readonly resetEmailLimiter: AuthResetEmailLimiter) {}
 
   @Get('health')
   @ApiOperation({ summary: 'Auth service health check' })
@@ -39,7 +42,7 @@ export class AuthController {
     type: RegisterDto,
   })
   @ApiCreatedResponse({
-    description: 'User created successfully',
+    description: 'User created successfully. verificationDelivery reports queue or provider status. Inbox delivery is separate.',
     schema: {
       example: {
         status: 'success',
@@ -53,6 +56,7 @@ export class AuthController {
             status: 'pending',
             roles: ['partner'],
           },
+          verificationDelivery: { status: 'accepted' },
           shop: {
             id: 'b84e...-uuid',
             name: 'Jane\'s Outlet',
@@ -69,6 +73,7 @@ export class AuthController {
       },
     },
   })
+  @LimitAuthOperation('register')
   async register(@Body() dto: RegisterDto) {
     const { user, shop, verificationDelivery } = await this.auth.register(
       dto.email,
@@ -89,8 +94,8 @@ export class AuthController {
           status: user.status,
           roles: (user as any).roles ?? undefined,
         },
-        ...(shop ? { shop } : {}),
         verificationDelivery,
+        ...(shop ? { shop } : {}),
       },
     };
   }
@@ -121,6 +126,7 @@ export class AuthController {
       },
     },
   })
+  @LimitAuthOperation('login')
   async login(@Body() dto: LoginDto) {
     const { user, tokens } = await this.auth.login(dto.email, dto.password);
     return {
@@ -160,6 +166,7 @@ export class AuthController {
       },
     },
   })
+  @LimitAuthOperation('google')
   async googleLogin(@Body() dto: GoogleLoginDto) {
     const { user, tokens } = await this.auth.loginWithGoogle(dto.id_token);
     return {
@@ -170,6 +177,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @LimitAuthOperation('refresh')
   @ApiOperation({ summary: 'Refresh access and refresh tokens' })
   @ApiBody({ description: 'Refresh token payload', type: RefreshTokenDto })
   @HttpCode(200)
@@ -209,18 +217,39 @@ export class AuthController {
   @Post('resend-verification')
   @ApiOperation({ summary: 'Resend email verification link' })
   @ApiBody({ description: 'Email to resend verification to', type: ResendVerificationDto })
-  @ApiOkResponse({ description: 'Verification request acknowledged without disclosing account status' })
+  @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'If an account needs verification, a verification email has been requested.', data: null } } })
+  @LimitAuthOperation('resend')
   async resendVerification(@Body() dto: ResendVerificationDto) {
     await this.auth.resendVerification(dto.email);
     // Always return success to avoid email enumeration
-    return { status: 'success', message: 'If the account needs verification, a link has been requested.', data: null };
+    return { status: 'success', message: 'If an account needs verification, a verification email has been requested.', data: null };
+  }
+
+  @Post('logout')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Revoke the session identified by a signed refresh credential' })
+  async logout(@Body() dto: LogoutDto) {
+    await this.auth.logout(dto.refresh_token, dto.access_token);
+    return { status: 'success', message: 'Session revoked.', data: null };
+  }
+
+  @Post('logout-all')
+  @HttpCode(200)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Revoke all sessions for the current account' })
+  async logoutAll(@AuthUser() payload: { sub: string }) {
+    await this.auth.logoutAll(payload.sub);
+    return { status: 'success', message: 'All sessions revoked.', data: null };
   }
 
   @Post('forget-password')
   @ApiOperation({ summary: 'Request a password reset OTP' })
   @ApiBody({ description: 'Email to send reset OTP to', type: ForgetPasswordDto })
-  @ApiOkResponse({ description: 'Reset request acknowledged without disclosing account status' })
-  async forgetPassword(@Body() dto: ForgetPasswordDto) {
+  @ApiOkResponse({ description: 'Generic acknowledgement', schema: { example: { status: 'success', message: 'If the account is eligible, a reset code has been requested.', data: null } } })
+  @LimitAuthOperation('reset_request')
+  async forgetPassword(@Body() dto: ForgetPasswordDto, @Res({ passthrough: true }) response: Response) {
+    await this.resetEmailLimiter.consume('reset_request', dto.email, response);
     await this.auth.requestPasswordReset(dto.email);
     // Always return success to avoid email enumeration
     return { status: 'success', message: 'If the account is eligible, a reset code has been requested.', data: null };
@@ -231,42 +260,21 @@ export class AuthController {
   @ApiBody({ description: 'Verification token payload', type: VerifyDto })
   @HttpCode(200)
   @ApiOkResponse({
-    description: 'Verification success with user and tokens',
+    description: 'Email verified; sign in separately to start a session',
     schema: {
       example: {
         status: 'success',
-        message: 'Verification successfully.',
-        data: {
-          user: {
-            id: '3f2f8c2e-6b1a-4c8e-9a61-22f924e0f6f1',
-            firstName: 'Jane',
-            lastName: 'Doe',
-            email: 'jane@example.com',
-            status: 'active',
-          },
-          tokens: {
-            accessToken: 'eyJhbGciOi...access',
-            refreshToken: 'eyJhbGciOi...refresh',
-          },
-        },
+        message: 'Email verified. Sign in to continue.',
+        data: { verified: true },
       },
     },
   })
   async verify(@Body() dto: VerifyDto) {
-    const { user, tokens } = await this.auth.verifyUser(dto.token);
+    const data = await this.auth.verifyUser(dto.token);
     return {
       status: 'success',
-      message: 'Verification successfully.',
-      data: {
-        user: {
-          id: user.id,
-          firstName: (user as any).firstName ?? null,
-          lastName: (user as any).lastName ?? null,
-          email: (user as any).email,
-          status: (user as any).status,
-        },
-        tokens,
-      },
+      message: 'Email verified. Sign in to continue.',
+      data,
     };
   }
 
@@ -274,7 +282,9 @@ export class AuthController {
   @ApiOperation({ summary: 'Reset password using email + OTP' })
   @ApiBody({ description: 'Email, OTP, and new password', type: ResetPasswordDto })
   @ApiOkResponse({ description: 'Success message returned', schema: { example: { status: 'success', message: 'Password changed successfully.', data: null } } })
-  async resetPassword(@Body() dto: ResetPasswordDto) {
+  @LimitAuthOperation('reset_attempt')
+  async resetPassword(@Body() dto: ResetPasswordDto, @Res({ passthrough: true }) response: Response) {
+    await this.resetEmailLimiter.consume('reset_attempt', dto.email, response);
     await this.auth.resetPassword(dto.email, dto.otp, dto.new_password);
     return { status: 'success', message: 'Password changed successfully.', data: null };
   }
@@ -357,11 +367,11 @@ export class AuthController {
     },
   })
   async upgradeToPartner(@AuthUser() payload: any, @Body() shopDto?: CreateShopDto) {
-    const { user, shop, tokens } = await this.auth.upgradeToPartner(payload, shopDto);
+    const { user, shop } = await this.auth.upgradeToPartner(payload, shopDto);
     return {
       status: 'success',
       message: 'Upgraded to partner successfully.',
-      data: { user, ...(shop ? { shop } : {}), tokens },
+      data: { user, ...(shop ? { shop } : {}) },
     };
   }
 }

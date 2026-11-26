@@ -4,6 +4,7 @@ import * as path from 'path';
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
+import { safeFailure } from '../../common/utils/safe-log';
 
 export interface EmailDeliveryOutcome {
   // HTTP acceptance is not confirmation of inbox delivery.
@@ -14,6 +15,7 @@ interface SendEmailParams {
   to: string;
   subject: string;
   html: string;
+  classifyTransientRejections?: boolean;
 }
 
 interface EmailAttachment {
@@ -115,8 +117,8 @@ export class EmailService implements OnModuleInit {
           content_type: asset.mimeType,
           content_id: asset.contentId,
         });
-      } catch {
-        this.logger.warn({ operation: 'email_inline_asset', outcome: 'failed' });
+      } catch (error) {
+        this.logger.warn(safeFailure('email_inline_asset', error));
       }
     }
 
@@ -139,7 +141,7 @@ export class EmailService implements OnModuleInit {
   private async sendViaBrevo(
     apiKey: string,
     from: string,
-    { to, subject, html }: SendEmailParams,
+    { to, subject, html, classifyTransientRejections }: SendEmailParams,
     attachments: EmailAttachment[],
     signal: AbortSignal,
   ): Promise<EmailDeliveryOutcome & { fallbackAllowed: boolean }> {
@@ -171,13 +173,14 @@ export class EmailService implements OnModuleInit {
     if (!res.ok) {
       this.logger.error({ operation: 'email_delivery', provider: 'brevo', status: res.status });
     }
-    return { ...this.providerOutcome(res), fallbackAllowed: [401, 403, 404].includes(res.status) };
+    // Only a definitive configuration rejection permits the backup provider.
+    return { ...this.providerOutcome(res, classifyTransientRejections), fallbackAllowed: [401, 403, 404].includes(res.status) };
   }
 
   private async sendViaResend(
     apiKey: string,
     from: string,
-    { to, subject, html }: SendEmailParams,
+    { to, subject, html, classifyTransientRejections }: SendEmailParams,
     attachments: EmailAttachment[],
     signal: AbortSignal,
   ): Promise<EmailDeliveryOutcome> {
@@ -194,10 +197,12 @@ export class EmailService implements OnModuleInit {
     if (!res.ok) {
       this.logger.error({ operation: 'email_delivery', provider: 'resend', status: res.status });
     }
-    return this.providerOutcome(res);
+    return this.providerOutcome(res, classifyTransientRejections);
   }
 
-  private providerOutcome(response: Response): EmailDeliveryOutcome {
+  // Transient provider responses are always reported as failures (production behaviour);
+  // the flag is kept so outbox callers can state their intent explicitly.
+  private providerOutcome(response: Response, _classifyTransientRejections?: boolean): EmailDeliveryOutcome {
     if (response.ok) return { status: 'accepted' };
     if (response.status === 408 || response.status === 429 || response.status >= 500) {
       return { status: 'failed' };
@@ -228,8 +233,8 @@ export class EmailService implements OnModuleInit {
           resolve({ status: 'timeout' });
         }, 10000);
       });
-      const delivery = this.loadInlineAttachments(params.html).then(async attachments => {
-        if (controller.signal.aborted) return { status: 'timeout' } as const;
+      const delivery = this.loadInlineAttachments(params.html).then(async (attachments): Promise<EmailDeliveryOutcome> => {
+        if (controller.signal.aborted) return { status: 'timeout' };
         if (!brevoApiKey) {
           return this.sendViaResend(resendApiKey!, from, params, attachments, controller.signal);
         }
@@ -243,9 +248,9 @@ export class EmailService implements OnModuleInit {
         return { status: primary.status };
       });
       return await Promise.race([delivery, deadline]);
-    } catch {
+    } catch (err: unknown) {
       const provider = brevoApiKey ? 'Brevo' : 'Resend';
-      this.logger.error({ operation: 'email_delivery', outcome: 'failed', provider });
+      this.logger.error({ ...safeFailure('email_delivery', err), provider });
       return { status: timedOut ? 'timeout' : 'failed' };
     } finally {
       if (timer) clearTimeout(timer);

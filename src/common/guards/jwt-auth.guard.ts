@@ -5,10 +5,20 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+
+import { User } from '../../modules/users/user.entity';
+import { AuthSessionsService } from '../../modules/auth/auth-sessions.service';
+import { verifyAccessToken } from '../security/access-token';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private readonly jwt: JwtService) {}
+  constructor(
+    private readonly jwt: JwtService,
+    @InjectRepository(User) private readonly users: Repository<User>,
+    private readonly sessions: AuthSessionsService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
@@ -27,16 +37,7 @@ export class JwtAuthGuard implements CanActivate {
     if (!token) {
       throw new UnauthorizedException('Missing bearer token');
     }
-    try {
-      const payload = await this.jwt.verifyAsync(token);
-      const userId = typeof payload?.sub === 'string' ? payload.sub.trim() : '';
-      if (!userId) {
-        throw new UnauthorizedException('Invalid token payload');
-      }
-      req.user = { ...payload, id: userId, userId };
-      return true;
-    } catch (_err) {
-      throw new UnauthorizedException('Invalid token');
-    }
+    req.user = await verifyAccessToken(this.jwt, this.users, token, this.sessions);
+    return true;
   }
 }

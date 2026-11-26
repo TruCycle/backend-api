@@ -1,59 +1,39 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
-import { UploadApiOptions, UploadApiResponse, v2 as cloudinary } from 'cloudinary';
+import { BadRequestException, Injectable, PayloadTooLargeException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import sharp from 'sharp';
+
+export const MAX_MESSAGE_IMAGE_BYTES = 512 * 1024;
+const MAX_IMAGE_DIMENSION = 2048;
+const MAX_IMAGE_PIXELS = MAX_IMAGE_DIMENSION ** 2;
 
 @Injectable()
 export class MessagesMediaService {
-  private readonly logger = new Logger(MessagesMediaService.name);
+  async prepareImage(buffer: Buffer) {
+    if (!buffer.length) throw new BadRequestException('An image file is required');
+    if (buffer.length > MAX_MESSAGE_IMAGE_BYTES) throw new PayloadTooLargeException('Image is too large');
 
-  private readonly folder = process.env.CLOUDINARY_MESSAGE_FOLDER || 'messages';
+    // Select the decoder from the bytes before invoking it. Filenames and MIME
+    // headers are supplied by the client and do not determine the output type.
+    const isJpeg = buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
+    const isPng = buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const isWebp = buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP';
+    if (!isJpeg && !isPng && !isWebp) throw new BadRequestException('Only JPEG, PNG and WebP images are accepted');
 
-  constructor() {
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME || '';
-    const apiKey = process.env.CLOUDINARY_API_KEY || '';
-    const apiSecret = process.env.CLOUDINARY_API_SECRET || '';
-
-    if (!cloudName || !apiKey || !apiSecret) {
-      this.logger.warn('Cloudinary credentials are not fully configured; message uploads will fail.');
-    }
-
-    cloudinary.config({
-      cloud_name: cloudName,
-      api_key: apiKey,
-      api_secret: apiSecret,
-      secure: true,
-    });
-  }
-
-  async uploadImage(buffer: Buffer, originalName: string): Promise<string> {
+    let payload: Buffer;
     try {
-      const options: UploadApiOptions = {
-        folder: this.folder,
-        resource_type: 'image',
-        use_filename: true,
-        unique_filename: true,
-        overwrite: false,
-        filename_override: originalName.replace(/\.[^.]+$/, ''),
-      };
-
-      const response: UploadApiResponse = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(options, (error, result) => {
-          if (error) return reject(error);
-          if (!result) return reject(new Error('Empty Cloudinary response'));
-          resolve(result);
-        });
-        stream.end(buffer);
-      });
-
-      const url = response.secure_url || response.url;
-      if (!url) {
-        this.logger.error('Cloudinary upload succeeded but returned no URL');
-        throw new InternalServerErrorException('Image upload did not return a URL');
+      const image = sharp(buffer, { limitInputPixels: MAX_IMAGE_PIXELS, failOn: 'warning' });
+      const { format, width, height, pages } = await image.metadata();
+      if (format !== (isJpeg ? 'jpeg' : isPng ? 'png' : 'webp') ||
+          !width || !height || width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION ||
+          (pages ?? 1) > 1) {
+        throw new BadRequestException('Unsupported image format or dimensions');
       }
-
-      return url;
-    } catch (error) {
-      this.logger.error(`Failed to upload image to Cloudinary: ${error}`);
-      throw new InternalServerErrorException('Failed to upload message image');
+      payload = await image.autoOrient().webp({ quality: 85 }).toBuffer();
+    } catch {
+      throw new BadRequestException('Invalid or unsupported image');
     }
+
+    if (payload.length > MAX_MESSAGE_IMAGE_BYTES) throw new PayloadTooLargeException('Processed image is too large');
+    return { payload, contentType: 'image/webp', sourceDigest: createHash('sha256').update(buffer).digest() };
   }
 }

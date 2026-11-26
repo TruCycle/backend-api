@@ -2,9 +2,11 @@ import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req
 import { ApiBearerAuth, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
 import { CreateFoundItemClaimDto } from './dto/create-found-item-claim.dto';
 import { CreateFoundItemDto } from './dto/create-found-item.dto';
 import { MyFoundItemsQueryDto } from './dto/my-found-items-query.dto';
+import { ObserveFoundItemDto } from './dto/observe-found-item.dto';
 import { ReportFoundItemDto } from './dto/report-found-item.dto';
 import { SearchFoundItemCatalogDto } from './dto/search-found-item-catalog.dto';
 import { SearchFoundItemsDto } from './dto/search-found-items.dto';
@@ -58,6 +60,21 @@ export class FoundItemsController {
   @ApiOkResponse({ description: 'Updated found item' })
   async updateStatus(@Req() req: any, @Param('id') id: string, @Body() dto: UpdateFoundItemStatusDto): Promise<unknown> {
     return this.foundItems.updateStatus(req.user.id as string, id, dto);
+  }
+
+  @Post(':id/observations')
+  async observe(@Req() req: any, @Param('id') id: string, @Body() dto: ObserveFoundItemDto) {
+    return this.foundItems.observe(req.user.id as string, id, dto);
+  }
+
+  @Post(':id/reconfirm')
+  async reconfirm(@Req() req: any, @Param('id') id: string) {
+    return this.foundItems.reconfirm(req.user.id as string, id);
+  }
+
+  @Patch(':id/claims/:claimId/acknowledge')
+  async acknowledge(@Req() req: any, @Param('id') id: string, @Param('claimId') claimId: string) {
+    return this.foundItems.acknowledgeClaim(req.user.id as string, id, claimId);
   }
 
   @Delete(':id')

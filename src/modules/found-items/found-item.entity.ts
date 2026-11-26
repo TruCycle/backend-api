@@ -7,6 +7,7 @@ export enum FoundItemStatus {
   CLAIMED = 'claimed',
   PICKED_UP = 'picked_up',
   EXPIRED = 'expired',
+  GONE = 'gone',
   REPORTED = 'reported',
 }
 
@@ -81,6 +82,15 @@ export class FoundItem {
 
   @Column({ name: 'expires_at', type: 'timestamptz', nullable: true })
   expiresAt?: Date | null;
+
+  @Column({ name: 'last_seen_at', type: 'timestamptz', nullable: true })
+  lastSeenAt?: Date | null;
+
+  @Column({ name: 'closed_at', type: 'timestamptz', nullable: true })
+  closedAt?: Date | null;
+
+  @Column({ name: 'expiry_nudged_at', type: 'timestamptz', nullable: true })
+  expiryNudgedAt?: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

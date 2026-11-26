@@ -120,34 +120,39 @@ export class CreateItemDto {
   @Transform(({ value }) => (value && typeof value === 'object' ? value : undefined))
   metadata?: Record<string, any>;
 
-  @ApiProperty({ name: 'size_unit', enum: SizeUnit, description: 'Units for length/breadth/height (m/inch/ft)' })
+  @ApiPropertyOptional({ name: 'size_unit', enum: SizeUnit, description: 'Declared measurement units; omit when unknown (m/inch/ft)' })
   @Expose({ name: 'size_unit' })
+  @IsOptional()
   @IsEnum(SizeUnit)
-  sizeUnit!: SizeUnit;
+  sizeUnit?: SizeUnit;
 
-  @ApiProperty({ name: 'size_length', description: 'Length in provided unit', minimum: 0 })
+  @ApiPropertyOptional({ name: 'size_length', description: 'Declared length; omit when unknown', minimum: 0 })
   @Expose({ name: 'size_length' })
+  @IsOptional()
   @IsNumber({ maxDecimalPlaces: 4 })
   @Min(0)
-  sizeLength!: number;
+  sizeLength?: number;
 
-  @ApiProperty({ name: 'size_breadth', description: 'Breadth in provided unit', minimum: 0 })
+  @ApiPropertyOptional({ name: 'size_breadth', description: 'Declared breadth; omit when unknown', minimum: 0 })
   @Expose({ name: 'size_breadth' })
+  @IsOptional()
   @IsNumber({ maxDecimalPlaces: 4 })
   @Min(0)
-  sizeBreadth!: number;
+  sizeBreadth?: number;
 
-  @ApiProperty({ name: 'size_height', description: 'Height in provided unit', minimum: 0 })
+  @ApiPropertyOptional({ name: 'size_height', description: 'Declared height; omit when unknown', minimum: 0 })
   @Expose({ name: 'size_height' })
+  @IsOptional()
   @IsNumber({ maxDecimalPlaces: 4 })
   @Min(0)
-  sizeHeight!: number;
+  sizeHeight?: number;
 
-  @ApiProperty({ name: 'weight_kg', description: 'Weight in kilograms', minimum: 0 })
+  @ApiPropertyOptional({ name: 'weight_kg', description: 'Declared weight in kilograms; omit when unknown', minimum: 0 })
   @Expose({ name: 'weight_kg' })
+  @IsOptional()
   @IsNumber({ maxDecimalPlaces: 3 })
   @Min(0)
-  weightKg!: number;
+  weightKg?: number;
 
   @ApiPropertyOptional({ name: 'estimated_co2_saved_kg', description: 'Optional estimated CO2 saved (kg)', minimum: 0 })
   @Expose({ name: 'estimated_co2_saved_kg' })

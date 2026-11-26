@@ -234,7 +234,9 @@ export class QrService {
         // Do not block response on email sending
         void this.nearbyAlerts.sendNearbyItemDropoffEmails(result.itemId);
       }
-    } catch {}
+    } catch {
+      // Synchronous alert-start failures do not block the recorded drop-off.
+    }
 
     return result?.response ?? result;
   }

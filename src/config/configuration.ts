@@ -9,7 +9,8 @@ export default () => ({
     name: process.env.DB_NAME || 'trucycle',
     ssl: process.env.DB_SSL === 'true',
     logging: process.env.DB_LOGGING === 'true',
-    synchronize: process.env.TYPEORM_SYNC === 'true',
+    // Legacy TYPEORM_SYNC cannot authorise automatic schema changes.
+    synchronize: false,
   },
 });
 

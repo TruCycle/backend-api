@@ -1,21 +1,25 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Expose, Transform, Type } from 'class-transformer';
-import { IsArray, IsOptional, IsNumber, IsString, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { ArrayNotEmpty, ArrayUnique, IsArray, IsIn, IsOptional, IsNumber, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+
+import { FULL_UK_POSTCODE_PATTERN, normalizeFullUkPostcode } from '../shop-validation';
 
 export class OpeningHoursDto {
   @ApiProperty({ description: 'Days shop is open', type: [String], example: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] })
   @IsArray()
-  @IsString({ each: true })
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @IsIn(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], { each: true })
   days!: string[];
 
   @ApiProperty({ description: 'Opening time (HH:mm)', example: '09:00' })
   @IsString()
-  @MaxLength(10)
+  @Matches(/^(?:[01]\d|2[0-3]):[0-5]\d$/, { message: 'Opening time must use HH:mm' })
   open_time!: string;
 
   @ApiProperty({ description: 'Closing time (HH:mm)', example: '17:00' })
   @IsString()
-  @MaxLength(10)
+  @Matches(/^(?:[01]\d|2[0-3]):[0-5]\d$/, { message: 'Closing time must use HH:mm' })
   close_time!: string;
 }
 
@@ -38,6 +42,7 @@ export class CreateShopDto {
   @ApiProperty({ name: 'address_line', description: 'Street address or landmark', maxLength: 255 })
   @Expose({ name: 'address_line' })
   @IsString()
+  @MinLength(1)
   @MaxLength(255)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   addressLine!: string;
@@ -45,19 +50,22 @@ export class CreateShopDto {
   @ApiProperty({ description: 'Postal code', maxLength: 32 })
   @IsString()
   @MaxLength(32)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  @Transform(({ value }) => normalizeFullUkPostcode(value) ?? value)
+  @Matches(FULL_UK_POSTCODE_PATTERN, { message: 'Enter a full UK postcode, for example SW1A 1AA' })
   postcode!: string;
 
   @ApiPropertyOptional({ description: 'Latitude (WGS84). Ignored when postcode is provided', minimum: -90, maximum: 90 })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 8 })
   @Min(-90)
+  @Max(90)
   latitude?: number;
 
   @ApiPropertyOptional({ description: 'Longitude (WGS84). Ignored when postcode is provided', minimum: -180, maximum: 180 })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 8 })
   @Min(-180)
+  @Max(180)
   longitude?: number;
 
   @ApiPropertyOptional({ name: 'opening_hours', description: 'Opening days and times', type: OpeningHoursDto })
