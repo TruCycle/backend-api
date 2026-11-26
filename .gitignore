@@ -24,4 +24,5 @@ lerna-debug.log*
 .tmp
 
 # Design-critique screenshots are large; they are shared via Drive, not git.
-doc/design-critique/shots/
+doc/design-critique/*
+!doc/design-critique/*.md
