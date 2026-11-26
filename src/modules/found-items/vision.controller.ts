@@ -32,7 +32,11 @@ export class VisionController {
 
     const body = new FormData();
     body.append('image', new Blob([new Uint8Array(file.buffer)], { type: 'image/jpeg' }), 'spot.jpg');
-    body.append('prompt', customPrompt?.trim() || 'Analyze this item spotted on a UK street for TruCycle.');
+    // Listings use the Worker's default prompt and structured analysis contract.
+    const context: unknown = request.body?.context;
+    if (context !== undefined && context !== 'spot' && context !== 'listing') throw new BadRequestException('Invalid context');
+    const prompt = customPrompt?.trim() || (context === 'listing' ? '' : 'Analyze this item spotted on a UK street for TruCycle.');
+    if (prompt) body.append('prompt', prompt);
     try {
       const response = await fetch(endpoint, {
         method: 'POST', body, redirect: 'error',
