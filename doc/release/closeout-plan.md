@@ -87,6 +87,35 @@ All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858
 4. **`JWT_EXPIRES_IN` and `JWT_REFRESH_EXPIRES_IN`.** Pin them explicitly. **Recommended:** `JWT_EXPIRES_IN=15m` (the value QA and the simulation exercised) and an explicit `JWT_REFRESH_EXPIRES_IN` matching hosted staging, set in the same window as the frontend. Everyone re-logs in at deploy anyway (R2), and the new frontend refreshes silently. `JWT_SECRET` must be at least 32 bytes and not `change-me`, or the candidate refuses to boot.
 5. **Duplicate `google_id` values, and the Postgres version.** The 027 unique index fails if duplicates exist.
 
+### B0 database results (read-only, 26 Nov 2026, Supabase project "TruCycle", eu-west-2)
+
+The queries were `SELECT` and `SHOW` only; no user data was read beyond counts.
+
+| Check | Result | Decision |
+|---|---|---|
+| 1. Ledger | 26 rows; top is `EnhanceFoundItemsLocationAndImpact1700000000026` | Apply **027–036**, the rehearsed case. |
+| 2. `user.google_id` | present | 027 is a no-op for the column. |
+| 3. Duplicate `google_id` | 0 groups | The 027 unique index is safe. |
+| 4. `user` indexes | `user_email_key`, `user_pkey` | 027 creates `UQ_user_google_id`. |
+| 5. Postgres | 17.6 | OK. |
+| 6–7. Owners / BYPASSRLS | `user`, `message`, `found_item` owned by `postgres`; `postgres` has `rolbypassrls = true` | **Run the migration CLI as `postgres`**: it owns the tables 027, 028 and 033 alter. The new tables are then owned by a role that bypasses RLS. Confirm the backend's `DB_USER` is `postgres`; it is expected, since `main` migrates at boot on its own connection. |
+| New tables | none present | Clean start. |
+| Users | 20 | Quick migration, small re-login impact. |
+
+**Still needed from the owner:**
+- Env values: `TYPEORM_SYNC`, `JWT_SECRET` length, JWT lifetimes, `FRONTEND_BASE_URL`, `DB_USER`.
+- Host Node versions.
+- Backup time.
+- The commit each service currently runs.
+
+### Decisions on deployment questions (advisor, 26 Nov)
+
+- **Auto-deploy:** assume both `main` branches deploy on merge. The runbook order is safe either way.
+- **Health check:** the new `GET /health/ready`. Pointing the host at it is optional; the sign-in check stays the gate.
+- **Rollback:** locate each host's "redeploy previous" control before the window. Reverting remains the fallback.
+- **Node:** both staging branches already carry `.node-version` 24.18.0, and hosted staging builds them. The remaining risk is a version override on the production services, so check it.
+- **No hosted rehearsal.** It would replace the staging redesign under review. Staging-derived code has already run hosted.
+
 ### B0 additions: environment and deploy-config differences (checked 26 Nov)
 
 These are the variables and build settings that differ between each `main` and its release candidate.
