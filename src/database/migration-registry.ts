@@ -33,6 +33,7 @@ import { CreateMessageReadReceipts1700000000032 } from './migrations/17000000000
 import { CreatePrivateMessageAttachments1700000000033 } from './migrations/1700000000033-CreatePrivateMessageAttachments';
 import { AllowRefreshRateCounter1700000000034 } from './migrations/1700000000034-AllowRefreshRateCounter';
 import { CreateAuthEmailOutbox1700000000035 } from './migrations/1700000000035-CreateAuthEmailOutbox';
+import { BackfillMessageReadReceipts1700000000036 } from './migrations/1700000000036-BackfillMessageReadReceipts';
 
 // Complete ordered history. Registration never authorises automatic execution.
 export const migrationRegistry = [
@@ -71,6 +72,7 @@ export const migrationRegistry = [
   CreatePrivateMessageAttachments1700000000033,
   AllowRefreshRateCounter1700000000034,
   CreateAuthEmailOutbox1700000000035,
+  BackfillMessageReadReceipts1700000000036,
 ];
 
 export const registeredMigrationNames = migrationRegistry.map((migration) => migration.name);

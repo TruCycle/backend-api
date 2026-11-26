@@ -117,23 +117,29 @@ export class FoundItemsService {
     // Do not let exact/postcode-prefix matching become a public membership oracle.
     // This flow already materialises rows before distance filtering/pagination.
     const rows = await qb.getMany();
-    const items = postcodeArea && query.maxDistance === undefined ? rows.filter((item) => resolveOutwardPostcode(item.postcode) === postcodeArea) : rows;
-    const claimCounts = await this.loadClaimCounts(items.map((item) => item.id));
     const origin = await this.resolveOrigin(query);
-    if (!origin && (query.maxDistance !== undefined || query.sortBy === FoundItemSortBy.NEAREST)) {
+    const locationSupplied = query.lat !== undefined || query.lng !== undefined || Boolean(query.postcode);
+    if (!origin && locationSupplied && (query.maxDistance !== undefined || query.sortBy === FoundItemSortBy.NEAREST)) {
+      // A supplied location that cannot be resolved must not silently broaden the search.
       throw new BadRequestException('Provide a search location for distance filtering or nearest sorting');
     }
+    // With no location at all, distance options are ignored so the request matches one
+    // that never sent them. Clients released before 0028 send nearest + 5 miles by default.
+    const maxDistance = origin ? query.maxDistance : undefined;
+    const sortBy = !origin && query.sortBy === FoundItemSortBy.NEAREST ? FoundItemSortBy.NEWEST : query.sortBy;
+    const items = postcodeArea && maxDistance === undefined ? rows.filter((item) => resolveOutwardPostcode(item.postcode) === postcodeArea) : rows;
+    const claimCounts = await this.loadClaimCounts(items.map((item) => item.id));
     const mappedItems = items.map((item) => this.mapFoundItem(item, claimCounts.get(item.id) ?? 0, origin));
     const filteredItems = mappedItems.filter((item) => {
-      if (!origin || query.maxDistance === undefined) {
+      if (!origin || maxDistance === undefined) {
         return true;
       }
       if (item.location.approximateDistance === null) {
         return false;
       }
-      return item.location.approximateDistance <= query.maxDistance;
+      return item.location.approximateDistance <= maxDistance;
     });
-    const sortedItems = this.sortItems(filteredItems, query.sortBy ?? FoundItemSortBy.NEWEST);
+    const sortedItems = this.sortItems(filteredItems, sortBy ?? FoundItemSortBy.NEWEST);
     const total = sortedItems.length;
     const pagedItems = sortedItems.slice((page - 1) * limit, page * limit);
 

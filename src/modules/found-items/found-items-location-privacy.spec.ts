@@ -108,8 +108,15 @@ describe('Found-item audience-aware location privacy', () => {
     geocoding.forwardGeocode.mockRejectedValue(new Error('Synthetic offline'));
     await expect(service.list('other', { postcode: 'E16', maxDistance: 1 })).rejects.toBeInstanceOf(BadRequestException);
   });
-  it.each([{ maxDistance: 1 }, { sortBy: FoundItemSortBy.NEAREST }])('requires an origin for requested distance semantics %j', async (filter) => {
+  it.each([{ postcode: 'E16', maxDistance: 1 }, { postcode: 'E16', sortBy: FoundItemSortBy.NEAREST }])('requires a resolvable origin when a location is supplied %j', async (filter) => {
+    geocoding.forwardGeocode.mockRejectedValue(new Error('Synthetic offline'));
     await expect(service.list('other', filter)).rejects.toBeInstanceOf(BadRequestException);
+  });
+  it('treats distance options without any location as an ordinary newest-first list (pre-0028 clients)', async () => {
+    const result = await service.list('other', { sortBy: FoundItemSortBy.NEAREST, maxDistance: 5 });
+    const plain = await service.list('other', {});
+    expect(result).toEqual(plain);
+    expect(result.items).toHaveLength(1);
   });
   it('does not allow non-owners to update location/status through an existing status workflow', async () => {
     await expect(service.updateStatus('other', item.id, { status: FoundItemStatus.EXPIRED })).rejects.toBeInstanceOf(ForbiddenException);

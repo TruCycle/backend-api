@@ -29,6 +29,7 @@ const reviewedTests = [
   'src/modules/found-items/found-items-identity-privacy.spec.ts',
   'src/modules/found-items/found-items-lifecycle.spec.ts',
   'src/modules/found-items/found-items-location-privacy.spec.ts',
+  'src/modules/found-items/dto/report-found-item.dto.spec.ts',
   'src/modules/found-items/vision.controller.spec.ts',
   'src/modules/gamification/gamification-identity-privacy.spec.ts',
   'src/modules/gamification/gamification-initialization.spec.ts',
