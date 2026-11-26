@@ -24,6 +24,7 @@ const reviewedTests = [
   'src/common/utils/public-location.spec.ts',
   'src/database/migration-release.spec.ts',
   'src/modules/auth/auth.service.spec.ts',
+  'src/modules/qr/qr-scan.dto.spec.ts',
   'src/modules/auth/activation-recovery.spec.ts',
   'src/modules/found-items/found-items-identity-privacy.spec.ts',
   'src/modules/found-items/found-items-lifecycle.spec.ts',
