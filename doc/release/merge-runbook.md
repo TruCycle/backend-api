@@ -5,7 +5,7 @@ This prepares the coordinated release. **Nothing in this file has been executed.
 | | Backend | Frontend |
 |---|---|---|
 | PR | [TruCycle/backend-api#11](https://github.com/TruCycle/backend-api/pull/11) | [TruCycle/web-frontend#25](https://github.com/TruCycle/web-frontend/pull/25) |
-| Pinned head | `19b88ca` | `10896fe` |
+| Pinned head (code) | `991bf81` | `10896fe` |
 | Base | `main` @ `5bc53a8` | `main` @ `0c31f71` |
 | CI | ✅ green | ✅ green |
 | Conflicts | none | none |
@@ -18,8 +18,8 @@ If either PR gains a commit that changes anything outside `doc/`, the pinned hea
 
 ## 0. Go / no-go (all must be ✅)
 
-1. **Alignment gate must pass on the pinned pair** (not yet met: Run 6 failed on C1, now fixed, and is being re-run). That means a contract check, a simulated E2E on desktop and phones, the old-client checks, and no conflicts (`simulated-e2e.md`, Run 6).
-2. **Read-only production checks are done** (`closeout-plan.md` §B0). The results decide:
+1. ✅ **Alignment gate passed on the pinned pair:** Run 7, 26 Nov, `991bf81` + `10896fe`. That covered the contract check, the simulated E2E on desktop and phones (including QR collection, the leaderboard and `/health/ready`), the old-client checks, local CI and clean merge-trees (`simulated-e2e.md`, Run 7). **Code is frozen** on both branches for this release.
+2. ✅ **Read-only production database checks are done** (`closeout-plan.md` §B0: ledger at 026, no duplicate Google IDs, Postgres 17.6, `postgres` owns the tables and bypasses RLS). Run migrations as `postgres`. The results decide:
    - the `--expect` list (§2);
    - whether duplicate `google_id` rows must be resolved first;
    - whether the runtime DB role owns the new tables or has `BYPASSRLS`.
@@ -89,6 +89,8 @@ Before merging, confirm with the owner:
 ## 4. Smoke tests (production, a real browser and a phone)
 
 - Sign up → verification link → "Email verified" → sign in.
+- Community Board → Individual tab loads; collecting an item by QR completes.
+- `GET /health/ready` returns 200.
 - Sign out, then sign in again; the session survives a reload.
 - Password reset: a wrong code returns to code entry, and the correct code works.
 - Found Items loads with and without a postcode.
@@ -105,6 +107,8 @@ Before merging, confirm with the owner:
 4. Users signed in on the new release are signed out again by the rollback.
 
 ## 6. Afterwards
+
+- Known, waived for this release (pre-existing, logged in `closeout-plan.md` follow-ups): leaderboard tie rank (L1), QR payload not checked against the selected item (Q1), duplicate success toast on a stale Collect tab (Q2), and readiness 503s logged at ERROR level (H1).
 
 - Turn feature flags on one per window: rate limits, then reset-email limits, then the outbox.
 - Record the evidence on DEP-291 and close the packages on production evidence only.

@@ -504,3 +504,199 @@ Screenshots are in `doc/release/e2e-shots/run6/`, all local simulation at `devic
 | `j1-verify-prod-iph.png` | Deployed `83d30d6` on iPhone 14: the R3 "Verification failed" page after a successful verify |
 
 The raw JSON (`results/j1234-*.json`, `j56-all.json`, `j78-all.json`, `j9to12-all.json`, `r6-*.json`, `probe.json`), the harness (`h/*.js`) and the CI logs (`ci-*.log`, `ci-summary.txt`) are in the session scratchpad (`…/scratchpad/gate/`). They are not kept in the repo.
+
+---
+
+## Run 7 — alignment gate re-run (991bf81 + 10896fe)
+
+> **Local simulation — not production evidence.**
+> This re-runs the owner's alignment gate (`closeout-plan.md`, "Standing rule from the owner: alignment before any merge") on a new pinned pair. It was run on 26 Nov 2026 in a sandbox, with Run 6's harness and method.
+> - The run used a fresh throwaway `postgis/postgis:15-3.4` container (`gate7_db`), local `vite preview` servers and headless Chromium (Playwright 1.63.0), with the Run 2 network guard: only localhost is allowed, Cloudinary is simulated, and the Vision Worker and geocoder are stubbed.
+> - No remote database, hosted site or deploy was touched. Nothing was pushed, committed or merged. Neither clone's tree was edited; every build and CI run came from a detached scratch worktree. The only repo writes are this section and `e2e-shots/run7/`.
+> - Phones are Playwright viewport and UA emulation in Chromium, not WebKit or real devices.
+
+**Verdict: GATE PASS.**
+
+One new backend ranking defect (**L1**) needs the owner to waive or fix it. It is not an alignment mismatch.
+- **C1 and C3 are resolved**, and both were checked live through the UI.
+- No contract mismatch has a live caller. C2 is still latent and has no caller.
+- All 12 journeys and the Run 3–5 checks pass on all five viewports. The result JSON matches Run 6 except for timings and seed-count differences, listed below.
+- The old-client checks behave as in Run 6.
+- `/health/ready` behaves as specified.
+- CI reproduces green at both heads, and `merge-tree` is clean.
+- **L1 (check 2b):** the current user's rank is correct at positions 6 (inside page 1) and 31 (outside). It is inconsistent, 24 against 26, when the viewer is in a points tie that straddles row 25: the "Your rank" card then disagrees with the list. This is a backend defect, not a shape mismatch, so it is handled like C3 in Run 6. If it is fixed, the backend head moves and steps 2–4 must run again.
+
+### Pinned pair
+
+| Side | SHA | Notes |
+|---|---|---|
+| Backend | `991bf81` (PR #11) | The branch tip is now `de8f777`, a doc-only commit (`closeout-plan.md`). `git diff --stat 991bf81 de8f777 -- . ':!doc'` prints nothing, and `merge-tree` against `origin/main` is clean at `de8f777` too, so the pin holds under the runbook rule. `git diff 19b88ca 991bf81 -- src` touches only `app.module.ts`, `gamification.service.ts`, `health/*` (new), `qr/qr.controller.ts` and `qr/qr-scan.dto.spec.ts` (new). `src/main.ts` and `src/modules/auth` are unchanged. |
+| Frontend | `10896fe` (PR #25) | Unchanged since Run 6. Default build on `:4175`; `dist-smart` (`VITE_ENABLE_SMART_SPOT=true`) on `:4176` for J7 only. |
+| Deployed frontend (old client) | `83d30d6` | Served on `:4173`. |
+
+### Setup (local)
+
+This is the same as Run 6, rebuilt from scratch because the Run 6 worktrees no longer existed:
+- **Baseline.** `origin/main` `5bc53a8` booted once with `TYPEORM_SYNC=true` (ledger 26). alice and bob were registered through main, with a room created through main's `POST /messages/rooms`, and one pre-migration message (bob → alice, 2 days old) inserted by SQL.
+- **Migrations.** HEAD was booted on the unmigrated DB for the first readiness probe. Then HEAD's `npm run migration:run -- --apply --expect AddGoogleAuthToUser…027,…,BackfillMessageReadReceipts…036` applied all 10 migrations (ledger 36). **The 0036 backfill again created exactly 1 receipt.**
+- **Seed.** The Run 6 seed (`h/seed.js`) ran unchanged, then the probe, then the journey matrix. The probe ran twice. The first run stopped about 30 requests in, on a missing fixture (`chair.jpg`), after its auth and found-item calls; only the second run is counted. The Run 7 seeds (QR items and leaderboard users) were added only after the matrix, so they could not move any J3, R3 or J9 numbers.
+- **Backend process.** The probe, the matrix, 2a and 2b ran on the HEAD process that was first booted on the unmigrated DB and then migrated under it. Afterwards, HEAD was booted fresh on the migrated DB (`TYPEORM_SYNC=false`). The boot was clean, with only the two expected config warnings (email provider, Cloudinary). `/health/ready` and `/auth/health` returned 200, and a login plus an Individual-leaderboard GET returned 200 with the same rank (31).
+- **Harness changes.**
+  - Paths were moved to `gate7`.
+  - The probe's C1 and C3 assertions were tightened.
+  - `apiJson` retries once on a keep-alive socket reset (`other side closed`), never on an HTTP status.
+  - `h/qr7.js`, `h/lb7.js`, `h/dto-props.py` and `h/cmp.py` are new.
+
+### Step 1 — contract re-check
+
+- **Static.**
+  - The frontend is unchanged, so its 74 call sites are the same as in Run 6.
+  - The backend diff since Run 6 touches only the three areas above.
+  - A per-property sweep of every `@Body()`/`@Query()` DTO, including nested `@Type()` classes (`h/dto-props.py`), found **no property without a class-validator decorator** at `991bf81`. The same sweep on `origin/main` flags exactly `ScanDto.qrPayload`, `.direction`, `.location` and `.shopId`, which confirms that the sweep detects the C1 pattern.
+- **C1 — resolved.** `src/modules/qr/qr.controller.ts:12-30` now validates `qrPayload` (string, non-empty, ≤2048), `direction` (`in` | `out`), optional `location` (object) and optional `shopId` (string, ≤64).
+  - The frontend's body (`itemsApi.ts:307`), with and without `shopId`, returns 201 with `accepted:true`, `duplicate:false`, the echoed `idempotencyKey` and `direction`.
+  - The negative cases behave as intended: a bad direction, an empty payload, an unknown property and a 65-character `shopId` each return 400; no token returns 401; a GeoJSON `location` returns 201.
+- **C3 — resolved.** `gamification.service.ts:331-332` orders by `progress.totalPoints` / `progress.createdAt`. It returns 200 with `entries[].{rank,userId,name,postcode,totalPoints,currentLevel,tier,isCurrentUser}`, `total`, `limit`, `offset` and `currentUser`, which are the fields `gamificationApi.ts:404-435` reads.
+- **C2 — still latent.** `/rewards/wallet` returns `availableAmount`, while `fetchWalletBalance` reads `balance ?? points ?? available`. There is still no caller.
+- **Probe (`h/probe.js`, the same 83 requests): 81/83 pass.** The two failures are C2 and the business rule (`PATCH /found-items/:id/status` on a closed item → 400), as expected. The 7 extra C1 checks above pass (7/7) and are not counted in the 83.
+
+**Mismatch table:**
+
+| ID | Status at this pair |
+|---|---|
+| C1 | **Resolved** (static, probe, and live UI in 2a) |
+| C2 | Latent; no caller (unchanged) |
+| C3 | **Resolved** (static, probe, and live UI in 2b) |
+
+Mismatches with a live caller: **none**.
+
+### Step 2 — live checks of the fixes
+
+**(a) QR collection through the UI (`h/qr7.js`, all five viewports).**
+- **Seed.** Per device, the item was created through the API: a donate item at carol's shop → `dropoff-in accept` (`awaiting_collection`) → claim → donor approve.
+- **Scanner.** It was fed by a stub `window.BarcodeDetector` (init script) over Chromium's fake camera, with the item's real QR content `http://localhost:3000/qr/item/<id>/view`. jsQR frame decoding was not exercised. The payload field is `disabled readOnly`, so there is no manual entry.
+
+| Check | d1440 | d1024 | P7 | i14 | SE |
+|---|---|---|---|---|---|
+| Banner "ready for pickup" → Open QR Scanner → payload filled exactly | PASS | PASS | PASS | PASS | PASS |
+| Collect **double-clicked**: exactly one `POST /qr/scan` (`{qrPayload,direction:"out",shopId}` + Idempotency-Key) **201** and one `POST /items/:id/collect {shop_id}` **201** `completed` | PASS | PASS | PASS | PASS | PASS |
+| Success dialog; **after reload the row reads "Collected"** and the banner is gone | PASS | PASS | PASS | PASS | PASS |
+| First completion: claim `approved` → `complete`, item `complete`, 1 `CLAIM_OUT` event, collector wallet +10 (1 ledger row), donor +5, collector +60 pts, donor +45 pts, collector notifications +1 | PASS | PASS | PASS | PASS | PASS |
+| **Repeat:** a stale second tab (scanned before the first collect) clicks Collect → 201 `already_completed`; then an API replay of scan + collect → 201 / 201 `already_completed`; then gamification reads (which run `backfillAndSync`) → **no change** to claim, `completed_at`, item, scan events, ledger, wallets, point transactions or notifications | PASS | PASS | PASS | PASS | PASS |
+
+This is the leg that C1 had masked in Run 6. The `shopId` → `shop_id` drop-off match (`CollectedItemsPage.tsx:86`, `claims.service.ts` `completeClaimOutManual`) works end to end. There were no page errors and no API errors.
+
+**(b) Community Board, Individual tab (`h/lb7.js`).**
+- **Seed.** 34 seeded users with points, as `point_transaction` rows plus a matching `user_progress` row, so the viewer's `backfillAndSync` keeps them. Together with existing users, **48 users have points.**
+- **Tie.** Positions 24–26 are a deliberate three-way tie at 4,770 points, with `created_at` breaking it.
+- **Expected order.** Taken from SQL after the viewer's sync: `total_points DESC, created_at ASC`.
+
+| Check | Result |
+|---|---|
+| Pages `limit=10`, `offset=0…40` concatenated | **Equal to the SQL order.** Ranks 1–48 contiguous, no duplicates, points non-increasing; `limit=100` gives the same list; `total`=48. |
+| Past the end (`offset=total+5`) | 200, `entries:[]`, `currentUser` still present |
+| `limit=0`, `limit=101`, `offset=-1`, `limit=abc` | 400 each |
+| Default (no params) | `limit` 25, 25 entries |
+| Viewer inside page 1 (position 6) | `currentUser.rank` 6 |
+| Viewer outside page 1 (position 31) | `limit=25`: not in entries, `currentUser.rank` **31**; `offset=25`: entry rank 31. Consistent. |
+| **Viewer in the tie, position 26** | `limit=25`: `currentUser.rank` **24**, while row #24 of the same response is another user with the same points. `offset=25`: entry rank **26**. **Inconsistent → L1.** |
+| UI on all 5 viewports, viewer at position 6 | `GET …/individual?limit=25` 200; 25 rows; `#1…#25`; points non-increasing; the "You" row is #6 and the card says **Global #6**; no horizontal overflow; no errors |
+| UI on all 5 viewports, viewer at position 31 | 25 rows, no "You" row, and the card says **Global #31** |
+| UI (d1440), tie viewer | The card says **Global #24**; the list's #24 is someone else |
+
+The tab only ever requests `limit=25` and has no pager. `offset` is correct at the API but has no UI caller. In the seed, the other users' `current_level` was set to 1, so the "Level 1" rows next to the viewer's L13 are a seed artifact, not a defect.
+
+**(c) `GET /health/ready`** (`results/ready.txt`):
+
+| State | `/health/ready` | `/auth/health` |
+|---|---|---|
+| HEAD booted on the unmigrated sync baseline (ledger 26) | **503** | 200 `{status:"ok"}` |
+| All 10 migrations applied (same process, no restart) | **200** `{"ready":true}` | 200 |
+| Ledger row `CreateAuthEmailOutbox1700000000035` deleted (35 rows) | **503** | 200 |
+| Exact row restored (36 rows) | **200** | 200 |
+| DB container stopped (`docker stop`), probed twice | **503** in ≤4 ms | 200 |
+| DB restarted (same process) | **200**; ledger 36 | 200 |
+
+- **Body.** Every 503 body is the same string, `{"status":"error","message":"An unexpected error occurred","data":null}`. It names no migration and no DB error.
+- **`/auth/health` is unchanged.** `git diff 19b88ca 991bf81 -- src/modules/auth` is empty, and the handler body is identical to `origin/main` (`{status:"ok"}`).
+- **On `origin/main`** (the sync boot), `/health/ready` returns 404, as expected for a new route.
+
+### Step 3 — full journey matrix
+
+D14 = 1440, D10 = 1024, P7 = Pixel 7, i14 = iPhone 14, SE = iPhone SE.
+
+**Method.** Each result JSON was compared with Run 6's (`h/cmp.py`, with IDs, timestamps and tags normalised):
+- **No differences:** J1, J4, J5, J6, J7, J8, J9, J11, J12 and R3.
+- **Timing-only differences** (tap and toast-lifetime milliseconds; the toast still expires at 3.40 s): R4/5 and R5.
+- **Seed-count differences only, with the layout assertions identical:**
+  - J2: sign-out revoked 1 of 1–3 rows and logout-all revoked all rows. The extra rows are the probe's API logins.
+  - J10: partner tables have 7 rows instead of 8. This is root-caused: carol's shop holds the 6 seeded partner items plus 1 `Probe donate`. The wrappers still scroll at 695/1000 px, with no page overflow.
+  - J10: "Load more spots" goes 9 → 14 instead of 8 → 14. Not root-caused; the pass criterion is the layout assertions, which are identical.
+  - R5 T2: the notification badge reads "2 unread" instead of "3 unread". Not root-caused; the pass criterion is the layout assertions, which are identical.
+
+| # | Journey | D14 | D10 | P7 | i14 | SE |
+|---|---|---|---|---|---|---|
+| J1 | Signup → verify → sign in | PASS | PASS | PASS | PASS | PASS |
+| J2 | Persist, sign out, logout-all | PASS | PASS | PASS | PASS | PASS |
+| J3 | Found items: no location, postcode (9 cards, no overflow) | PASS | PASS | PASS | PASS | PASS |
+| J4 | Spot report with reason | PASS | PASS | PASS | PASS | PASS |
+| J5 | Messaging: badge, read, reload (legacy message renders) | PASS | PASS | PASS | PASS | PASS |
+| J6 | Password reset | PASS | PASS | PASS | PASS | PASS |
+| J7 | Vision Spot / listing (Smart build) | N/A / PASS | N/A / PASS | PASS | PASS | PASS |
+| J8 | List camera + upload; Spot retry | PASS / N/A | PASS / N/A | PASS | PASS | PASS |
+| J9 | Confetti once per new badge | PASS | PASS | PASS | PASS | PASS |
+| J10 | Phone layout | N/A | N/A | PASS | PASS | PASS |
+| J11 | Cookie banner vs Log in (i14 button 408–456, banner from 470) | PASS | PASS | PASS | PASS | PASS |
+| J12 | Keyboard sign-in | PASS | PASS | N/A | N/A | N/A |
+| R3 | Donor tiles (null CO2e → 30.4 → injected 500 → collector) | PASS | PASS | PASS | PASS | PASS |
+| R4/5 | Phone messaging: land, tap, switch | PASS | PASS | PASS | PASS | PASS |
+| R5 | Phone toasts + dismiss clears hidden stack | PASS | PASS | PASS | PASS | PASS |
+| 2a | QR collection, repeat-safe | PASS | PASS | PASS | PASS | PASS |
+| 2b | Individual tab (inside / outside page 1) | PASS | PASS | PASS | PASS | PASS |
+
+Old client `83d30d6` against `991bf81`. The results are identical to Run 6:
+
+| # | Verdict |
+|---|---|
+| J1 (D14, i14) | **EXPECTED-FAIL (R3), criteria met.** Verify 200, DB `active`, "Verification failed" page; manual sign-in 200 → `/dashboard`. |
+| J3 (D14, i14) | **PASS (R4 shim).** `status=available&maxDistance=5&sortBy=nearest&page=1&limit=9` with no location → 200, 9 cards. |
+| J4 (D14, i14) | **PASS (R5 shim).** Stored as `other / Blocking the pavement`, and with details added as `other / Blocking the pavement — Next to the bus stop`. |
+| J11 (i14) | Known and unchanged: the banner (from 378) covers Log in (384–432). #25 fixes this. |
+
+**Errors.** Across all Run 7 browser sessions there were **0 uncaught page errors**. The only API errors were J6's deliberate wrong-code 401s (34) plus the deliberate J2 and R3 errors that Run 6 also recorded. R5-O2 and R5-O3 from Run 5 are still open and unchanged.
+
+### Step 4 — CI and merge conflicts
+
+**CI.** The workflow commands (`.github/workflows/checks.yml`, unchanged at both heads) were re-run in separate scratch worktrees, so they could not disturb the running servers. **This is a local reproduction, not a GitHub Actions status.** Locally Node 22.23.5 and npm 10.9.9 were used; CI uses Node 24.18.0 and npm 11.16.0.
+
+| Repo @ SHA | Steps | Result |
+|---|---|---|
+| backend `991bf81` | `npm ci --ignore-scripts`, typecheck, lint, `test:unit`, build | All exit 0. Lint 0 errors (195 warnings). **38 suites / 829 tests** (Run 6: 36 / 824). The new `readiness.spec.ts` and `qr-scan.dto.spec.ts` run; `scripts/check-unit-tests.cjs` lists them. |
+| frontend `10896fe` | `npm ci --ignore-scripts`, typecheck, build, `test:staging`, `test:consent`, `test:session`, `test:socket`, `test:messaging`, `test:seo`, `test:shops`, `test:location`, lint | All exit 0. Passes 17, 10, 34, 14, 47, 18, 6, 29; 0 failures. |
+
+**Merge conflicts.**
+- **Fetch.** `git fetch origin main` was run: backend with `--depth=200`, after confirming that the clone is not shallow (it is still not shallow afterwards); frontend as a normal fetch.
+- **`origin/main` is unchanged:** backend `5bc53a8`, frontend `0c31f71`.
+- **Result.** `git merge-tree --write-tree origin/main <head>` exited 0 with no conflicts for both heads: backend tree `3571264`, frontend tree `c1ae2a3`. Each head's merge-base is the `main` tip; the backend head is 54 commits ahead.
+
+### New defects and observations
+
+| ID | Where | What | Severity |
+|---|---|---|---|
+| **L1** | `src/modules/gamification/gamification.service.ts:355-360` vs `:332`/`:338` | Out-of-page `currentUser.rank` is competition rank (`count(points > mine) + 1`), but list ranks are row positions (`offset + index + 1`, tie broken by `createdAt`). A viewer tied with users across the page boundary sees "Global #24" while the list's #24 is someone else, and the same viewer is #26 at `offset=25`. Without ties the two agree (checked at positions 6 and 31). | Low. It is user-visible only when the viewer's tie group straddles the 25-row page boundary. It is a backend defect, not a contract mismatch. Fix by counting `points > mine OR (points = mine AND created_at < mine)`, or waive. |
+| Q1 (observation) | `src/modules/qr/qr.controller.ts:66-72` with `CollectedItemsPage.tsx:83-87` | `POST /qr/scan` is an acknowledgment only: it returns `accepted:true` for any well-formed payload and never dedupes on `Idempotency-Key` (`duplicate` is always false). The client does not compare the scanned item with the selected one. **Scanning a different item's QR still completed the selected claim** (201, claim `complete`). This is pre-existing design, not a regression; completion is still limited to the claim's collector and the matching drop-off shop. Both limits were exercised: a wrong `shop_id` → 403 "Drop-off location mismatch", and an unrelated user → 403 "This item is locked for another collector". | Observation for the owner |
+| Q2 (observation) | `CollectedItemsPage.tsx:89-92` | A stale second tab that clicks Collect after completion shows "Collection recorded" again (`already_completed` is treated as success). Nothing is duplicated server-side. | Cosmetic |
+| H1 (observation) | `src/common/filters/http-exception.filter.ts:24-25` via `src/modules/health/readiness.controller.ts:20` | Every not-ready probe logs at ERROR (`errorClass: "Error", status: 503`). A readiness poller against a not-yet-migrated instance will flood error logs. | Operational, low |
+
+### Evidence
+
+Screenshots are in `doc/release/e2e-shots/run7/`, all local simulation at `deviceScaleFactor` 1:
+
+| File | What it shows |
+|---|---|
+| `qr-scanner-fed-iph14.png` | iPhone 14: "Scan to collect" with the stub-fed payload in the read-only field, before Collect |
+| `qr-collected-after-reload-d1440.png` | Desktop 1440: after Collect and a reload, the row reads "Collected" and the pickup banner is gone |
+| `lb-rank-outside-first-page-iph14.png` | iPhone 14, Individual tab: viewer at position 31 sees "Global #31" above the top-25 list |
+| `lb-tie-rank-d1440.png` | Desktop 1440: the tie viewer (position 26) sees "Global #24" (L1) |
+
+The raw JSON (`results/*.json`, including `probe.json`, `qr7.json`, `lb7.json` and `ready.txt`), the harness (`h/`) and the CI logs (`ci-ci-*.log`, `ci-summary.txt`) are in the session scratchpad (`…/scratchpad/gate7/`). They are not kept in the repo.

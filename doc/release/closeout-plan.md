@@ -177,6 +177,13 @@ These are the variables and build settings that differ between each `main` and i
 - ✅ **Phone toasts** (E2E O2 → runs 3–5): on phones only the newest toast shows, pinned to the top edge, clear of forms and the cookie banner. Dismissing it clears the stack (`3fd8ac6` + follow-up). **Trade-off, owner call:** for about 3.4 s the toast covers the phone header (menu, notifications, profile). Two alternatives: shorten the phone duration, or show inline form errors instead of toasts.
 - ✅ **Messaging scroll:** it happens only on a tap at phone width. Desktop, tablet and auto-selection don't move. Known minor issue: on short phones the auto-selected room's last, mostly hidden message can stay unread until the user taps or scrolls (R5-O3).
 
+### Follow-ups from alignment gate Run 7 (pre-existing; waived for this release, code frozen)
+
+- **L1, leaderboard tie rank:** `gamification.service.ts:355-360`. The "your position" rank outside the first page counts strictly-higher points, while list rows break ties by `createdAt`, so a tied viewer can see #24 instead of #26. Fix it by ranking with the same ordering as the list.
+- **Q1, QR payload not checked:** `qr.controller.ts` scan accepts any well-formed payload. Completion is still restricted to the approved collector and the shop. Fix it by validating that the payload matches the selected item.
+- **Q2, stale Collect tab:** `CollectedItemsPage.tsx:89-92` shows "Collection recorded" again. This is cosmetic; the server is idempotent.
+- **H1, readiness logging:** `/health/ready` 503s are logged at ERROR by the global exception filter. Lower it to WARN, or skip logging for readiness, before pointing a frequent health check at it.
+
 ## C. Needs hardware or a human
 
 Simulated Playwright runs are regression evidence only. They do not close the items below.
