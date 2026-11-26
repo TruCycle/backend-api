@@ -111,10 +111,12 @@ All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858
 
 ### Follow-ups found by the design critique (functional, not redesign)
 
-- **Donor dashboard impact tiles** (`src/features/home/ui/Dashboard.tsx:111`, labels at 194–206 in #25): the "Items listed", "Completed" and "Est. CO2e" tiles total only the first page of listings, hence the "(this page)" labels. Production overclaims the other way: it counts every listing, and its chart uses a fixed array. Fix it with account-wide totals from the backend. This is linked to DEP-306 (carbon and impact).
+- ✅ **Donor dashboard impact tiles:** fixed in #25 (`3ad8631`). The tiles now use the listings total plus the account-wide completed count and CO₂e from `/items/me/impact`. Production's fixed-array chart still needs a decision under DEP-306.
 - **Request an item:** it sends on the first tap with no review step, then shows both a modal and a toast for the same event.
 - **Item page:** there is no donor or description, and raw condition values such as `like_new` are shown.
 - **Sign-in:** a hard-coded five-star testimonial appears there. Remove it or source it.
+- ✅ **Phone messaging** (E2E O1): the newest message was off-screen. Fixed in #25 (`3ad8631`).
+- ✅ **Phone toasts** (E2E O2): toasts covered the reset-code inputs. They now sit at the bottom on phones. Fixed in #25 (`3ad8631`).
 
 ## C. Needs hardware or a human
 
