@@ -304,3 +304,70 @@ Screenshots are in `doc/release/e2e-shots/run4/`, all local simulation at `devic
 | `t-after-reject-iph14.png` | T2: after "Reject optional", the banner is gone and the toasts are back at the bottom |
 
 The raw JSON (`results/r4-msg.json`, `r4-toast.json`, `r4-toastk.json`, `r4-shot1.json`, `r4-otp1.json`), the harness (`h/r4.js`, `h/seed.js`, `h/diag-land.js`, `h/lib.js`) and the logs are in the session scratchpad (`…/scratchpad/e2e4/`). They are not kept in the repo.
+
+## Run 5 — verification (3fd8ac6)
+
+> **Local simulation — not production evidence.**
+> It ran on 26 Nov 2026 with the Run 4 method and harness (copied to a new scratch folder): a fresh throwaway `postgis/postgis:15-3.4` container, local `vite preview` servers and headless Chromium (Playwright 1.63.0) with the Run 2 network guard (only localhost allowed).
+> - No remote database, hosted site or deploy was touched. Nothing was pushed or committed. The `web-frontend` clone was not edited; every build came from a detached scratch worktree.
+> - Phones are Playwright viewport and UA emulation in Chromium, not WebKit or real devices. `env(safe-area-inset-top)` is 0 in Chromium. `index.html` has no `viewport-fit=cover`, so it is also 0 in mobile Safari outside a home-screen app.
+> - Scope: the two changes in `3fd8ac6` (phone toasts pinned to the top with only the newest visible; the messaging scroll runs only on a room tap below 768 px), plus J1 and J6 on iPhone 14.
+
+### Setup (local)
+
+| Part | Value |
+|---|---|
+| Backend | `backend-api` HEAD **`1ed7912`** (PR #11; docs-only over Run 4's `bd1a8d5`) in a detached scratch worktree, `node dist/main.js`, `TYPEORM_SYNC=false`. |
+| Schema | The same as Run 4: `origin/main` `5bc53a8` booted once with `TYPEORM_SYNC=true` (ledger 26), then HEAD's `migration:run -- --apply --expect …027,…,…036`. All 10 applied, ledger 36. |
+| Seed | The same as Run 4: alice with three rooms (bob, carl, dave), 30 messages each, and unread reset to **2** per room by SQL before each session. dave's room is the most recent, so it is auto-selected on load. In the UI, each room is labelled "Community member", so rooms were picked by their last-message preview. |
+| Frontend under test | `web-frontend` **`3fd8ac6`**, `npm ci && npm run build` with the Run 2 env, on `:4175`. |
+| Baselines | **`7b175ca`** on `:4176` (toasts at 768, 1024 and 1440; messaging at 768 and 1440) and **`3ad8631`** on `:4177` (messaging at 1024). Both were built the same way. |
+| Viewports | iPhone 14 390×664; iPhone SE (3rd gen) 375×667; Pixel 7 412×839; 768×1024; 1024×768; 1440×900. |
+
+**Method changes from Run 4:**
+- Toasts hidden by `display:none` are counted separately from visible ones (`getClientRects`). Overlaps and hit-tests use only the visible toast.
+- A grid of `elementsFromPoint` samples lists every interactive element under the visible toast.
+- A MutationObserver records when each toast is added and removed, to give the auto-dismiss duration.
+- Phone actions use `page.tap` with a 3–4 s timeout, so a covered control fails fast instead of waiting for the toast to expire.
+- On messaging, the first tap is made from the landing position with no manual scroll.
+
+### Results — `3fd8ac6`
+
+| # | Check | Verdict | Evidence |
+|---|---|---|---|
+| T1 | Reset page: wrong code ×1/×2/×3 and "Code completed", cookie banner **open** and **dismissed**, on iPhone 14, iPhone SE and Pixel 7 | **PASS** | Every case below held on all three phones, with the banner open and with it dismissed.<br>• **Placement:** the region is at `top: 8px; right: 16px`. The visible toast is at **y 7–131** (151 for the two-line "Reset code requested").<br>• **One toast, the newest:** with 1, 2 or 3 toasts in the DOM, exactly one is visible and it is the last child. It reads "Code completed" after the code is filled and "Reset failed" after each 401.<br>• **Inputs clear:** the OTP row (iPhone 14 and SE 210–258; Pixel 7 186–234) and Continue (310–358; Pixel 7 286–334) do not overlap the toast, and all hit-tests pass. Gap to the OTP row: 79 px on iPhone 14/SE, 55 px on Pixel 7. On the password step, the submit button (386–435) is clear too.<br>• **Taps:** every tap on Continue and submit went through in about 60 ms.<br>• **Banner buttons:** "Reject optional" and "Accept optional" (iPhone 14 587–631) are never overlapped, and both hit-tests pass. Tapping them with a toast showing closed the banner and stored `rejected` / `accepted`.<br>• **Cleanup and errors:** `--tc-consent-offset` is never set (`null` in every measurement, including with the banner open), there is no horizontal overflow, and the only API errors were the three deliberate 401s.<br>• **Screen readers:** the visible toast has `role="alert"` for errors and `role="status"` for info and success, with `aria-atomic="true"`.<br>• **Dismiss:** it removes the visible toast (see R5-O1). |
+| T2 | Top toast over the app-shell header (after sign-in, `/dashboard`), on iPhone 14, iPhone SE and Pixel 7 | **PASS, with a cost (R5-O2)** | **What it covers:**<br>• "Login successful" sits at **y 7–131**, and the header is 8–80. The grid sample puts **"Open sidebar menu", "Notifications" and "Open profile menu"** under it. The menu and profile hit-tests fail; the Notifications link was not hit-tested directly.<br>• On Pixel 7 the toast spans x 44–396, so it partly covers the menu button (x 24–68), and that hit-test fails too.<br>• A tap on the menu while the toast is showing timed out after 1.5 s.<br>**How long:** it auto-dismisses after **3.40 s** (3396–3399 ms measured; `defaultDurationMs`). Per the code (not measured), hovering or focusing it pauses the timer.<br>**Menu after dismissal:** after it expired, and also after a tap on Dismiss, a tap on the menu opened `#mobile-sidebar` with `aria-expanded="true"`. |
+| T3 | Desktop and 768 toast positions vs `7b175ca` | **PASS, identical** | On both builds the region is `top: 96px; right: 16px` and the toast boxes match exactly.<br>• **x ranges:** 768 x 400–752; 1024 x 656–1008; 1440 x 1072–1424.<br>• **y ranges:** 95–219, 225–349 and 355–479. All stacked toasts are visible (the "newest only" rule applies below 768 only).<br>• **Cookie banner open at 1440:** no change in toast position, and the banner buttons pass their hit-tests.<br>• **Pre-existing, unchanged:** the top-right stack still overlaps the OTP row at 768, 1024 and 1440, and Continue at 2–3 toasts (Run 3 F3b). |
+| M1 | Messaging, phones: load, tap a room, switch rooms | **PASS** | **On load:** `<main>` and the document stay at scrollTop **0** for the whole 2.5 s sample (max 0) on iPhone 14, SE and Pixel 7. The "Messaging" h1 (104–140) and the room-list card are in view. The auto-selected dave row is hit-testable.<br>**Tap from the landing position (dave):**<br>• iPhone 14: `<main>` 0 → **289**. Newest message **398–492**, composer **522–566**, band 80–595; all hit-tests pass.<br>• SE: 0 → 286; newest 381–495, composer 525–569.<br>• Pixel 7: 0 → 114; newest 573–667, composer 697–741.<br>• **Unread → 0** in every case.<br>**Switching (bob, then carl):** `<main>` was scrolled back to 0, and each tap repeated the same geometry. **Unread 2 → 0** for each room (read calls 200). There is no horizontal overflow.<br>**Baseline `7b175ca`:** an unsaved one-off probe on iPhone 14 showed scrollTop **289** on load (R4-O1 reproduced); it is not in the saved JSON. |
+| M2 | 1024 and 1440 (plus 768): no scroll; layout vs baselines | **PASS, identical** | `<main>` and document scrollTop stay **0** on load (max 0) and after every tap.<br>• **1024 vs `3ad8631`:** card **413–720**, newest **547–621**, composer **663–707**, h1 visible, on both builds.<br>• **1440 vs `7b175ca`:** card **192–791**, newest **618–692**, composer **734–778**, on both builds (the same as Run 4).<br>• **768 vs `7b175ca`:** card 491–915, composer 858–902, on both builds.<br>• Unread 2 → 0 for all three rooms at every width, and all hit-tests pass. **R4-2 is fixed.** |
+| J1 | Sign-up, verify, sign-in on iPhone 14 | **PASS** | `register` returned 201 and the user was `pending`. The verify link (`POST`) returned 200 and the user became `active`. Sign-in returned 200 and landed on `/dashboard`.<br>The toasts showed one at a time at the top: "Account created" (7–171) and "Login successful". There were no API or page errors. |
+| J6 | Reset happy path on iPhone 14 | **PASS** | `forget-password` returned 201. "Code completed" was at 7–131 with the OTP row and Continue clear and hit-testable; the earlier "Reset code requested" toast stayed hidden in the DOM. Taps on Continue and submit went through.<br>`reset-password` returned 201 and the page redirected to `/login`. The old password then gave 401 and the new one 200. There were no errors. |
+
+There were no uncaught page errors in any session. The only recorded API and console errors were the deliberate `reset-password` 401s.
+
+### New defects and observations
+
+| ID | Severity | Where | What |
+|---|---|---|---|
+| R5-O1 | Low (UX) | `web-frontend` `src/shared/ui/toast/ToastProvider.tsx:123` (`max-md:[&>article:not(:last-child)]:hidden`), with the 3-toast cap at `:27`/`:78` | **On phones, Dismiss reveals an older toast.** Older toasts are only hidden, so they are still alive.<br>• After a wrong code, tapping Dismiss on "Reset failed" brought back the hidden **"Code completed — OTP filled. Press Continue to verify"** at the same spot (7–131). After a failed attempt, this message is stale.<br>• It stayed until its own timer ran out, about **2.7 s** later. This happened on all three phones.<br>• One tap therefore does not clear the top of the screen.<br>• **Options:** on phones, cap the stack at one toast (drop older ones instead of hiding them), or have Dismiss clear the hidden ones too. |
+| R5-O2 | Low (by-design trade-off) | `ToastProvider.tsx:123` (`top-[calc(0.5rem+…)]`) | **On app-shell pages, the top toast covers the whole phone header for 3.4 s.** The menu, notifications and profile buttons cannot be tapped until it expires or is dismissed. Per the code (not measured), hovering or focusing it extends the time.<br>• On the reset page the translucent toast overlaps the "Reset Your Password" heading, which hurts legibility (screenshot), but no controls.<br>• It works after dismissal.<br>• **Options, if wanted:** offset phone toasts below the 80 px header on app-shell routes, or shorten success toasts. |
+| R5-O3 | Low (observation, pre-existing) | `src/features/messaging/ui/MessagingPage.tsx:284` | **The auto-selected room can be partly marked as read while off-screen.** On load the page no longer scrolls, so on iPhone 14 and SE dave's unread count goes **2 → 1**, not 0.<br>• Likely cause: message 29 is mostly behind the bottom nav, and any intersection (`intersectionRatio > 0`) counts as read.<br>• Message 30 stays unread until the user taps the room (then 0).<br>• `3ad8631` behaved the same (Run 3). |
+
+**Status of Run 4 items:**
+- **R4-1 is fixed:** phone toasts no longer sit over the OTP row, Continue or the banner buttons, with the banner open or dismissed.
+- **R4-O1 is fixed:** there is no scroll on load on phones.
+- **R4-2 is fixed:** 1024 is identical to `3ad8631`.
+- **Unchanged:** the room-list scroller is 97 px tall on phones, so only about 1.4 rows are visible at once.
+
+### Evidence
+
+Screenshots are in `doc/release/e2e-shots/run5/`, all local simulation at `deviceScaleFactor` 1:
+
+| File | What it shows |
+|---|---|
+| `t-cookie-1toast-top-iph14.png` | T1: banner open, "Reset failed" pinned at the top; OTP row, Continue and the banner buttons are clear. The toast overlaps the page heading (R5-O2). |
+| `t-login-toast-header-iph14.png` | T2 / R5-O2: "Login successful" covering the app-shell header (menu, notifications, profile) |
+| `m-landing-iph14.png` | M1: `/messages` on load, no scroll; heading and room list visible |
+| `m-open-bob-iph14.png` | M1: after tapping a room, the newest message and composer are above the bottom nav |
+
+The raw JSON (`results/r5-toast.json`, `r5-desk.json`, `r5-t2.json`, `r5-msg.json`, `r5-j.json`) and the harness (`h/r5.js`, plus `h/lib.js` and `h/seed.js` copied from Run 4) are in the session scratchpad (`…/scratchpad/e2e5/`). They are not kept in the repo.

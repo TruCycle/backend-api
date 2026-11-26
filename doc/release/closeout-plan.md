@@ -115,8 +115,9 @@ All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858
 - **Request an item:** it sends on the first tap with no review step, then shows both a modal and a toast for the same event.
 - **Item page:** there is no donor or description, and raw condition values such as `like_new` are shown.
 - **Sign-in:** a hard-coded five-star testimonial appears there. Remove it or source it.
-- ✅ **Phone messaging** (E2E O1): the newest message was off-screen. Fixed in #25 (`3ad8631`).
-- ✅ **Phone toasts** (E2E O2): toasts covered the reset-code inputs. They now sit at the bottom on phones. Fixed in #25 (`3ad8631`).
+- ✅ **Phone messaging** (E2E O1): the newest message was off-screen. Fixed in #25 and verified in runs 4–5.
+- ✅ **Phone toasts** (E2E O2 → runs 3–5): on phones only the newest toast shows, pinned to the top edge, clear of forms and the cookie banner. Dismissing it clears the stack (`3fd8ac6` + follow-up). **Trade-off, owner call:** for about 3.4 s the toast covers the phone header (menu, notifications, profile). Two alternatives: shorten the phone duration, or show inline form errors instead of toasts.
+- ✅ **Messaging scroll:** it happens only on a tap at phone width. Desktop, tablet and auto-selection don't move. Known minor issue: on short phones the auto-selected room's last, mostly hidden message can stay unread until the user taps or scrolls (R5-O3).
 
 ## C. Needs hardware or a human
 
