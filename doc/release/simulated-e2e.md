@@ -174,3 +174,64 @@ Screenshots are in `doc/release/e2e-shots/run2/`, all local simulation at `devic
 | `j11-login-cookie-prod-iph.png` | Deployed: the banner covers Log in |
 
 The raw JSON results, the harness (`h/*.js`) and the stubs are in the session scratchpad (`…/scratchpad/e2e2/`). They are not kept in the repo.
+
+## Run 3 — fix verification (3ad8631)
+
+> **Local simulation — not production evidence.**
+> It ran on 26 Nov 2026 in the same kind of sandbox as Run 2: a throwaway `postgis/postgis:15-3.4` container, local `vite preview` servers and headless Chromium (Playwright 1.65) with the Run 2 network guard (only localhost allowed).
+> - No remote database, hosted site or deploy was touched. Nothing was pushed or committed.
+> - "iPhone 14" and "Pixel 7" are Playwright viewport and UA emulation in Chromium, not WebKit or real devices. In Chromium, `env(safe-area-inset-bottom)` is 0.
+
+### Setup (local)
+
+| Part | Value |
+|---|---|
+| Backend | `backend-api` HEAD **`aa4f996`** (PR #11) in a detached scratch worktree, run with `node dist/main.js` and `TYPEORM_SYNC=false`. `src/` and `package*.json` are identical to Run 2's `75b9411`. |
+| Schema | `origin/main` `5bc53a8` booted once with `TYPEORM_SYNC=true` on an empty DB (ledger 26). Then HEAD's `npm run migration:run -- --apply --expect …027,…,…036`: all 10 applied, ledger 36. |
+| Seed | Users registered through HEAD's `/auth/register` and activated by SQL.<br>• **dana** (donor): 25 listings inserted by SQL. The 7 **oldest** are in impact statuses: 5 `complete` + 2 `recycled`, with 4 `exchange` and 3 `donate`. CO2e is 1.2, 2.5, 3.7, 0.4, 10.1, 5.2 and **NULL**; the NULL was later set to 7.3, giving a sum of **30.4**. The other 18 listings carry CO2e values too, and they must not be counted. The listings API (`limit=20`) gives `total` 25 and 20 rows, and page 1 holds only 2 of the 7 impact items.<br>• **cole** (collector): 2 completed claims.<br>• **alice ↔ bob**: a room created with `POST /messages/rooms` and 30 messages sent through `POST …/messages/text`. The last two are from bob. alice's receipts for bob's older messages were inserted by SQL. Before each run, the receipts for messages 29–30 were deleted, so `unreadCount` = **2**. |
+| Frontend under test | `web-frontend` **`3ad8631`** (scratch worktree of `uiadedo/frontend-release-candidate`), `npm ci && npm run build` with the Run 2 env, served on `:4175`. |
+| Pre-fix baseline | **`3c3900b`** built the same way and served on `:4176`. It was used for the "unchanged" comparisons. |
+| Viewports | iPhone 14 390×664; Pixel 7 412×839, plus Pixel 7 UA at **390×839**; 768×1024; 1024×768; 1440×900. |
+
+### Results — `3ad8631`
+
+| # | Check | Verdict | Evidence |
+|---|---|---|---|
+| F1a | Donor tiles, 25 listings, one NULL CO2e | **PASS** (1440, iPhone 14) | `/items/me/impact` returned `{total_co2_saved_kg:null, items_exchanged:4, items_donated:3}`. The tiles read **"25 Items listed", "7 Completed", "Unavailable Est. CO2e (completed)"**, and no "this page" text appears anywhere on the page. |
+| F1b | Donor tiles after the NULL was fixed | **PASS** (1440, iPhone 14) | The API returned `total_co2_saved_kg` **30.4**, which equals the DB sum over `complete`/`recycled` (30.4). The tiles read **25 / 7 / "30.4kg"**. The pre-fix `3c3900b` on the same data showed "20 Items listed (this page) / 1 Completed (this page) / 1.2kg". |
+| F1c | `/items/me/impact` routed to 500 | **PASS** (1440, iPhone 14) | Two 500 responses were seen. The tiles read **"25 / Unavailable / Unavailable"**, with no uncaught page errors. Console output was not captured for this session. |
+| F1d | Collector-mode tiles | **PASS, unchanged** | On both `3ad8631` and `3c3900b`, cole's tiles read "2 Completed collections / Unavailable Completed exchanges / Unavailable Est. CO2e (completed)". There were **0** `/items/me/impact` requests in collector mode. |
+| F2a | Messaging, iPhone 14 (390×664) | **FAIL** | **Containment is fixed:**<br>• The list (y 554–797) and the composer sit inside the card (477–868).<br>• The list scrolls internally (scrollHeight 3232 vs clientHeight 243, scrollTop 2989, so it is pinned to the bottom).<br>• Setting `list.scrollTop=0` leaves the page position unchanged.<br>• `scrollWidth == clientWidth == 390`.<br>**But the newest message (y 687–781) and the composer (811–855) are below the fold.** The visible area of the app-shell `<main>` scroller is y 80–595 (above the bottom Spot/List/Rescue nav), and `elementFromPoint` at the newest message returns nothing. **After opening, `unreadCount` went 2 → 1, not 0.** Two read calls were made, both returning 200, but the count still dropped only to 1. Which message was acknowledged was not recorded. Pre-fix `3c3900b`: the list overflowed the card (list bottom 1055 > card bottom 868), and unread stayed 2. |
+| F2b | Messaging, Pixel 7 at 390×839 and 412×839 | **PASS** (one observation) | The newest message (687–781) is inside the viewport and inside the list. At 390×839, `elementFromPoint` at its centre hits the message bubble; this was not measured at 412. Its bottom ~11 px sit under the bottom nav, which starts at y 770: a hit-test 4 px above the bubble's bottom returned the nav at both widths. Read calls returned 200 and **`unreadCount` went 2 → 0** with no manual scroll. There is no horizontal overflow (390 and 412). The list is contained in the card and scrolls internally.<br>**Observation:** the composer (811–855) sits under the bottom nav, which starts at y 770, so the user must scroll `<main>` before typing. |
+| F2c | Messaging, desktop 1440×900 | **PASS, unchanged** | The geometry is identical to `3c3900b`: card 192–791, list 269–720, newest 618–692, composer 734–778. Unread went 2 → 0 and the read call returned 200.<br>**Note:** at 1024×768 the new `grid-rows` also applies below `xl`. The conversation card grew from 270 to 307 px and stays contained, and unread went 2 → 0. |
+| F3a | Wrong-code toast, phones | **PASS** (iPhone 14, Pixel 7 at 390) | After `reset-password` 401, the toast region is bottom-anchored (`bottom:16px`).<br>• On iPhone 14 the toasts sit at y 395–649. The OTP inputs (210–258) and Continue (310–358) are **not overlapped**, and `elementFromPoint` hits the button and all 6 inputs. Two toasts were showing; the top of the stack (y 395) cleared Continue by 37 px. The stack caps at 3 toasts (`maxVisibleToasts = 3`), and three 124 px toasts would start near y 264. **This is computed, not observed:** a third toast would cover Continue on a 664 px screen.<br>• On Pixel 7 at 390 the toasts sit at y 420–824, again with no overlap.<br>• Pre-fix `3c3900b` on iPhone 14: the toasts (95–349) covered the inputs and Continue, and the button hit-test failed. |
+| F3b | Toast placement at ≥768 px | **PASS, unchanged** | At 768 and 1440 the region is `top:96px; right:16px` on both `3ad8631` and `3c3900b`, with identical toast boxes.<br>**Pre-existing, not new:** at both widths the top-right stack overlaps the right part of the OTP row and Continue (for example, at 1440 the toasts span x 1072–1424 and Continue spans x 816–1332). |
+| F3c | Toast vs cookie banner, banner left open | **FAIL (new regression)** | On iPhone 14, the "Reset failed" toast (525–649) covers **both** "Reject optional" and "Accept optional" (587–631), and `elementFromPoint` at either button centre does not hit the button.<br>The same happens on Pixel 7 at 390: the toasts span 420–824 and the buttons 762–806.<br>The banner is `z-[90]` and the toasts are `z-[1300]`. The banner buttons only become usable again once the toasts are dismissed or expire. |
+
+There were no uncaught page errors in any run.
+- **Recorded console errors:** only the browser's "Failed to load resource … 401" line for the deliberate `reset-password` 401 in each toast run. Console output was not captured for the impact-500, collector and baseline dashboard sessions.
+- **Recorded API errors:** only that 401 and the injected `/items/me/impact` 500s.
+
+### New defects
+
+| ID | Severity | Where | What |
+|---|---|---|---|
+| R3-1 | Medium (UX, read receipts) | `web-frontend` `src/features/messaging/ui/MessagingPage.tsx:401` | **On iPhone 14, the newest message and the composer are still off-screen when a room opens.**<br>• **Cause:** the grid keeps `min-h-[700px]` and `h-[calc(100vh-10rem)]` below `md`, and it starts at y 184 inside the app-shell `<main>` scroller. On iPhone 14, `<main>` shows only 515 px above the bottom nav, so the conversation card ends about 270 px below the fold.<br>• **Effect:** the viewport-based read receipt leaves `unreadCount` at 1. This is the Run 2 O1 effect, now only on shorter phones.<br>• **Fix options:** drop `min-h-[700px]` below `md` and size the grid to the visible `<main>` height (account for the header and the bottom nav, and use `dvh`), or scroll the conversation card into view when a room is selected on mobile.<br>• **Pixel 7:** the same grid height puts the composer under the bottom nav there too (F2b). |
+| R3-2 | Low (UX) | `web-frontend` `src/shared/ui/toast/ToastProvider.tsx:123` with `src/shared/ui/site/TrackingConsentBanner.tsx:11` | **Bottom-anchored phone toasts (`z-[1300]`) cover the cookie banner's "Reject optional" / "Accept optional" buttons (`z-[90]`)** while the toasts are shown. Possible fixes: offset the toast stack above the banner when the banner is open, or place phone toasts above the bottom nav and banner. |
+
+Run 2's O2 (toasts over the OTP inputs on phones) is **fixed**. Run 2's O1 is **fixed on Pixel-height screens** (839 px) and **not fixed on iPhone 14** (664 px); see R3-1.
+
+### Evidence
+
+Screenshots are in `doc/release/e2e-shots/run3/`, all local simulation at `deviceScaleFactor` 1:
+
+| File | What it shows |
+|---|---|
+| `d-donor-tiles-fixed-d1440.png` | Donor tiles 25 / 7 / 30.4kg, with no "(this page)" text |
+| `d-donor-tiles-impact500-iph.png` | `/items/me/impact` 500: the tiles show "Unavailable" and the page does not crash |
+| `m-conversation-open-rc-iph.png` | R3-1: room open on iPhone 14, with the newest message and composer below the bottom nav |
+| `m-conversation-open-rc-d1440.png` | Desktop 1440 messaging, the same as pre-fix |
+| `t-reset-401-toast-rc-iph.png` | Wrong-code toasts at the bottom, clear of the OTP inputs and Continue |
+| `t-reset-401-toast-cookie-rc-iph.png` | R3-2: toasts covering the cookie banner buttons |
+
+The raw JSON (`results/r3-*.json`), the harness (`h/r3.js`, `h/seed.js`, `h/seed-msgs.js`, `h/diag.js`) and the logs are in the session scratchpad (`…/scratchpad/e2e3/`). They are not kept in the repo.
