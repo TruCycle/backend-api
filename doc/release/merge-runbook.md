@@ -12,7 +12,7 @@ This prepares the coordinated release. **Nothing in this file has been executed.
 
 **Not in this release:** [web-frontend#18](https://github.com/TruCycle/web-frontend/pull/18), the colour palette change. It is excluded by the owner's no-redesign rule, and the recommendation is to close it.
 
-If either PR gains a commit, the pinned heads above are void, and the alignment gate (step 0.1) runs again.
+If either PR gains a commit that changes anything outside `doc/`, the pinned heads above are void, and the alignment gate (step 0.1) runs again. To confirm a later head is still covered, run `git diff --stat <pinned> HEAD -- . ':!doc'`; it must print nothing.
 
 ---
 
