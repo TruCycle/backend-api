@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiHeader, ApiOkResponse, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { IsIn, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -8,10 +9,23 @@ import { ClaimsService } from '../claims/claims.service';
 import { DropoffScanDto, ShopScanDto } from './dto/shop-scan.dto';
 import { QrService } from './qr.service';
 
-class ScanDto {
+export class ScanDto {
+  // Validators are required: the global ValidationPipe rejects undecorated properties.
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2048)
   qrPayload!: string;
+
+  @IsIn(['in', 'out'])
   direction!: 'in' | 'out';
+
+  @IsOptional()
+  @IsObject()
   location?: { type: 'Point'; coordinates: [number, number] };
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
   shopId?: string;
 }
 

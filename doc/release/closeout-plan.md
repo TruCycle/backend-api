@@ -1,0 +1,214 @@
+# TruCycle website closeout: consolidated plan
+
+As of 26 Nov 2026. Production runs frontend `83d30d6` and backend `5bc53a8`.
+This plan replaces the sitrep's five priorities. Every item sits in one of three buckets:
+
+- **A. Executed in this session**, with evidence in this folder.
+- **B. Prepared, awaiting a named approval**, because the action is irreversible or touches production.
+- **C. Needs hardware or a human.** Simulation cannot close these.
+
+Supporting evidence (both are local simulations, not production evidence):
+
+- [`migration-rehearsal.md`](migration-rehearsal.md): `main` schema → candidate migrations, on local Postgres.
+- [`frontend-promotion-list.md`](frontend-promotion-list.md): frontend branch diff and API contract check.
+
+---
+
+## The governing rule: one coordinated release
+
+> ⚠️ **Correction.** An earlier version of this plan said that, with flags off, signup, verify and reset behave as on production today. **That was wrong.** The contract check against the deployed frontend found breaking changes. The backend candidate **must not** ship on its own.
+
+**Backend and frontend go out together, in one change window.** Risk is managed by flag activation, not by commit batches. The backend checkpoint commit `b2a6d2d` alone is 104 files and about 6k of the 9.7k changed lines, so batching would not hold together.
+
+Why the deploy must be coordinated:
+
+| Risk | Effect if the backend ships without the new frontend | Handled by |
+|---|---|---|
+| R3 | `/auth/verify` now returns `{verified:true}` with no tokens. The deployed frontend shows an error on every verification link, even though the account *is* verified. | Coordinated frontend release. The staging change was deliberate hardening and is **not** reverted. |
+| R2 | Every signed-in user is logged out at deploy. Old tokens carry no session id, and the rehearsal confirmed a 401 on `/auth/me` and `/auth/refresh`. | Accept it and announce a forced re-login. |
+| R1 / R6 | The default access-token lifetime drops from 60d (main) to 15m. Old clients without "remember me", and their realtime sockets, drop after about 15 minutes. | **Pin `JWT_EXPIRES_IN` explicitly in production before deploy.** The production value is unknown from here. |
+| R4 | The deployed Found Items page sends nearest + 5mi with no location, and gets a 400. | ✅ Shimmed in the backend. |
+| R5 | The deployed spot report sends free-text reasons, and gets a 400. | ✅ Shimmed in the backend: the reason becomes `other` and the text is kept. |
+| R7 | Production had no read state, so every historical message would show as unread. | ✅ Migration 0036 backfills receipts. Tested on a copy of the migrated database: idempotent, no self-receipts. |
+| R7 residual | Deployed clients never call the read endpoint. Messages that arrive after the release stay unread on old tabs until the user moves to the new frontend. Confirmed in simulation. | Coordinated frontend release. Stale tabs self-correct on reload. |
+| R8, R9, R10, R14 | Names show as "Community member", `gone` displays as available, and duplicate-tab or 429 refresh logs the user out. | Coordinated frontend release, plus owner awareness. |
+| R15 | The staging Vision worker requires a secret. If it reaches the production worker before the new frontend, Smart Spot silently stops. | Promote the worker **with** the frontend, never before it. |
+
+---
+
+## Standing rule from the owner: alignment before any merge
+
+Before merging anything to either `main`, confirm the backend and frontend are aligned at the exact commits being merged, so neither side breaks the other. The gate is:
+
+1. **Pin the pair.** Record the backend PR head SHA and the frontend PR head SHA that will ship together.
+2. **Contract check at those SHAs.** Every frontend API call (path, method, request fields, response fields) must match the backend controllers and DTOs, including the Vision `context`, verify-without-tokens, sessions and refresh, found-item search, report reasons, and read receipts. Re-run it if either head moves.
+3. **Simulated E2E on that exact pair.** It must pass on desktop and phones, both against the migrated schema and against the deployed frontend (the old-client shims).
+4. **CI green on both heads**, with no merge conflicts.
+5. **Merge order follows the release order** (B3 → B4 + B5). Never merge one side alone. If either PR changes after the check, steps 2–4 run again.
+
+## Standing rule from the owner: commit authorship
+
+All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858622+macaddy2@users.noreply.github.com`). Never use a Claude/AI author, committer, or `Co-Authored-By`/`Claude-Session` trailer. PR descriptions carry no Claude/AI footer either.
+
+## Standing rule from the owner (26 Nov 2026): no colour or visual redesign
+
+- The frontend release uses **staging as its base**, with the colour change reverted (`03c1b54`, the same change as abandoned PR #18).
+- From staging, keep anything tied to functionality, UX, accessibility or the QA work.
+- **Do not implement any change that is only a redesign** (colours, palette, theme or restyling). Leave it out of every PR until the owner finishes the design compendium and the redesign is integrated as its own piece of work.
+- This applies to every PR in this programme. When a commit mixes the two, keep the functional part and drop the colour part.
+
+---
+
+## A. Executed in this session
+
+| # | Item | Result |
+|---|---|---|
+| A1 | Backend reconciliation: staging (29 ahead) merged into `main` (2 ahead) | Done in [backend-api#11](https://github.com/TruCycle/backend-api/pull/11). Four conflicts resolved. Main's `verificationDelivery`, suspended-account guard and single-use reset codes are confirmed present at HEAD. |
+| A2 | Main's Brevo→Resend fallback | Restored. Staging had dropped it. |
+| A3 | Main's email tests were not in the CI allowlist | Added, so the production email fix is now a merge gate. |
+| A4 | Compatibility shims R4, R5 and R7 (migration 0036) | Done, with tests. |
+| A5 | CI gate on the candidate | Typecheck ✅. Lint 0 errors ✅. 36 suites / 824 tests ✅. Build ✅. GitHub Actions ✅ on #11. |
+| A9 | Frontend release candidate: [web-frontend#25](https://github.com/TruCycle/web-frontend/pull/25) (draft) | Built on staging as it was before #21, with no redesign. Production `main` merged in (19 conflicts, resolved hunk by hunk). Two functional parts of #21 ported without colours: phone-width layout, and confetti once per reward. The main-only features are present: List-item camera, Spot retry, cutout preview and fallback (off), reset-code recovery. Typecheck, lint, 8 test suites and build ✅. CI ✅. |
+| A10 | Vision prompt by context | The merge had made every non-admin Spot analysis return 403, because it sent a custom prompt. Fixed in a pair: the frontend sends `context=spot\|listing` (#25) and the backend picks the prompt (#11). This restores main's listing-prompt behaviour (`2209236`). |
+| A6 | Flag defaults | Outbox, shared rate budgets and per-email reset limits are all off by default. |
+| A7 | Migration rehearsal (simulated) | The upgrade applies cleanly. Findings are folded into B and the pre-checks below. |
+| A8 | Frontend promotion list and contract check | Done. Results are in the table above and in the doc. Frontend staging build, lint and tests pass locally. |
+| A9 | Simulated browser journeys: both frontends against the local candidate ([`simulated-e2e.md`](simulated-e2e.md)) | R3 reproduced on the deployed frontend, while staging passes. The R4, R5 and R7 backfill shims work. Reset single-use, refresh and mobile layout pass on both. Staging logout revokes the server session. Keyboard sign-in passes. Defect **D1** was found in the R5 shim and fixed: a free-text reason is now kept alongside details. |
+
+---
+
+## B. Prepared, awaiting a named approval
+
+### B0. Read-only production pre-checks (required before anything else)
+
+1. **Migration ledger top: 026 or 027?** This decides the `--expect` list. Main never registers 027. With the ledger at 026, the list is 027–036; at 027, it is 028–036.
+2. **`TYPEORM_SYNC` must be `false` in production.** If it is `true`, then the moment the schema is migrated, main's next restart will either crash-loop or drop new columns. See rehearsal 5b.
+3. **Runtime DB role.** Every new table has row-level security with no policies. The role must own the tables or have `BYPASSRLS`. Grants alone give 0 rows and a 503 on login.
+4. **`JWT_EXPIRES_IN` and `JWT_REFRESH_EXPIRES_IN`.** Pin them explicitly. **Recommended:** `JWT_EXPIRES_IN=15m` (the value QA and the simulation exercised) and an explicit `JWT_REFRESH_EXPIRES_IN` matching hosted staging, set in the same window as the frontend. Everyone re-logs in at deploy anyway (R2), and the new frontend refreshes silently. `JWT_SECRET` must be at least 32 bytes and not `change-me`, or the candidate refuses to boot.
+5. **Duplicate `google_id` values, and the Postgres version.** The 027 unique index fails if duplicates exist.
+
+### B0 database results (read-only, 26 Nov 2026, Supabase project "TruCycle", eu-west-2)
+
+The queries were `SELECT` and `SHOW` only; no user data was read beyond counts.
+
+| Check | Result | Decision |
+|---|---|---|
+| 1. Ledger | 26 rows; top is `EnhanceFoundItemsLocationAndImpact1700000000026` | Apply **027–036**, the rehearsed case. |
+| 2. `user.google_id` | present | 027 is a no-op for the column. |
+| 3. Duplicate `google_id` | 0 groups | The 027 unique index is safe. |
+| 4. `user` indexes | `user_email_key`, `user_pkey` | 027 creates `UQ_user_google_id`. |
+| 5. Postgres | 17.6 | OK. |
+| 6–7. Owners / BYPASSRLS | `user`, `message`, `found_item` owned by `postgres`; `postgres` has `rolbypassrls = true` | **Run the migration CLI as `postgres`**: it owns the tables 027, 028 and 033 alter. The new tables are then owned by a role that bypasses RLS. Confirm the backend's `DB_USER` is `postgres`; it is expected, since `main` migrates at boot on its own connection. |
+| New tables | none present | Clean start. |
+| Users | 20 | Quick migration, small re-login impact. |
+
+**Still needed from the owner:**
+- Env values: `TYPEORM_SYNC`, `JWT_SECRET` length, JWT lifetimes, `FRONTEND_BASE_URL`, `DB_USER`.
+- Host Node versions.
+- Backup time.
+- The commit each service currently runs.
+
+### Decisions on deployment questions (advisor, 26 Nov)
+
+- **Auto-deploy:** assume both `main` branches deploy on merge. The runbook order is safe either way.
+- **Health check:** the new `GET /health/ready`. Pointing the host at it is optional; the sign-in check stays the gate.
+- **Rollback:** locate each host's "redeploy previous" control before the window. Reverting remains the fallback.
+- **Node:** both staging branches already carry `.node-version` 24.18.0, and hosted staging builds them. The remaining risk is a version override on the production services, so check it.
+- **No hosted rehearsal.** It would replace the staging redesign under review. Staging-derived code has already run hosted.
+
+### B0 additions: environment and deploy-config differences (checked 26 Nov)
+
+These are the variables and build settings that differ between each `main` and its release candidate.
+
+| Area | What changed | Risk if missed | Action |
+|---|---|---|---|
+| **Node version (both repos)** | `engines` moves from `>=18` to `>=22.12.0 <25`, and `.node-version` is `24.18.0` | **The build fails** if the host builds with Node 18 or 20 | Confirm each host's Node version and how it picks one (`.node-version`, `engines`, or a host setting). |
+| Backend `FRONTEND_BASE_URL` (new) | Origin for links in verification and reset emails. It replaces `APP_BASE_URL` for those links. Default: `https://trucycle.co.uk` | Links point at the wrong host if production uses another origin, such as `www.` | Set it explicitly to the production frontend origin. |
+| Backend `VISION_WORKER_URL` + `VISION_WORKER_SECRET` (new) | Photo analysis now goes through the backend. The frontend's `VITE_VISION_WORKER_URL` is removed. | None while Smart Spot is off: the call is gated and failures are caught | Set both before turning Smart Spot on. The secret is 64 hex characters. |
+| Backend `AUTH_*`, `MESSAGE_ATTACHMENTS_ENABLED`, `FOUND_ITEM_LIFECYCLE_SWEEP_ENABLED` (new) | Opt-in features | None while unset | Leave them unset. |
+| Backend `AUTH_REFRESH_RETRY_GRACE_SECONDS`, `OSM_MAX_CONCURRENT_REQUESTS`, `CO2_AVOIDED_METHOD_REFERENCE` (new) | Tuning values with code defaults | Low | Optional. |
+| Backend `APP_RELEASE_SHA` / `RAILWAY_GIT_COMMIT_SHA` (new) | Release labels in logs | None | Optional. |
+| Backend `CLOUDINARY_MESSAGE_FOLDER` (removed) | No longer read | None | It can be removed later. |
+| Backend `npm run migration:run` | It no longer loads `.env` (`dotenv/config` is gone) | Migrations would run against the wrong or an empty database | Export the production database variables in the shell, or use the host's run-command feature. |
+| CORS (`CORS_ORIGINS`) | Unchanged | None | None. |
+| Frontend `VITE_ENABLE_META_PIXEL_SDK`, `VITE_MESSAGE_ATTACHMENTS_ENABLED` (new) | Opt-in | None while unset | Leave them unset in production. |
+| Frontend `VITE_INTERNAL_PIN` (removed) | The internal Vision page is now admin-only | None | Remove it from the host later. |
+| **Migration role** | The new tables are owned by whichever role runs the CLI. RLS is on and they have no policies. | **Login returns 503** if the runtime role is neither the owner nor `BYPASSRLS` | Run migrations as the runtime role, or confirm `BYPASSRLS` (runbook §2 stop check). |
+
+### B1–B9. Approval queue
+
+| # | Action | Approver | Post-action check |
+|---|---|---|---|
+| B1 | **Review and approve the frontend candidate** [web-frontend#25](https://github.com/TruCycle/web-frontend/pull/25). Two contrast-only text colour fixes from staging's pre-redesign QA are included (`link #15A119→#126C16`, `formText`). Drop them if you count them as redesign. | Owner | Simulated E2E run 2 against #11 + #25. |
+| B2 | Set the production env from B0 (`TYPEORM_SYNC=false`, JWT lifetimes) | Owner | Env diff recorded. |
+| B3 | **Migrate first, immediately before B4 in the same window:** apply 027/028–036 with `PGOPTIONS='-c lock_timeout=5s'`. 0036 only marks messages that exist when it runs, so messages sent between B3 and B4 would show as unread. | Owner + DB access | Ledger shows 036. Main is still serving, which the rehearsal shows is safe with sync off. |
+| B4 | Merge and deploy backend #11 | Owner | New SHA is live. `/health` returns 200. |
+| B5 | Deploy the reconciled frontend, together with the Vision worker | Owner | Signup → verify → sign-in → reset. Messaging unread counts. Spot report. Cutout flag **off**. |
+| B6 | Announce the forced re-login (R2) | Owner | n/a |
+| B7 | Turn flags on, one per window: `AUTH_RATE_LIMITS`, then `AUTH_RESET_EMAIL_LIMITS` + key, then `AUTH_EMAIL_OUTBOX_ENABLED` + key | Owner. Name the alert owner first (DEP-301). | Redacted `auth_budget` events. |
+| B8 | Branch protection on both `main` branches, with the checks job required | Repo admin | A test PR is blocked until checks pass. |
+| B9 | HSTS on the production frontend and API | Hosting | `curl -I` shows `strict-transport-security`. |
+| n/a | Cutout activation | **Deferred** | Hosted Cloudinary validation must pass first. |
+| n/a | Close Linear DEP-291…315 | Owner | Only on production evidence. |
+
+**Order:** B0 → B1 → B2 → (B3 → B4 + B5 + B6 back-to-back in one window) → smoke tests → B7, one flag per window → B8 / B9.
+
+**Rollback pair:** main backend `5bc53a8` plus frontend `83d30d6`, running on the migrated schema with `TYPEORM_SYNC=false`. This was rehearsed: main works, and attachment messages display as empty. **Never** roll back with sync on.
+
+**Redesign decision (resolved 26 Nov: staging base, colour reverted, see the standing rule):** staging tip `c93693e` is the merge of frontend PR #21 ("redesign-charcoal-mint": 16 commits, 138 files). It contains `03c1b54`, which is the **same 24-file colour change** as the abandoned PR #18 (`8f826c3`). Promoting staging as-is ships the redesign you asked to abandon. The alternative base is `c93693e^1` (`83d7827`), but every QA fix inside #21 would then need re-applying. The simulation ran on `c93693e`, with the redesign.
+
+**Observations:**
+- **Cookie banner:** on the iPhone-sized viewport it covers *Log in* on the deployed frontend until it is dismissed.
+- **Geocoder:** a failure still returns 503 on item search, the same as main. The new shared provider cooldown (`cff51cf`) means one upstream 429 briefly pauses lookups for every user.
+
+**Frontend base warning:** staging `c93693e` forks from deployed `83d30d6` at `c7d7e2b`. It lacks deployed PRs #19, #20, #22 and #23: auth-mail recovery (reset 401 → back to OTP), camera framing, the Vision structured response, and optional cutout. It also has no postcode field on signup. B1 must carry these forward. Confirm the exact staging commit to promote.
+
+**Stale item corrected:** frontend PR #24 is already **merged** to frontend main (`0c31f71`) but is **not deployed**, and staging lacks it. It is carried in B1.
+
+---
+
+### Follow-ups found by the design critique (functional, not redesign)
+
+- ✅ **Donor dashboard impact tiles:** fixed in #25 (`3ad8631`). The tiles now use the listings total plus the account-wide completed count and CO₂e from `/items/me/impact`. Production's fixed-array chart still needs a decision under DEP-306.
+- **Request an item:** it sends on the first tap with no review step, then shows both a modal and a toast for the same event.
+- **Item page:** there is no donor or description, and raw condition values such as `like_new` are shown.
+- **Sign-in:** a hard-coded five-star testimonial appears there. Remove it or source it.
+- ✅ **Phone messaging** (E2E O1): the newest message was off-screen. Fixed in #25 and verified in runs 4–5.
+- ✅ **Phone toasts** (E2E O2 → runs 3–5): on phones only the newest toast shows, pinned to the top edge, clear of forms and the cookie banner. Dismissing it clears the stack (`3fd8ac6` + follow-up). **Trade-off, owner call:** for about 3.4 s the toast covers the phone header (menu, notifications, profile). Two alternatives: shorten the phone duration, or show inline form errors instead of toasts.
+- ✅ **Messaging scroll:** it happens only on a tap at phone width. Desktop, tablet and auto-selection don't move. Known minor issue: on short phones the auto-selected room's last, mostly hidden message can stay unread until the user taps or scrolls (R5-O3).
+
+### Follow-ups from alignment gate Run 7 (pre-existing; waived for this release, code frozen)
+
+- **L1, leaderboard tie rank:** `gamification.service.ts:355-360`. The "your position" rank outside the first page counts strictly-higher points, while list rows break ties by `createdAt`, so a tied viewer can see #24 instead of #26. Fix it by ranking with the same ordering as the list.
+- **Q1, QR payload not checked:** `qr.controller.ts` scan accepts any well-formed payload. Completion is still restricted to the approved collector and the shop. Fix it by validating that the payload matches the selected item.
+- **Q2, stale Collect tab:** `CollectedItemsPage.tsx:89-92` shows "Collection recorded" again. This is cosmetic; the server is idempotent.
+- **H1, readiness logging:** `/health/ready` 503s are logged at ERROR by the global exception filter. Lower it to WARN, or skip logging for readiness, before pointing a frequent health check at it.
+
+## C. Needs hardware or a human
+
+Simulated Playwright runs are regression evidence only. They do not close the items below.
+
+| Item | Needs |
+|---|---|
+| Live Spot catalogue check (upload → profile → weight, CO₂ and points → edit weight → stop before publishing) | A person with a real file picker |
+| Android Chrome hardware checks: camera, pinch, gallery, permissions, rotation, blocked-posting recovery | A physical Android phone. The S24 was skipped at your request. |
+| iPhone Safari: camera, gallery, permissions, PWA install, deep links | A physical iPhone |
+| QR handoff → *Collected*, with no duplicate rewards | Two devices and a designated QA donation |
+| Two-account messaging on real browsers | Two people or browsers, after B5 |
+| VoiceOver / TalkBack; desktop Safari and Firefox | Real assistive technology |
+| Copy, policy and support sign-off (DEP-307–308) | Owner |
+| Erasure and retention (DEP-296), GA4/Meta scope (DEP-297), historical carbon totals (DEP-306) | Owner decisions |
+| Recovery storage and a production recovery rehearsal (DEP-291–294) | Infra access |
+| Vision Worker config capture (DEP-314) | Cloudflare access |
+
+---
+
+## Decisions made under the defer-to-model delegation
+
+1. **One coordinated release, gated by flags, with no commit batches.** Reason: the checkpoint commits on both repos span several features.
+2. **Staging's auth wins** wherever it is a superset of main's fixes. Main's tests remain the oracle.
+3. **Do not revert verify-issues-no-tokens (R3).** It is deliberate hardening, and coordination is the fix.
+4. **Shim only what is cheap and security-neutral** (R4, R5, R7), to protect stale tabs and PWAs after the release.
+5. **Migrate before deploy**, because the rehearsal showed that deploy-then-migrate breaks login with a 503.
+6. **Cutout stays off.** PR #18 (the colour overhaul) stays out. Recommend closing it.
+7. **Rate limits are the first flag**, as the lowest risk and the fastest rollback.

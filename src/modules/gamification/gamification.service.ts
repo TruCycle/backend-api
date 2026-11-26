@@ -8,7 +8,7 @@ import { FoundItem, FoundItemStatus } from '../found-items/found-item.entity';
 import { FoundItemClaim, FoundItemClaimStatus } from '../found-items/found-item-claim.entity';
 import { Item } from '../items/item.entity';
 import { User } from '../users/user.entity';
-import { GamificationBadge, GamificationBadgeCategory } from './badge.entity';
+import { GamificationBadge } from './badge.entity';
 import { type CommunityBoardWindow } from './dto/community-board-query.dto';
 import { GamificationBadgeFilter, GamificationBadgesQueryDto } from './dto/gamification-badges-query.dto';
 import { PointHistoryQueryDto } from './dto/point-history-query.dto';
@@ -78,13 +78,14 @@ const FOUND_ITEM_POST_POINTS = 50;
 const FOUND_ITEM_CLAIM_POINTS = 25;
 const FOUND_ITEM_PICKED_UP_POINTS = 30;
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const COMMUNITY_MEMBER_LABEL = 'Community member';
 
 interface CommunityBoardPostcodeEntry {
   readonly postcode: string;
   readonly spots: number;
   readonly rescues: number;
   readonly activeSpots: number;
-  readonly totalCo2eKg: number;
+  readonly totalCo2eKg: number | null;
   readonly impactPoints: number;
 }
 
@@ -94,7 +95,7 @@ interface CommunityBoardSpotterEntry {
   readonly postcode: string | null;
   readonly spotsPosted: number;
   readonly rescues: number;
-  readonly totalCo2eKg: number;
+  readonly totalCo2eKg: number | null;
   readonly impactPoints: number;
 }
 
@@ -259,14 +260,14 @@ export class GamificationService {
     });
   }
 
-  async recordFoundItemPickedUp(userId: string, itemId: string, occurredAt?: Date | null): Promise<void> {
-    await this.recordActivity(this.pointTransactions.manager, {
+  async recordFoundItemPickedUp(manager: EntityManager, userId: string, itemId: string, occurredAt: Date): Promise<void> {
+    await this.recordActivity(manager, {
       userId,
       points: FOUND_ITEM_PICKED_UP_POINTS,
       reason: 'Marked a found item as picked up',
       actionType: 'found_item_picked_up',
       actionId: itemId,
-      occurredAt: occurredAt ?? new Date(),
+      occurredAt,
     });
   }
 
@@ -302,7 +303,7 @@ export class GamificationService {
         localSpotterRank: currentUserSpotterRank,
         impactPoints: currentUserSpotter?.impactPoints ?? 0,
         spotsPosted: currentUserSpotter?.spotsPosted ?? 0,
-        totalCo2eKg: currentUserSpotter?.totalCo2eKg ?? 0,
+        totalCo2eKg: currentUserSpotter ? currentUserSpotter.totalCo2eKg : 0,
       },
     };
   }
@@ -325,8 +326,10 @@ export class GamificationService {
       .createQueryBuilder('progress')
       .leftJoinAndSelect('progress.user', 'user')
       .where('progress.total_points > 0')
-      .orderBy('progress.total_points', 'DESC')
-      .addOrderBy('progress.created_at', 'ASC')
+      // skip/take with a join needs entity property names here, not column names;
+      // column names make TypeORM throw while building the pagination query.
+      .orderBy('progress.totalPoints', 'DESC')
+      .addOrderBy('progress.createdAt', 'ASC')
       .skip(offset)
       .take(limit)
       .getMany();
@@ -334,7 +337,7 @@ export class GamificationService {
     const entries: LeaderboardEntryView[] = rows.map((row, index) => ({
       rank: offset + index + 1,
       userId: row.userId,
-      name: this.resolveSpotterName(row.user),
+      name: COMMUNITY_MEMBER_LABEL,
       postcode: resolveOutwardPostcode(row.user?.postcode ?? null),
       totalPoints: row.totalPoints,
       currentLevel: row.currentLevel,
@@ -356,7 +359,7 @@ export class GamificationService {
         currentUser = {
           rank: rankRaw + 1,
           userId: currentRow.userId,
-          name: this.resolveSpotterName(currentRow.user),
+          name: COMMUNITY_MEMBER_LABEL,
           postcode: resolveOutwardPostcode(currentRow.user?.postcode ?? null),
           totalPoints: currentRow.totalPoints,
           currentLevel: currentRow.currentLevel,
@@ -392,13 +395,15 @@ export class GamificationService {
     }
 
     const topArea = [...areaTally.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+    const pickedUp = items.filter(item => item.status === FoundItemStatus.PICKED_UP);
+    const hasUnknownEstimate = pickedUp.some(item => this.validImpactEstimate(item.estimatedCo2eKg) === null);
 
     return {
       spotsPosted: items.length,
       liveSpots: items.filter((item) => item.status === FoundItemStatus.AVAILABLE || item.status === FoundItemStatus.CLAIMED).length,
       rescuedSpots: items.filter((item) => item.status === FoundItemStatus.PICKED_UP).length,
       reportedSpots: items.filter((item) => item.status === FoundItemStatus.REPORTED).length,
-      totalCo2eKg: items.reduce((total, item) => total + (item.estimatedCo2eKg ?? 0), 0),
+      totalCo2eKg: hasUnknownEstimate ? null : pickedUp.reduce((total, item) => total + item.estimatedCo2eKg, 0),
       totalImpactPoints: items.reduce((total, item) => total + (item.impactPoints ?? 0), 0),
       topArea,
       userArea,
@@ -408,7 +413,7 @@ export class GamificationService {
         title: item.title,
         postcode: item.postcode,
         status: item.status,
-        estimatedCo2eKg: item.estimatedCo2eKg ?? 0,
+        estimatedCo2eKg: this.validImpactEstimate(item.estimatedCo2eKg),
         impactPoints: item.impactPoints ?? 0,
         postedAt: item.postedAt.toISOString(),
       })),
@@ -454,7 +459,6 @@ export class GamificationService {
     const startAt = this.getWindowStart(window);
     const queryBuilder = this.getFoundItemRepository()
       .createQueryBuilder('item')
-      .leftJoinAndSelect('item.poster', 'poster')
       .orderBy('item.posted_at', 'DESC');
 
     if (startAt) {
@@ -467,7 +471,7 @@ export class GamificationService {
       spots: number;
       rescues: number;
       activeSpots: number;
-      totalCo2eKg: number;
+      totalCo2eKg: number | null;
       impactPoints: number;
     }>();
     const spotterMap = new Map<string, {
@@ -476,12 +480,14 @@ export class GamificationService {
       postcode: string | null;
       spotsPosted: number;
       rescues: number;
-      totalCo2eKg: number;
+      totalCo2eKg: number | null;
       impactPoints: number;
     }>();
 
     for (const item of items) {
       const outwardPostcode = resolveOutwardPostcode(item.postcode);
+      const rescued = item.status === FoundItemStatus.PICKED_UP;
+      const estimate = rescued ? this.validImpactEstimate(item.estimatedCo2eKg) : 0;
       if (outwardPostcode) {
         const existingPostcode = postcodeMap.get(outwardPostcode) ?? {
           postcode: outwardPostcode,
@@ -492,10 +498,10 @@ export class GamificationService {
           impactPoints: 0,
         };
         existingPostcode.spots += 1;
-        existingPostcode.rescues += item.status === FoundItemStatus.PICKED_UP ? 1 : 0;
+        existingPostcode.rescues += rescued ? 1 : 0;
         existingPostcode.activeSpots +=
           item.status === FoundItemStatus.AVAILABLE || item.status === FoundItemStatus.CLAIMED ? 1 : 0;
-        existingPostcode.totalCo2eKg += item.estimatedCo2eKg ?? 0;
+        existingPostcode.totalCo2eKg = this.addImpactEstimate(existingPostcode.totalCo2eKg, estimate);
         existingPostcode.impactPoints += item.impactPoints ?? 0;
         postcodeMap.set(outwardPostcode, existingPostcode);
       }
@@ -503,7 +509,7 @@ export class GamificationService {
       const posterId = item.posterId;
       const spotter = spotterMap.get(posterId) ?? {
         userId: posterId,
-        name: this.resolveSpotterName(item.poster),
+        name: COMMUNITY_MEMBER_LABEL,
         postcode: outwardPostcode,
         spotsPosted: 0,
         rescues: 0,
@@ -511,8 +517,8 @@ export class GamificationService {
         impactPoints: 0,
       };
       spotter.spotsPosted += 1;
-      spotter.rescues += item.status === FoundItemStatus.PICKED_UP ? 1 : 0;
-      spotter.totalCo2eKg += item.estimatedCo2eKg ?? 0;
+      spotter.rescues += rescued ? 1 : 0;
+      spotter.totalCo2eKg = this.addImpactEstimate(spotter.totalCo2eKg, estimate);
       spotter.impactPoints += item.impactPoints ?? 0;
       if (!spotter.postcode && outwardPostcode) {
         spotter.postcode = outwardPostcode;
@@ -532,7 +538,7 @@ export class GamificationService {
       return (
         right.impactPoints - left.impactPoints ||
         right.spotsPosted - left.spotsPosted ||
-        left.name.localeCompare(right.name)
+        left.userId.localeCompare(right.userId)
       );
     });
 
@@ -551,23 +557,12 @@ export class GamificationService {
     return new Date(Date.now() - days * DAY_IN_MS);
   }
 
-  private resolveSpotterName(user: User | null | undefined): string {
-    if (!user) {
-      return 'Community member';
-    }
-
-    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
-    if (fullName) {
-      return fullName;
-    }
-
-    return user.email.split('@')[0] || 'Community member';
-  }
-
   private async recordActivity(manager: EntityManager, input: PointActivityInput): Promise<void> {
-    await this.createPointTransaction(manager, input);
-    await this.syncUserState(manager, input.userId);
-    await this.maybeApplyWeeklyStreakBonus(manager, input);
+    await this.withUserStateLock(manager, input.userId, async (transaction) => {
+      await this.createPointTransaction(transaction, input);
+      await this.syncUserState(transaction, input.userId);
+      await this.maybeApplyWeeklyStreakBonus(transaction, input);
+    });
   }
 
   private async maybeApplyWeeklyStreakBonus(
@@ -600,9 +595,27 @@ export class GamificationService {
   }
 
   private async backfillAndSync(userId: string): Promise<void> {
-    await this.dedupeTrackedPointTransactions(this.pointTransactions.manager, userId);
-    await this.backfillHistoricalActivity(this.pointTransactions.manager, userId);
-    await this.syncUserState(this.pointTransactions.manager, userId);
+    await this.withUserStateLock(this.pointTransactions.manager, userId, async (transaction) => {
+      await this.dedupeTrackedPointTransactions(transaction, userId);
+      await this.backfillHistoricalActivity(transaction, userId);
+      await this.syncUserState(transaction, userId);
+    });
+  }
+
+  private async withUserStateLock(
+    manager: EntityManager,
+    userId: string,
+    work: (transaction: EntityManager) => Promise<void>,
+  ): Promise<void> {
+    await manager.transaction(async (transaction) => {
+      // All gamification writers lock the same existing account before reading
+      // or creating derived state. A DB lock also coordinates separate replicas.
+      const rows: Array<{ id: string }> = await transaction.query(
+        'SELECT id FROM public."user" WHERE id = $1 FOR NO KEY UPDATE', [userId],
+      );
+      if (rows.length === 0) throw new NotFoundException('User not found');
+      await work(transaction);
+    });
   }
 
   private async dedupeTrackedPointTransactions(manager: EntityManager, userId: string): Promise<void> {
@@ -693,7 +706,7 @@ export class GamificationService {
           reason: 'Marked a found item as picked up',
           actionType: 'found_item_picked_up',
           actionId: item.id,
-          occurredAt: item.updatedAt ?? item.postedAt ?? item.createdAt,
+          occurredAt: item.closedAt ?? item.updatedAt ?? item.postedAt ?? item.createdAt,
         });
       }
     }
@@ -730,23 +743,18 @@ export class GamificationService {
       return;
     }
 
-    try {
-      await repo.save(
-        repo.create({
-          userId: input.userId,
-          points: input.points,
-          reason: input.reason,
-          actionType: input.actionType,
-          actionId: input.actionId,
-          occurredAt: input.occurredAt,
-        }),
-      );
-    } catch (error: any) {
-      if (error?.code === '23505' || String(error?.message || '').toLowerCase().includes('unique')) {
-        return;
-      }
-      throw error;
-    }
+    await repo.createQueryBuilder().insert().into(PointTransaction).values({
+      userId: input.userId, points: input.points, reason: input.reason,
+      actionType: input.actionType, actionId: input.actionId, occurredAt: input.occurredAt,
+    }).orIgnore().execute();
+  }
+
+  private addImpactEstimate(total: number | null, estimate: number | null): number | null {
+    return total === null || estimate === null ? null : total + estimate;
+  }
+
+  private validImpactEstimate(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
   }
 
   private async syncUserState(manager: EntityManager, userId: string): Promise<void> {
@@ -759,7 +767,7 @@ export class GamificationService {
 
   private async ensureUserProgressRow(manager: EntityManager, userId: string): Promise<UserProgress> {
     const progressRepo = this.getUserProgressRepository(manager);
-    let row = await progressRepo.findOne({ where: { userId } });
+    const row = await progressRepo.findOne({ where: { userId } });
     if (row) {
       return row;
     }
@@ -769,8 +777,12 @@ export class GamificationService {
       throw new NotFoundException('User not found');
     }
 
-    row = progressRepo.create({ userId, user, totalPoints: 0, currentLevel: 1 });
-    return progressRepo.save(row);
+    // Dashboard requests can initialise the same account concurrently. Keep the
+    // winner's progress rather than failing or resetting it in a later request.
+    await progressRepo.createQueryBuilder().insert().into(UserProgress).values({
+      userId, totalPoints: 0, currentLevel: 1,
+    }).onConflict('("user_id") DO NOTHING').execute();
+    return progressRepo.findOneOrFail({ where: { userId } });
   }
 
   private async ensureStreakRows(manager: EntityManager, userId: string): Promise<void> {

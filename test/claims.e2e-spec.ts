@@ -10,7 +10,11 @@ import { ResponseInterceptor } from '../src/common/interceptors/response.interce
 import { Claim, ClaimStatus } from '../src/modules/claims/claim.entity';
 import { ClaimsController } from '../src/modules/claims/claims.controller';
 import { ClaimsService } from '../src/modules/claims/claims.service';
+import { GamificationService } from '../src/modules/gamification/gamification.service';
 import { Item, ItemStatus } from '../src/modules/items/item.entity';
+import { NotificationsService } from '../src/modules/notifications/notifications.service';
+import { RewardsService } from '../src/modules/rewards/rewards.service';
+import { Shop } from '../src/modules/shops/shop.entity';
 import { RoleCode } from '../src/modules/users/role.entity';
 import { User, UserStatus } from '../src/modules/users/user.entity';
 
@@ -41,6 +45,10 @@ describe('Claims E2E', () => {
         { provide: getRepositoryToken(Claim), useValue: claimRepo },
         { provide: getRepositoryToken(Item), useValue: itemRepo },
         { provide: getRepositoryToken(User), useValue: userRepo },
+        { provide: getRepositoryToken(Shop), useValue: {} },
+        { provide: NotificationsService, useValue: { notifyItemClaimRequested: jest.fn(), notifyItemClaimApproved: jest.fn() } },
+        { provide: RewardsService, useValue: {} },
+        { provide: GamificationService, useValue: {} },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -68,7 +76,7 @@ describe('Claims E2E', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
   });
 
   beforeEach(() => {
@@ -156,7 +164,10 @@ describe('Claims E2E', () => {
     expect(itemRepo.update).not.toHaveBeenCalled();
   });
 
-  it('POST /claims prevents duplicate active claims', async () => {
+  it.each([
+    ['repeat request by the same collector', [{ id: 'existing-claim' }], 'You have already claimed this item'],
+    ['another collector already approved', [null, { id: 'approved-claim' }], 'This item already has an active claim'],
+  ] as const)('POST /claims rejects %s', async (_case, existingClaims, expectedMessage) => {
     currentUser = { sub: 'collector-2', roles: [RoleCode.COLLECTOR] };
 
     const collector: Partial<User> = { id: 'collector-2', status: UserStatus.ACTIVE };
@@ -167,7 +178,7 @@ describe('Claims E2E', () => {
       donor: { id: 'donor-1' } as any,
     };
     itemRepo.findOne.mockResolvedValue(item);
-    claimRepo.findOne.mockResolvedValue({ id: 'existing-claim' });
+    for (const existing of existingClaims) claimRepo.findOne.mockResolvedValueOnce(existing);
 
     const res = await request(app.getHttpServer())
       .post('/claims')
@@ -175,7 +186,7 @@ describe('Claims E2E', () => {
       .send({ item_id: '9f5c2c8e-0000-4000-a000-000000000000' });
 
     expect(res.status).toBe(409);
-    expect(res.body.message).toBe('This item already has an active claim');
+    expect(res.body.message).toBe(expectedMessage);
   });
 
   it('PATCH /claims/:id/approve approves pending claim for admin', async () => {

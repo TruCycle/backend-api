@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 
 import { Item, ItemStatus } from '../items/item.entity';
 import { sanitizeShopId } from '../qr/qr.utils';
@@ -112,7 +112,9 @@ export class ClaimsService {
       if (donorId) {
         await this.notifications.notifyItemClaimRequested(donorId, collector.id, item.id, item.title ?? undefined);
       }
-    } catch { }
+    } catch {
+      // Claim creation remains successful if the optional notification fails.
+    }
 
     const createdAt =
       saved.createdAt instanceof Date && !Number.isNaN(saved.createdAt.getTime())
@@ -172,7 +174,9 @@ export class ClaimsService {
       if (claim.collector?.id) {
         await this.notifications.notifyItemClaimApproved(claim.collector.id, claim.item.id, claim.item.title ?? undefined);
       }
-    } catch { }
+    } catch {
+      // Approval remains successful if the optional notification fails.
+    }
 
     return {
       id: saved.id,
@@ -213,7 +217,7 @@ export class ClaimsService {
       throw new BadRequestException('shop_id is required');
     }
 
-    return this.claims.manager.transaction(async (manager) => {
+    const { completedClaim, ...result } = await this.claims.manager.transaction(async (manager) => {
       const claimRepo = manager.getRepository(Claim);
       const itemRepo = manager.getRepository(Item);
 
@@ -224,7 +228,8 @@ export class ClaimsService {
         .leftJoinAndSelect('claim.item', 'item')
         .leftJoinAndSelect('item.donor', 'donor')
         .leftJoinAndSelect('claim.collector', 'collector')
-        .where('item.id = :itemId', { itemId });
+        .where('item.id = :itemId', { itemId })
+        .andWhere('(item.approvedCollectorId IS NULL OR collector.id = item.approvedCollectorId)');
 
       if (!isAdmin && !isFacility && !isPartner && isCollector) {
         qb.andWhere('collector.id = :actorId', { actorId: actor.id });
@@ -284,6 +289,7 @@ export class ClaimsService {
           scan_result: 'already_completed',
           completed_at: completedAt.toISOString(),
           scan_events: events,
+          completedClaim: null,
         };
       }
 
@@ -302,47 +308,15 @@ export class ClaimsService {
       // Rewards: idempotent award for claim completion (QR flow)
       try {
         await this.rewards.awardOnClaimComplete(manager, claim);
-      } catch { }
+      } catch {
+        // Preserve the existing completion flow if reward allocation fails.
+      }
 
       try {
-        const donorId = claim.item?.donor?.id || null;
-        if (claim.collector?.id) {
-          await this.gamification.recordExchangeCompleted(
-            manager,
-            claim.collector.id,
-            claim.id,
-            'collector',
-            completionDate,
-          );
-        }
-        if (donorId) {
-          await this.gamification.recordExchangeCompleted(
-            manager,
-            donorId,
-            claim.id,
-            'donor',
-            completionDate,
-          );
-        }
-      } catch { }
-
-      // Notifications: collection + drop-off
-      try {
-        const donorId = claim.item?.donor?.id;
-        const collectorId = claim.collector?.id;
-        if (donorId && collectorId) {
-          await this.notifications.notifyItemCollected(donorId, collectorId, claim.item.id, claim.item.title ?? undefined);
-        }
-        if (shopId) {
-          // Notify donor of drop-off
-          if (donorId) await this.notifications.notifyDropOff(donorId, claim.item.id, claim.item.title ?? undefined);
-          // Notify shop owner of drop-in
-          const shop = await this.shops.findOne({ where: { id: shopId }, relations: { owner: true } });
-          if (shop?.owner?.id && donorId) {
-            await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
-          }
-        }
-      } catch { }
+        await this.recordExchangeProgress(manager, claim, claim.item?.donor?.id, completionDate);
+      } catch {
+        // Progress-update failures are tolerated by the existing completion flow.
+      }
 
       const events = await fetchScanEvents(manager, claim.item.id);
 
@@ -353,8 +327,12 @@ export class ClaimsService {
         scan_result: 'completed',
         completed_at: completionDate.toISOString(),
         scan_events: events,
+        completedClaim: claim,
       };
     });
+
+    if (completedClaim) await this.notifyClaimCollection(completedClaim, shopId);
+    return result;
   }
 
   // Manual completion without QR; allows donor or collector (and admin/facility/partner)
@@ -366,7 +344,6 @@ export class ClaimsService {
     const isAdmin = userHasRole(authPayload, RoleCode.ADMIN);
     const isFacility = userHasRole(authPayload, RoleCode.FACILITY);
     const isPartner = userHasRole(authPayload, RoleCode.PARTNER);
-    const isCollector = userHasRole(authPayload, RoleCode.COLLECTOR);
 
     const actor = await this.users.findOne({ where: { id: authPayload.sub } });
     if (!actor) {
@@ -383,7 +360,7 @@ export class ClaimsService {
 
     const providedShopId = sanitizeShopId(rawShopId);
 
-    return this.claims.manager.transaction(async (manager) => {
+    const { completedClaim, ...result } = await this.claims.manager.transaction(async (manager) => {
       const claimRepo = manager.getRepository(Claim);
       const itemRepo = manager.getRepository(Item);
 
@@ -395,6 +372,7 @@ export class ClaimsService {
         .leftJoinAndSelect('item.donor', 'donor')
         .leftJoinAndSelect('claim.collector', 'collector')
         .where('item.id = :itemId', { itemId })
+        .andWhere('(item.approvedCollectorId IS NULL OR collector.id = item.approvedCollectorId)')
         .orderBy(
           `CASE WHEN claim.status = :approved THEN 0 WHEN claim.status = :complete THEN 1 WHEN claim.status = :pending THEN 2 ELSE 3 END`,
           'ASC',
@@ -415,18 +393,17 @@ export class ClaimsService {
       }
 
       const donorId = claim.item?.donor?.id;
+      const isDonor = donorId === actor.id;
+      const isStaff = isAdmin || isFacility || isPartner;
+      const approvedCollectorId = claim.item?.approvedCollectorId;
 
-      // Prevent collection if item is locked for another collector
-      if (claim.item?.approvedCollectorId && claim.item.approvedCollectorId !== actor.id && !isAdmin && !isFacility && !isPartner) {
+      // The collector lock does not prevent the donor from recording the handoff.
+      if (!isStaff && !isDonor && approvedCollectorId && approvedCollectorId !== actor.id) {
         throw new ForbiddenException('This item is locked for another collector');
       }
 
-      if (!isAdmin && !isFacility && !isPartner) {
-        const asCollector = !!(claim.collector && claim.collector.id === actor.id);
-        const asDonor = !!(donorId && donorId === actor.id);
-        if (!asCollector && !asDonor) {
-          throw new ForbiddenException('Only the donor or assigned collector may complete this claim');
-        }
+      if (!isStaff && !isDonor && claim.collector?.id !== actor.id) {
+        throw new ForbiddenException('Only the donor or assigned collector may complete this claim');
       }
 
       // If donation flow has a drop-off location, require a matching shop id
@@ -463,6 +440,7 @@ export class ClaimsService {
           scan_result: 'already_completed',
           completed_at: completedAt.toISOString(),
           scan_events: events,
+          completedClaim: null,
         };
       }
 
@@ -481,45 +459,15 @@ export class ClaimsService {
       // Rewards: idempotent award for claim completion (manual flow)
       try {
         await this.rewards.awardOnClaimComplete(manager, claim);
-      } catch { }
+      } catch {
+        // Preserve the existing completion flow if reward allocation fails.
+      }
 
       try {
-        const resolvedDonorId = donorId || null;
-        if (claim.collector?.id) {
-          await this.gamification.recordExchangeCompleted(
-            manager,
-            claim.collector.id,
-            claim.id,
-            'collector',
-            completionDate,
-          );
-        }
-        if (resolvedDonorId) {
-          await this.gamification.recordExchangeCompleted(
-            manager,
-            resolvedDonorId,
-            claim.id,
-            'donor',
-            completionDate,
-          );
-        }
-      } catch { }
-
-      // Notifications: collection + drop-off
-      try {
-        const donorId = claim.item?.donor?.id;
-        const collectorId = claim.collector?.id;
-        if (donorId && collectorId) {
-          await this.notifications.notifyItemCollected(donorId, collectorId, claim.item.id, claim.item.title ?? undefined);
-        }
-        if (providedShopId) {
-          if (donorId) await this.notifications.notifyDropOff(donorId, claim.item.id, claim.item.title ?? undefined);
-          const shop = await this.shops.findOne({ where: { id: providedShopId }, relations: { owner: true } });
-          if (shop?.owner?.id && donorId) {
-            await this.notifications.notifyDropIn(shop.owner.id, donorId, claim.item.id, claim.item.title ?? undefined);
-          }
-        }
-      } catch { }
+        await this.recordExchangeProgress(manager, claim, donorId, completionDate);
+      } catch {
+        // Progress-update failures are tolerated by the existing completion flow.
+      }
 
       const events = await fetchScanEvents(manager, claim.item.id);
       return {
@@ -529,7 +477,50 @@ export class ClaimsService {
         scan_result: 'completed',
         completed_at: completionDate.toISOString(),
         scan_events: events,
+        completedClaim: claim,
       };
     });
+
+    if (completedClaim) await this.notifyClaimCollection(completedClaim, providedShopId);
+    return result;
+  }
+
+  private async recordExchangeProgress(
+    manager: EntityManager,
+    claim: Claim,
+    donorId: string | null | undefined,
+    completedAt: Date,
+  ): Promise<void> {
+    const participants: Array<{ userId: string; role: 'collector' | 'donor' }> = [];
+    if (claim.collector?.id) participants.push({ userId: claim.collector.id, role: 'collector' });
+    if (donorId) participants.push({ userId: donorId, role: 'donor' });
+    // Match the wallet reward lock order in RewardsService for reciprocal exchanges.
+    participants.sort((left, right) => left.userId.localeCompare(right.userId));
+    for (const { userId, role } of participants) {
+      await this.gamification.recordExchangeCompleted(manager, userId, claim.id, role, completedAt);
+    }
+  }
+
+  private async notifyClaimCollection(claim: Claim, shopId: string): Promise<void> {
+    const donorId = claim.item.donor?.id;
+    if (!donorId) return;
+
+    const { id: itemId, title } = claim.item;
+    const collectorId = claim.collector?.id;
+    // Notification inserts use a separate connection and need the user locks released by commit.
+    try {
+      if (collectorId) {
+        await this.notifications.notifyItemCollected(donorId, collectorId, itemId, title ?? undefined);
+      }
+      if (shopId) {
+        await this.notifications.notifyDropOff(donorId, itemId, title ?? undefined);
+        const shop = await this.shops.findOne({ where: { id: shopId }, relations: { owner: true } });
+        if (shop?.owner?.id) {
+          await this.notifications.notifyDropIn(shop.owner.id, donorId, itemId, title ?? undefined);
+        }
+      }
+    } catch {
+      // Notification failures do not change an already committed collection.
+    }
   }
 }
