@@ -36,6 +36,10 @@ Why the deploy must be coordinated:
 
 ---
 
+## Standing rule from the owner: commit authorship
+
+All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858622+macaddy2@users.noreply.github.com`). Never use a Claude/AI author, committer, or `Co-Authored-By`/`Claude-Session` trailer.
+
 ## Standing rule from the owner (26 Nov 2026): no colour or visual redesign
 
 - The frontend release uses **staging as its base**, with the colour change reverted (`03c1b54`, the same change as abandoned PR #18).
