@@ -27,7 +27,7 @@ Why the deploy must be coordinated:
 | R3 | `/auth/verify` now returns `{verified:true}` with no tokens. The deployed frontend shows an error on every verification link, even though the account *is* verified. | Coordinated frontend release. The staging change was deliberate hardening and is **not** reverted. |
 | R2 | Every signed-in user is logged out at deploy. Old tokens carry no session id, and the rehearsal confirmed a 401 on `/auth/me` and `/auth/refresh`. | Accept it and announce a forced re-login. |
 | R1 / R6 | The default access-token lifetime drops from 60d (main) to 15m. Old clients without "remember me", and their realtime sockets, drop after about 15 minutes. | **Pin `JWT_EXPIRES_IN` explicitly in production before deploy.** The production value is unknown from here. |
-| R4 | The deployed Found Items page sends nearest + 5mi with no location, and gets a 400. | ✅ Shimmed in the backend (`eda6820`). |
+| R4 | The deployed Found Items page sends nearest + 5mi with no location, and gets a 400. | ✅ Shimmed in the backend. |
 | R5 | The deployed spot report sends free-text reasons, and gets a 400. | ✅ Shimmed in the backend: the reason becomes `other` and the text is kept. |
 | R7 | Production had no read state, so every historical message would show as unread. | ✅ Migration 0036 backfills receipts. Tested on a copy of the migrated database: idempotent, no self-receipts. |
 | R7 residual | Deployed clients never call the read endpoint. Messages that arrive after the release stay unread on old tabs until the user moves to the new frontend. Confirmed in simulation. | Coordinated frontend release. Stale tabs self-correct on reload. |
@@ -57,7 +57,9 @@ All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858
 | A2 | Main's Brevo→Resend fallback | Restored. Staging had dropped it. |
 | A3 | Main's email tests were not in the CI allowlist | Added, so the production email fix is now a merge gate. |
 | A4 | Compatibility shims R4, R5 and R7 (migration 0036) | Done, with tests. |
-| A5 | CI gate on the candidate | Typecheck ✅. Lint 0 errors ✅. 36 suites / 820 tests ✅. Build ✅. GitHub Actions ✅ on #11. |
+| A5 | CI gate on the candidate | Typecheck ✅. Lint 0 errors ✅. 36 suites / 824 tests ✅. Build ✅. GitHub Actions ✅ on #11. |
+| A9 | Frontend release candidate: [web-frontend#25](https://github.com/TruCycle/web-frontend/pull/25) (draft) | Built on staging as it was before #21, with no redesign. Production `main` merged in (19 conflicts, resolved hunk by hunk). Two functional parts of #21 ported without colours: phone-width layout, and confetti once per reward. The main-only features are present: List-item camera, Spot retry, cutout preview and fallback (off), reset-code recovery. Typecheck, lint, 8 test suites and build ✅. CI ✅. |
+| A10 | Vision prompt by context | The merge had made every non-admin Spot analysis return 403, because it sent a custom prompt. Fixed in a pair: the frontend sends `context=spot\|listing` (#25) and the backend picks the prompt (#11). This restores main's listing-prompt behaviour (`2209236`). |
 | A6 | Flag defaults | Outbox, shared rate budgets and per-email reset limits are all off by default. |
 | A7 | Migration rehearsal (simulated) | The upgrade applies cleanly. Findings are folded into B and the pre-checks below. |
 | A8 | Frontend promotion list and contract check | Done. Results are in the table above and in the doc. Frontend staging build, lint and tests pass locally. |
@@ -79,7 +81,7 @@ All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858
 
 | # | Action | Approver | Post-action check |
 |---|---|---|---|
-| B1 | **Frontend reconciliation.** Promote staging as the new base, then re-apply the main-only features it lacks: List-item camera + Spot retry `66ad6ea`, `2209236`, `c15a8cb`, the cutout fallback `f9a7ca5`/#24, and reset-code recovery from `5a2ca07`. This session can't push there. | Owner (**push access needed**) | Frontend CI. Simulated runs against the local candidate. |
+| B1 | **Review and approve the frontend candidate** [web-frontend#25](https://github.com/TruCycle/web-frontend/pull/25). Two contrast-only text colour fixes from staging's pre-redesign QA are included (`link #15A119→#126C16`, `formText`). Drop them if you count them as redesign. | Owner | Simulated E2E run 2 against #11 + #25. |
 | B2 | Set the production env from B0 (`TYPEORM_SYNC=false`, JWT lifetimes) | Owner | Env diff recorded. |
 | B3 | **Migrate first, immediately before B4 in the same window:** apply 027/028–036 with `PGOPTIONS='-c lock_timeout=5s'`. 0036 only marks messages that exist when it runs, so messages sent between B3 and B4 would show as unread. | Owner + DB access | Ledger shows 036. Main is still serving, which the rehearsal shows is safe with sync off. |
 | B4 | Merge and deploy backend #11 | Owner | New SHA is live. `/health` returns 200. |
