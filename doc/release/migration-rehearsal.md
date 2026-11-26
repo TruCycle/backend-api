@@ -169,4 +169,4 @@ All scripts and logs are in the session scratchpad and are not committed. The st
 
 ## Addendum (after this rehearsal)
 
-Migration `1700000000036-BackfillMessageReadReceipts` was added later in `eda6820`. Its SQL was run twice against a copy of the migrated `sim_b` database: 2 receipts were inserted the first time and 0 the second, with no self-receipts and no unread historical direct messages left. The full `--expect` list is therefore 027–036 (ledger at 026) or 028–036 (ledger at 027). The complete CLI path with 036 has **not** been re-rehearsed.
+Migration `1700000000036-BackfillMessageReadReceipts` was added later in `eda6820`. Its SQL was run twice against a copy of the migrated `sim_b` database: 2 receipts were inserted the first time and 0 the second, with no self-receipts and no unread historical direct messages left. The full `--expect` list is therefore 027–036 (ledger at 026) or 028–036 (ledger at 027). The simulated E2E run (`simulated-e2e.md`) then applied 027–036 through the release CLI on a fresh sync-created baseline: all 10 migrations applied, and a pre-migration message stayed read.
