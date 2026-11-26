@@ -109,6 +109,13 @@ All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858
 
 ---
 
+### Follow-ups found by the design critique (functional, not redesign)
+
+- **Donor dashboard impact tiles** (`src/features/home/ui/Dashboard.tsx:111`, labels at 194–206 in #25): the "Items listed", "Completed" and "Est. CO2e" tiles total only the first page of listings, hence the "(this page)" labels. Production overclaims the other way: it counts every listing, and its chart uses a fixed array. Fix it with account-wide totals from the backend. This is linked to DEP-306 (carbon and impact).
+- **Request an item:** it sends on the first tap with no review step, then shows both a modal and a toast for the same event.
+- **Item page:** there is no donor or description, and raw condition values such as `like_new` are shown.
+- **Sign-in:** a hard-coded five-star testimonial appears there. Remove it or source it.
+
 ## C. Needs hardware or a human
 
 Simulated Playwright runs are regression evidence only. They do not close the items below.
