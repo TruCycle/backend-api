@@ -49,6 +49,8 @@ PGOPTIONS='-c lock_timeout=5s' npm run migration:run -- --apply --expect AddGoog
 
 This list assumes the ledger ends at **026**. If it ends at 027, drop the first name. That case was not rehearsed, so rehearse it locally first.
 
+Run the CLI **as the backend's runtime database role**, or as a role whose tables that role can use. Export the production database variables in the shell first, because the CLI no longer reads `.env`.
+
 Then check:
 
 ```sql
@@ -57,12 +59,31 @@ SELECT name FROM public.migrations ORDER BY "timestamp" DESC LIMIT 1;  -- Backfi
 
 The current production code keeps serving on the migrated schema, with sync off. This was rehearsed.
 
+**Stop check before any merge.** The runtime role must be able to use the new tables, otherwise login returns 503 as soon as #11 deploys:
+
+```sql
+SELECT tablename, tableowner FROM pg_tables
+ WHERE tablename IN ('auth_session','auth_rate_counter','auth_reset_email_counter','message_read_receipt','message_attachment','auth_email_outbox','found_item_observation');
+SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = '<runtime role>';
+```
+
+Continue only if each owner is the runtime role, or the runtime role has `rolbypassrls = true`. If not, stop. The current production code is unaffected, and nothing has been merged yet.
+
 ## 3. Merge and deploy (back-to-back)
+
+Before merging, confirm with the owner:
+- whether merging to each `main` deploys automatically, and whether that can be paused;
+- that each host can **redeploy the previous build**;
+- the Node version each host builds with (≥22.12, <25).
+
+`/auth/health` can return 200 while login fails, so it is **not** a readiness signal. Use the sign-in check below.
 
 1. Merge **backend #11**. Wait for the production deploy to show the new SHA.
    - Check that `/auth/health` returns 200.
    - Sign in on a fresh browser. It should return 200, and a new `auth_session` row should appear.
+   - **If the backend deploy or the sign-in check fails, do not merge #25.** Roll the backend back (§5) and stop.
 2. Merge **frontend #25** straight away. Wait for the deploy to show the new SHA.
+   - **If the frontend deploy fails** while the backend is live: retry once. If the new frontend is not live within **15 minutes** of the backend going live, roll the backend back (§5). The deployed frontend breaks verify links against the new backend (R3).
 3. If the Vision Worker is redeployed in this window, it goes **with** the frontend, never before it (R15).
 
 ## 4. Smoke tests (production, a real browser and a phone)
@@ -78,9 +99,10 @@ The current production code keeps serving on the migrated schema, with sync off.
 
 ## 5. Roll back if a smoke test fails
 
-- Revert the frontend merge, then the backend merge (revert commits on `main`), and redeploy.
-- **Keep `TYPEORM_SYNC=false`.** Do not roll back the schema. The migrations are additive, and the old code runs on them (rehearsed). Attachment messages render empty until the release is re-applied.
-- Users signed in on the new release are signed out again by the rollback.
+1. **First choice: the host's "redeploy previous build"** for the frontend, then for the backend. This is the fastest route and leaves `main` untouched.
+2. Use `git revert` of the merge commits only if staying rolled back. Re-releasing later then needs the reverts reverted, and the alignment gate rerun.
+3. **Keep `TYPEORM_SYNC=false`.** Do not roll back the schema. The migrations are additive, and the old code runs on them (rehearsed). Attachment messages render empty until the release is re-applied.
+4. Users signed in on the new release are signed out again by the rollback.
 
 ## 6. Afterwards
 

@@ -87,6 +87,25 @@ All commits on GitHub are authored and committed as the owner (Ade Adedo, `15858
 4. **`JWT_EXPIRES_IN` and `JWT_REFRESH_EXPIRES_IN`.** Pin them explicitly. **Recommended:** `JWT_EXPIRES_IN=15m` (the value QA and the simulation exercised) and an explicit `JWT_REFRESH_EXPIRES_IN` matching hosted staging, set in the same window as the frontend. Everyone re-logs in at deploy anyway (R2), and the new frontend refreshes silently. `JWT_SECRET` must be at least 32 bytes and not `change-me`, or the candidate refuses to boot.
 5. **Duplicate `google_id` values, and the Postgres version.** The 027 unique index fails if duplicates exist.
 
+### B0 additions: environment and deploy-config differences (checked 26 Nov)
+
+These are the variables and build settings that differ between each `main` and its release candidate.
+
+| Area | What changed | Risk if missed | Action |
+|---|---|---|---|
+| **Node version (both repos)** | `engines` moves from `>=18` to `>=22.12.0 <25`, and `.node-version` is `24.18.0` | **The build fails** if the host builds with Node 18 or 20 | Confirm each host's Node version and how it picks one (`.node-version`, `engines`, or a host setting). |
+| Backend `FRONTEND_BASE_URL` (new) | Origin for links in verification and reset emails. It replaces `APP_BASE_URL` for those links. Default: `https://trucycle.co.uk` | Links point at the wrong host if production uses another origin, such as `www.` | Set it explicitly to the production frontend origin. |
+| Backend `VISION_WORKER_URL` + `VISION_WORKER_SECRET` (new) | Photo analysis now goes through the backend. The frontend's `VITE_VISION_WORKER_URL` is removed. | None while Smart Spot is off: the call is gated and failures are caught | Set both before turning Smart Spot on. The secret is 64 hex characters. |
+| Backend `AUTH_*`, `MESSAGE_ATTACHMENTS_ENABLED`, `FOUND_ITEM_LIFECYCLE_SWEEP_ENABLED` (new) | Opt-in features | None while unset | Leave them unset. |
+| Backend `AUTH_REFRESH_RETRY_GRACE_SECONDS`, `OSM_MAX_CONCURRENT_REQUESTS`, `CO2_AVOIDED_METHOD_REFERENCE` (new) | Tuning values with code defaults | Low | Optional. |
+| Backend `APP_RELEASE_SHA` / `RAILWAY_GIT_COMMIT_SHA` (new) | Release labels in logs | None | Optional. |
+| Backend `CLOUDINARY_MESSAGE_FOLDER` (removed) | No longer read | None | It can be removed later. |
+| Backend `npm run migration:run` | It no longer loads `.env` (`dotenv/config` is gone) | Migrations would run against the wrong or an empty database | Export the production database variables in the shell, or use the host's run-command feature. |
+| CORS (`CORS_ORIGINS`) | Unchanged | None | None. |
+| Frontend `VITE_ENABLE_META_PIXEL_SDK`, `VITE_MESSAGE_ATTACHMENTS_ENABLED` (new) | Opt-in | None while unset | Leave them unset in production. |
+| Frontend `VITE_INTERNAL_PIN` (removed) | The internal Vision page is now admin-only | None | Remove it from the host later. |
+| **Migration role** | The new tables are owned by whichever role runs the CLI. RLS is on and they have no policies. | **Login returns 503** if the runtime role is neither the owner nor `BYPASSRLS` | Run migrations as the runtime role, or confirm `BYPASSRLS` (runbook §2 stop check). |
+
 ### B1–B9. Approval queue
 
 | # | Action | Approver | Post-action check |
